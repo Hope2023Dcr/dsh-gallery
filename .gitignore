@@ -1,0 +1,35 @@
+# 依赖
+node_modules/
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# 构建与发布产物
+releases/
+dist/
+*.tgz
+*.zip
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*~
+
+# 日志与临时文件
+*.log
+*.tmp
+_t/
+_v/
+_fix/
+_probe/
+*.bak
+*.bak-*
+
+# 本机运行时配置（绝不要提交，里面是用户自己的路径）
+dsh-gallery.json
+.env
+.env.local

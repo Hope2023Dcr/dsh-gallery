@@ -1,0 +1,49 @@
+name: 💡 功能建议
+description: 提出一个新功能或改进想法
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提建议前建议先看一眼 README 的「已知限制」，可能已经在计划里了。
+
+  - type: textarea
+    id: scenario
+    attributes:
+      label: 使用场景
+      description: |
+        请描述**你在什么情况下**需要这个功能，而不是只说「加个 XX 功能」。
+        场景比方案更重要 —— 说明场景，实现方式可以一起讨论。
+      placeholder: |
+        我经常一次跑十几个任务，产出目录里文件堆得很杂。
+        希望能按「任务目录」分组显示，而不是一条条平铺。
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 你设想的效果
+      description: 有具体想法就写，没有也可以只提场景
+      placeholder: "面板顶部加一个下拉，按任务目录聚合"
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 你试过的替代办法
+      description: 现在是怎么绕过去的？有没有其他工具能实现？
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 确认
+      options:
+        - label: 我已经看过 README 的「已知限制」章节
+          required: true
+        - label: 我确认这不是因为没重启 DSH 导致的（改 index.js 后必须重启）
+          required: true

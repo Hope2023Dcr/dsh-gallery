@@ -1,0 +1,138 @@
+name: 校验
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    name: 语法 + 结构校验
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 语法检查（两个文件）
+        run: |
+          node --check index.js
+          node --check client.js
+
+      - name: package.json 必填字段
+        run: |
+          node -e "
+            const pkg = require('./package.json');
+            const need = ['name','version','type','exports','dsh'];
+            for (const k of need) {
+              if (pkg[k] === undefined) { console.error('缺少字段: ' + k); process.exit(1); }
+            }
+            if (!pkg.dsh.bundle || !pkg.dsh.bundle.patch) { console.error('dsh.bundle.patch 缺失'); process.exit(1); }
+            if (!pkg.dsh.client) { console.error('dsh.client 缺失'); process.exit(1); }
+            console.log('package.json OK, version = ' + pkg.version);
+          "
+
+      - name: ⚠️ cordis.patch.yml 顶层必须是数组
+        run: |
+          npm i -g js-yaml
+          node -e "
+            const yaml = require('js-yaml');
+            const fs = require('node:fs');
+            const doc = yaml.load(fs.readFileSync('cordis.patch.yml', 'utf8'));
+            if (!Array.isArray(doc)) {
+              console.error('FAIL: cordis.patch.yml 顶层必须是数组，实际是 ' + typeof doc);
+              console.error('正确写法：- insert:   （注意开头的 - ）');
+              process.exit(1);
+            }
+            const first = doc[0];
+            if (first === undefined || !Array.isArray(first.insert)) {
+              console.error('FAIL: 第一项的 insert 必须是数组');
+              process.exit(1);
+            }
+            for (const e of first.insert) {
+              if (!e.id || !e.name) { console.error('FAIL: 条目缺少 id 或 name'); process.exit(1); }
+              console.log('条目 OK: ' + e.id + ' (' + e.name + ')');
+            }
+            console.log('cordis.patch.yml 结构 OK');
+          "
+
+      - name: locale 文件是合法 JSON 且含 meta
+        run: |
+          node -e "
+            for (const f of ['locale/zh.json','locale/en.json']) {
+              const j = require('./' + f);
+              if (!j.meta || !j.meta.title) { console.error(f + ' 缺少 meta.title'); process.exit(1); }
+              console.log(f + ' OK: ' + j.meta.title);
+            }
+          "
+
+      - name: 不引入第三方运行时依赖
+        run: |
+          node -e "
+            const pkg = require('./package.json');
+            if (pkg.dependencies && Object.keys(pkg.dependencies).length > 0) {
+              console.error('FAIL: 本插件不应有运行时依赖，实际：' + JSON.stringify(pkg.dependencies));
+              process.exit(1);
+            }
+            console.log('零依赖 OK');
+          "
+
+      - name: 无硬编码盘符路径
+        run: |
+          node -e "
+            const fs = require('node:fs');
+            const files = ['index.js','client.js','package.json','cordis.patch.yml','locale/zh.json','locale/en.json','install.mjs'];
+            let bad = 0;
+            for (const f of files) {
+              if (!fs.existsSync(f)) continue;
+              const lines = fs.readFileSync(f,'utf8').split('\n');
+              for (const line of lines) {
+                const t = line.trim();
+                // 只检查「看起来是实际值」的行，注释和正则表达式除外
+                if (t.startsWith('#') || t.startsWith('//') || t.startsWith('*')) continue;
+                if (/^[A-Za-z]:[\\\\/]/.test(t) && !/RegExp|fromCharCode|\/g|test\(/.test(line)) {
+                  console.error('可疑硬编码路径 ' + f + ': ' + t.slice(0,60));
+                  bad++;
+                }
+              }
+            }
+            if (bad > 0) process.exit(1);
+            console.log('无硬编码盘符路径 OK');
+          "
+
+  test-install:
+    name: 安装脚本实测
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 造一个假的 DSH_HOME 并试装
+        run: |
+          mkdir -p /tmp/fake-dsh/profiles/desktop
+          echo '{"name":"fake","bundles":[]}' > /tmp/fake-dsh/profiles/desktop/package.json
+          DSH_HOME=/tmp/fake-dsh node install.mjs
+          echo "--- 验证装好的文件 ---"
+          test -f /tmp/fake-dsh/profiles/desktop/node_modules/dsh-gallery/index.js || (echo "FAIL: index.js 未安装"; exit 1)
+          test -f /tmp/fake-dsh/profiles/desktop/node_modules/dsh-gallery/client.js || (echo "FAIL: client.js 未安装"; exit 1)
+          echo "--- 验证 bundle 已注册 ---"
+          node -e "
+            const pkg = require('/tmp/fake-dsh/profiles/desktop/package.json');
+            if (!pkg.bundles.includes('dsh-gallery')) { console.error('FAIL: bundle 未注册'); process.exit(1); }
+            console.log('bundle 已注册');
+          "
+          echo "--- 验证幂等（再跑一次不应重复注册）---"
+          DSH_HOME=/tmp/fake-dsh node install.mjs
+          node -e "
+            const pkg = require('/tmp/fake-dsh/profiles/desktop/package.json');
+            const n = pkg.bundles.filter(b => b === 'dsh-gallery').length;
+            if (n !== 1) { console.error('FAIL: 重复注册 ' + n + ' 次'); process.exit(1); }
+            console.log('幂等 OK');
+          "

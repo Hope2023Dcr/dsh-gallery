@@ -1,0 +1,53 @@
+{
+  "name": "dsh-gallery",
+  "version": "0.4.0",
+  "private": true,
+  "type": "module",
+  "description": "产出画廊：右侧栏浏览产出目录下的图片与文件（缩略图 / 缩放拖动 / 原生侧栏预览），产出根目录可配置",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Hope2023Dcr/dsh-gallery.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Hope2023Dcr/dsh-gallery/issues"
+  },
+  "homepage": "https://github.com/Hope2023Dcr/dsh-gallery#readme",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar-right",
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
+  },
+  "author": {
+    "name": "Hope2023Dcr"
+  },
+  "license": "MIT",
+  "keywords": [
+    "dsh-plugin",
+    "dsh",
+    "deepseek-harness",
+    "gallery",
+    "preview",
+    "output-artifacts"
+  ]
+}

@@ -1,0 +1,100 @@
+name: 🐛 Bug 报告
+description: 报告一个可复现的问题
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！请尽量填完整，信息越全排查越快。
+
+  - type: input
+    id: version
+    attributes:
+      label: 插件版本
+      description: 在 `package.json` 里能看到 version 字段
+      placeholder: "例如 0.4.0"
+    validations:
+      required: true
+
+  - type: input
+    id: dsh-version
+    attributes:
+      label: DSH 版本
+      description: DSH 桌面版/Web 版的版本号，或说明是哪个构建
+      placeholder: "例如 DeepSeek Harness 1.x"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 操作系统
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS
+        - Linux
+        - 其他（请在补充说明里写清）
+    validations:
+      required: true
+
+  - type: input
+    id: root
+    attributes:
+      label: 产出根目录
+      description: 面板设置里显示的那个路径（**请把用户名等隐私部分用 X 代替**）
+      placeholder: "例如 D:\\outputs"
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 从打开 DSH 开始，一步步说清楚
+      placeholder: |
+        1. 重启 DSH
+        2. 打开右侧栏「产出画廊」
+        3. 点「文件」标签
+        4. 点某张卡片
+        5. 出现报错
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望结果
+      placeholder: "点卡片应该用 DSH 原生侧栏打开预览"
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果
+      placeholder: "什么都没发生，控制台报错……"
+    validations:
+      required: true
+
+  - type: textarea
+    id: errors
+    attributes:
+      label: 报错原文
+      description: |
+        请**粘贴原文**，不要转述。浏览器控制台（F12 → Console）和 DSH 日志里的报错都贴上来。
+        报错里如果带完整路径，请把用户名部分用 X 代替。
+      render: shell
+      placeholder: |
+        sidebarRight: no registered tab type claims "dsh-resource://file/session/..."
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充说明
+      description: 截图、录屏、或其他你认为有帮助的信息
+    validations:
+      required: false

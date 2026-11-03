@@ -1,0 +1,37 @@
+# 产出画廊：右侧栏「产出画廊」tab 的 Host 半部（扫描 + /api 路由）。
+# 浏览器半部由 package.json 的 dsh.client 清单发现，并通过 ./client 导出。
+#
+# ⚠️ 顶层必须是「数组」，首项是 - insert:。写成对象（insert: 直接顶格）会导致 patch 无法加载，
+# 整个插件在面板里消失。
+#
+# 产出根目录（root）刻意不在这里写死，插件会按下面的顺序自动选：
+#   1. 运行时设置文件 <DSH_HOME>/dsh-gallery.json 里的 root（面板内可直接改，改完立即生效）
+#   2. 本文件里显式配置的 root（想给整个团队统一指定时再填）
+#   3. 自动探测：~/DSH产出 → ~/Documents/DSH产出 → ~/Desktop/DSH产出 → ~/Downloads/DSH产出
+#
+# 想显式指定就把 root 那行取消注释并改成你的目录（Windows 反斜杠要双写或改用正斜杠）：
+#   root: 'D:/产出'
+- insert:
+    - id: dsh-gallery
+      name: 'dsh-gallery'
+      config:
+        # root 留空 → 走自动探测 / 运行时设置
+        windowHours: 24
+        maxItems: 60
+        maxDepth: 3
+        extensions:
+          - .png
+          - .jpg
+          - .jpeg
+          - .webp
+        skipDirs:
+          - library_merged
+          - node_modules
+          - .git
+          - .svn
+          - $RECYCLE.BIN
+          - System Volume Information
+          - __pycache__
+          - .venv
+          - venv
+          - .cache

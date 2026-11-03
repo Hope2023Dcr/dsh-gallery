@@ -1,0 +1,24 @@
+# npm 打包时排除的内容
+# 注意：本插件不是通过 npm 分发的，这个文件是为「万一有人 npm pack」时兜底
+
+# 开发与归档文件
+releases/
+docs/
+*.zip
+*.tgz
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# 临时与日志
+*.log
+*.tmp
+*.bak
+*.bak-*
+
+# 本机配置
+dsh-gallery.json
+.env
