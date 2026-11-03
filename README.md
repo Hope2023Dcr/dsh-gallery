@@ -5,9 +5,18 @@
 [![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](#技术说明给想改代码的人)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#兼容性)
 
-给 DSH 的右侧栏加一个「产出画廊」面板：自动扫描你指定的**产出目录**，把最近 24 小时生成或修改的图片、文档、代码、数据文件全部列出来，缩略图网格 + 点开放大 + 一键调用 DSH 原生预览。
+在 DSH 右侧栏看**你自己的产出目录**，不是对话框里的图。
 
-专为「让 Agent 边干活边给你看产出」这个场景做的：任务进行中生成的东西，不用等它结束报路径，侧栏直接就能看见。
+Agent 每轮跑完都把文件写到磁盘上，但 DSH 只会在任务末尾报一串路径。这个插件直接扫磁盘，把产出目录变成实时画廊：图片生成即可见，文件点一下就用 DSH 原生侧栏打开。
+
+> **和市面上的「对话图片查看器」不一样在哪：**
+>
+> | | 常见的对话图片灯箱 | 这个插件 |
+> |---|---|---|
+> | **看哪里** | 对话里的图片附件 | **磁盘上的产出目录**（Agent 真正写文件的地方） |
+> | **能看什么** | 只有图片 | 图片 + **48 种文档/代码/数据文件** |
+> | **怎么打开文件** | 无 | **调 DSH 原生侧栏预览**（Markdown 渲染、代码高亮都是 DSH 自己的） |
+> | **多个对话混在一起** | 不区分 | **可按「本对话产出」筛**，读会话日志判定归属 |
 
 > **一句话安装**：解压后在该目录执行 `node install.mjs`，然后重启 DSH。
 > 详细步骤见[安装](#安装)，常见问题见[已知限制](#已知限制)。
@@ -23,6 +32,8 @@ DSH 默认把产出**攒到任务末尾**才列名称和路径，中间过程看
 - 图片自动刷新（5 秒），生成即可见
 - 文件卡片一列面全，点一下就在 DSH 原生侧栏打开
 - 还能按「本对话产出」筛，一眼分清哪些是这个对话做的
+
+**典型场景**：让 Agent 批量出 30 张图，你不用等它跑完再一张张点路径核对——侧栏里实时滚动，看到哪张不对当场就能喊停改提示词。
 
 ---
 
@@ -74,7 +85,25 @@ DSH 默认把产出**攒到任务末尾**才列名称和路径，中间过程看
 
 已安装 DSH 桌面版或 Web 版。
 
-### 方式一：一键脚本（推荐）
+### 方式零：DSH 插件页一行装（最省事）
+
+打开 DSH → **插件页** → **添加插件** → **安装第三方插件**，在输入框粘贴：
+
+```
+github:Hope2023Dcr/dsh-gallery
+```
+
+点安装。DSH 会自动从 GitHub 拉取并装好，装完重启 DSH。
+
+> 想锁定版本（推荐，避免仓库更新导致行为变化）：
+>
+> ```
+> git+https://github.com/Hope2023Dcr/dsh-gallery.git#03c05fb324aeca02cbf0b4bafff9542b013f212b
+> ```
+
+> ⚠️ 这种方式需要**能访问 GitHub**。DSH 的「国内镜像」只代理 npm 包，不代替 GitHub 下载。
+
+### 方式一：一键脚本（推荐，可离线）
 
 下载本仓库（`Code → Download ZIP`，或 `git clone`），解压后**在解压出来的目录里**执行：
 
@@ -122,7 +151,7 @@ node install.mjs --dry-run           # 只看会做什么，不写入
 Windows PowerShell：
 
 ```powershell
-$target = "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\@local\dsh-gallery"
+$target = "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-gallery"
 New-Item -ItemType Directory -Force -Path $target | Out-Null
 Copy-Item index.js,client.js,package.json,cordis.patch.yml,icon.svg -Destination $target
 Copy-Item locale -Destination $target -Recurse
