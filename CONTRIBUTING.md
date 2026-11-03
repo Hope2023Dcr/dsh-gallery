@@ -4,16 +4,34 @@
 
 ## 提交前请先跑这两件事
 
-```bash
-# 1. 语法检查（本机没有全局 node 的话，用 DSH 自带的）
-node --check index.js
-node --check client.js
+### 1. 跑本地校验脚本
 
-# 2. 装到本地验证（改 index.js 后必须重启 DSH，改 client.js 刷新页面即可）
-node install.mjs --dry-run
+```bash
+./check.sh            # 基础检查（语法 / 字段 / YAML 结构 / 依赖 / 硬编码路径）
+./check.sh --install  # 额外验证安装脚本（慢一点）
 ```
 
-**别只跑 `--check` 就提 PR。** 语法通过不代表功能正确，最好实际打开面板点一遍。
+它会检查 10 项，**特别是 `cordis.patch.yml` 的顶层结构** —— 这个写错插件会直接从面板消失。
+
+> 脚本自动找 node：优先 PATH，其次 DSH 桌面版自带运行时。都不行时用 `NODE=/path/to/node ./check.sh` 显式指定。
+
+### 2. 装到本地实测
+
+```bash
+node install.mjs --dry-run   # 看会做什么
+node install.mjs             # 真装（改 index.js 后必须重启 DSH，改 client.js 刷新页面即可）
+```
+
+**别只跑 `check.sh` 就提 PR。** 静态检查通过不代表功能正确，最好实际打开面板点一遍。
+
+### 可选：挂成 pre-commit 钩子
+
+```bash
+printf '#!/bin/sh\n./check.sh\n' > .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+```
+
+这样每次 `git commit` 前自动跑一次，不合规直接拒绝提交。
 
 ## 代码约定
 
