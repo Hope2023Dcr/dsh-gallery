@@ -82,6 +82,35 @@ window.__ModuleLoader__.load({
       rootEmptyHint: '当前目录下没有符合条件的产出，可换个目录或在设置里调整',
       dgStatusAction: '',
       more: '还有 {count} 张',
+      dragHint: '拖动右侧滑块或直接拖图平移',
+      panUpHint: '向上移动图片',
+      panDownHint: '向下移动图片',
+      trackHint: '点击此位置跳转',
+      zoomInHint: '放大（也可按 +）',
+      zoomOutHint: '缩小（也可按 -）',
+      zoomResetHint: '恢复原始大小（也可按 0）',
+      // 右键菜单
+      ctxHint: '右键更多操作',
+      ctxHide: '隐藏（不再列出）',
+      ctxUnhide: '取消隐藏',
+      ctxReveal: '打开所在文件夹',
+      ctxCopy: '复制路径',
+      ctxDelete: '删除文件',
+      ctxDeleteConfirm: '确认删除？此操作不可恢复',
+      ctxDeleteYes: '确认删除',
+      ctxDeleteNo: '取消',
+      ctxHiddenDone: '已隐藏，可在设置里恢复',
+      ctxDeleting: '删除中…',
+      ctxDeleteFailed: '删除失败',
+      // 已隐藏管理
+      hiddenCount: '已隐藏 {count} 个',
+      hiddenClear: '全部恢复',
+      hiddenClearing: '恢复中…',
+      hiddenClearHint: '让所有被隐藏的文件重新出现在列表里（不会删除文件）',
+      hiddenCleared: '已全部恢复',
+      hiddenMore: '还有 {count} 个未显示',
+      pagerRange: '第 {start}–{end} 条 · 共 {total} 条',
+      pageTip: '跳到第 {page} 页',
       thumbFailed: '无法加载',
       dims: '{w} × {h}',
       dimsUnknown: '尺寸未知',
@@ -143,6 +172,33 @@ window.__ModuleLoader__.load({
       rootEmptyHint: 'Nothing matches in this folder. Pick another folder or adjust settings.',
       dgStatusAction: '',
       more: '{count} more',
+      dragHint: 'Drag the scrollbar on the right, or drag the image',
+      panUpHint: 'Move image up',
+      panDownHint: 'Move image down',
+      trackHint: 'Click here to jump',
+      zoomInHint: 'Zoom in (or press +)',
+      zoomOutHint: 'Zoom out (or press -)',
+      zoomResetHint: 'Reset zoom (or press 0)',
+      ctxHint: 'Right-click for more',
+      ctxHide: 'Hide (stop listing)',
+      ctxUnhide: 'Unhide',
+      ctxReveal: 'Open containing folder',
+      ctxCopy: 'Copy path',
+      ctxDelete: 'Delete file',
+      ctxDeleteConfirm: 'Delete permanently? This cannot be undone',
+      ctxDeleteYes: 'Delete',
+      ctxDeleteNo: 'Cancel',
+      ctxHiddenDone: 'Hidden. Restore it in settings later.',
+      ctxDeleting: 'Deleting…',
+      ctxDeleteFailed: 'Delete failed',
+      hiddenCount: '{count} hidden',
+      hiddenClear: 'Restore all',
+      hiddenClearing: 'Restoring…',
+      hiddenClearHint: 'Show all hidden files again (files are not deleted)',
+      hiddenCleared: 'All restored',
+      hiddenMore: '{count} more not shown',
+      pagerRange: '{start}–{end} of {total}',
+      pageTip: 'Go to page {page}',
       thumbFailed: 'Cannot load',
       dims: '{w} × {h}',
       dimsUnknown: 'Size unknown',
@@ -416,6 +472,48 @@ window.__ModuleLoader__.load({
   word-break: break-all;
 }
 .dg-settingsActions { display: flex; gap: 8px; flex-wrap: wrap; padding-top: 2px; }
+
+/* ===== 已隐藏管理区块 ===== */
+.dg-hiddenBox {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 10px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+}
+.dg-hiddenRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.dg-hiddenLabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+.dg-hiddenList {
+  margin: 0;
+  padding: 0 0 0 14px;
+  list-style: disc;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 96px;
+  overflow: auto;
+}
+.dg-hiddenItem {
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dg-hiddenMore { font-size: 11px; color: var(--dsw-alias-label-secondary); padding-left: 2px; }
 .dg-primaryBtn {
   color: var(--dsw-alias-label-primary);
   border-color: var(--dsw-alias-brand-primary);
@@ -427,6 +525,20 @@ window.__ModuleLoader__.load({
 .dg-ok { color: var(--dsw-alias-brand-primary); }
 .dg-statusAction { padding-top: 0; }
 .dg-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 10px; }
+/* 网格区外层：定位容器，右侧挂滚动辅助列（无滚轮场景） */
+.dg-bodyWrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  overflow: hidden;
+}
+.dg-bodyWrap > .dg-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* 右侧留出 38px 给辅助列，避免滑块压住卡片 */
+  padding-right: 42px;
+}
 .dg-status { color: var(--dsw-alias-label-secondary); padding: 16px 4px; text-align: center; }
 .dg-error { color: var(--dsw-alias-state-error-primary); }
 .dg-grid {
@@ -481,6 +593,248 @@ window.__ModuleLoader__.load({
   text-align: center;
   font-size: 12px;
 }
+
+/* ===== 分页条：常驻网格下方 ===== */
+.dg-pager {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-1);
+}
+.dg-pagerInfo {
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+}
+.dg-pagerRemain {
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+}
+.dg-pagerBtns {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.dg-pageBtn {
+  appearance: none;
+  min-width: 28px;
+  height: 26px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: color .15s ease, border-color .15s ease, background .15s ease;
+}
+.dg-pageBtn:hover:not(:disabled) {
+  color: var(--dsw-alias-label-primary);
+  border-color: var(--dsw-alias-brand-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.dg-pageActive {
+  color: var(--dsw-alias-label-primary);
+  border-color: var(--dsw-alias-brand-primary);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent);
+  font-weight: 600;
+  cursor: default;
+}
+.dg-pageActive:disabled { opacity: 1; }
+.dg-pageGap {
+  padding: 0 2px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+.dg-pageBtn:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
+
+/* ===== 右键菜单 ===== */
+.dg-ctxLayer { position: fixed; inset: 0; z-index: 60; }
+.dg-ctxMenu {
+  position: fixed;
+  min-width: 180px;
+  max-width: 260px;
+  padding: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0,0,0,.22);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dg-ctxHead {
+  padding: 5px 8px 7px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  margin-bottom: 3px;
+}
+.dg-ctxItem {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 9px;
+  text-align: left;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--dsw-alias-label-primary);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.dg-ctxItem:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.dg-ctxItem:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
+.dg-ctxIco { flex: 0 0 auto; font-size: 13px; line-height: 1; opacity: .85; }
+.dg-ctxDanger { color: var(--dsw-alias-state-error-primary); }
+.dg-ctxDanger:hover { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent); }
+
+/* ===== 删除确认 ===== */
+.dg-confirmLayer {
+  position: absolute; inset: 0; z-index: 70;
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-overlay) 72%, transparent);
+}
+.dg-confirm {
+  width: 100%; max-width: 340px;
+  padding: 14px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,.24);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.dg-confirmTitle { font-size: 13px; font-weight: 600; color: var(--dsw-alias-label-primary); }
+.dg-confirmName {
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+  word-break: break-all;
+  padding: 7px 9px;
+  background: var(--dsw-alias-bg-layer-2);
+  border-radius: 6px;
+}
+.dg-confirmActions { display: flex; justify-content: flex-end; gap: 8px; }
+.dg-dangerBtn {
+  color: #fff;
+  background: var(--dsw-alias-state-error-primary);
+  border-color: var(--dsw-alias-state-error-primary);
+}
+.dg-dangerBtn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 85%, #000 15%);
+  border-color: var(--dsw-alias-state-error-primary);
+}
+
+/* ===== 放大预览：舞台 + 右侧平移控制列 ===== */
+.dg-viewerStage {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  display: flex;
+}
+.dg-zoomBadge {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dsw-alias-brand-primary);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent);
+  border: 1px solid var(--dsw-alias-brand-primary);
+  border-radius: 5px;
+  line-height: 1.4;
+}
+.dg-zoomCtl { display: inline-flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+.dg-btnTiny {
+  min-width: 26px;
+  padding: 2px 6px;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+/* 右侧竖列：▲ 按钮、轨道、▼ 按钮（放大页与列表页共用） */
+.dg-panRail {
+  position: absolute;
+  top: 8px;
+  right: 4px;
+  bottom: 8px;
+  width: 30px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  z-index: 6;
+}
+/* 列表页的辅助列：贴着网格区右侧，上下各留一点边 */
+.dg-bodyWrap > .dg-panRail {
+  top: 10px;
+  bottom: 10px;
+}
+.dg-panBtn {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease;
+}
+.dg-panBtn:hover:not(:disabled) {
+  border-color: var(--dsw-alias-brand-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.dg-panBtn:disabled { opacity: .35; cursor: default; }
+.dg-panBtn:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
+
+.dg-dragTrack {
+  flex: 1 1 auto;
+  position: relative;
+  width: 10px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 10%, transparent);
+  cursor: pointer;
+  user-select: none;
+  touch-action: none;
+}
+.dg-dragTrack:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 18%, transparent); }
+.dg-dragThumb {
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  top: 0;
+  min-height: 24px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 55%, transparent);
+  border: 1px solid var(--dsw-alias-brand-primary);
+  cursor: grab;
+  transition: background .15s ease;
+}
+.dg-dragThumb:hover { background: var(--dsw-alias-brand-primary); }
+.dg-dragThumbActive { background: var(--dsw-alias-brand-primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-brand-primary) 35%, transparent); }
+.dg-dragThumb:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
+
 .dg-viewer {
   position: relative;
   flex: 1 1 auto;
@@ -499,7 +853,7 @@ window.__ModuleLoader__.load({
   flex: 0 0 auto;
 }
 .dg-viewerTitle { flex: 1 1 auto; min-width: 0; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dg-viewerBody { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 10px; }
+.dg-viewerBody { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 10px 42px 10px 10px; }
 .dg-viewerBody img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
 .dg-viewerLayer { position: absolute; inset: 0; z-index: 30; background: var(--dsw-specific-sidebar-fill, #111); display: flex; flex-direction: column; }
 .dg-viewerLayer .dg-viewer { flex: 1 1 auto; min-height: 0; }
@@ -653,7 +1007,120 @@ window.__ModuleLoader__.load({
      *   ② 中部：三个操作按钮（侧边预览 / 复制路径 / 打开本地位置）
      *   ③ 底部：元信息
      */
-    function FileCard({ item, t, absPath, onOpenFolder, onPreview }) {
+    /**
+     * 右键菜单：隐藏 / 打开位置 / 复制路径 / 删除。
+     * 挂在卡片上，位置跟随鼠标；点外部或按 Esc 关闭。
+     * 删除需要二次确认（走 ConfirmDialog）。
+     */
+    function ContextMenu({ t, x, y, item, actions, onClose }) {
+      const menuRef = React.useRef(null)
+      const [pos, setPos] = React.useState({ left: x, top: y })
+
+      // 边界处理：靠近视口右侧/底部时向内收，避免被截断
+      React.useLayoutEffect(() => {
+        const node = menuRef.current
+        if (node === null) return
+        const rect = node.getBoundingClientRect()
+        const pad = 8
+        let left = x
+        let top = y
+        if (left + rect.width > window.innerWidth - pad) left = window.innerWidth - rect.width - pad
+        if (top + rect.height > window.innerHeight - pad) top = window.innerHeight - rect.height - pad
+        setPos({ left: Math.max(pad, left), top: Math.max(pad, top) })
+      }, [x, y])
+
+      React.useEffect(() => {
+        const onDown = (event) => {
+          if (menuRef.current !== null && menuRef.current.contains(event.target)) return
+          onClose()
+        }
+        const onKey = (event) => { if (event.key === 'Escape') onClose() }
+        // 捕获阶段监听，确保点击卡片本身也能关闭菜单
+        document.addEventListener('pointerdown', onDown, true)
+        window.addEventListener('keydown', onKey)
+        return () => {
+          document.removeEventListener('pointerdown', onDown, true)
+          window.removeEventListener('keydown', onKey)
+        }
+      }, [onClose])
+
+      const entry = (key, label, icon, run, danger) => h('button', {
+        type: 'button',
+        key,
+        className: `dg-ctxItem${danger ? ' dg-ctxDanger' : ''}`,
+        'data-gallery-ctx': key,
+        onClick: (event) => {
+          event.stopPropagation()
+          event.preventDefault()
+          onClose()
+          run()
+        },
+      }, [
+        h('span', { className: 'dg-ctxIco', key: 'i' }, icon),
+        h('span', { key: 'l' }, label),
+      ])
+
+      return h('div', {
+        className: 'dg-ctxLayer',
+        key: 'ctxLayer',
+        onPointerDown: (event) => event.stopPropagation(),
+        onContextMenu: (event) => event.preventDefault(),
+      }, h('div', {
+        className: 'dg-ctxMenu',
+        key: 'menu',
+        ref: menuRef,
+        role: 'menu',
+        'data-gallery-contextmenu': item.relPath,
+        style: { left: `${pos.left}px`, top: `${pos.top}px` },
+      }, [
+        h('div', { className: 'dg-ctxHead', key: 'head' }, item.name),
+        entry('hide', t('ctxHide'), '🚫', () => actions.onHide()),
+        entry('reveal', t('ctxReveal'), '📂', () => actions.onReveal()),
+        entry('copy', t('ctxCopy'), '⧉', () => actions.onCopy()),
+        entry('delete', t('ctxDelete'), '🗑', () => actions.onDelete(), true),
+      ]))
+    }
+
+    /** 删除确认弹窗：删除不可逆，必须二次确认。 */
+    function ConfirmDialog({ t, name, busy, onCancel, onConfirm }) {
+      React.useEffect(() => {
+        const onKey = (event) => {
+          if (busy) return
+          if (event.key === 'Escape') { event.preventDefault(); onCancel() }
+        }
+        window.addEventListener('keydown', onKey)
+        return () => window.removeEventListener('keydown', onKey)
+      }, [busy, onCancel])
+
+      return h('div', {
+        className: 'dg-confirmLayer',
+        key: 'confirmLayer',
+        onPointerDown: (event) => event.stopPropagation(),
+      }, h('div', {
+        className: 'dg-confirm',
+        role: 'alertdialog',
+        'aria-modal': true,
+        'data-gallery-confirm-delete': name,
+      }, [
+        h('div', { className: 'dg-confirmTitle', key: 'title' }, t('ctxDeleteConfirm')),
+        h('div', { className: 'dg-confirmName', key: 'name' }, name),
+        h('div', { className: 'dg-confirmActions', key: 'actions' }, [
+          h('button', {
+            type: 'button', key: 'no', className: 'dg-btn',
+            disabled: busy,
+            onClick: onCancel,
+          }, t('ctxDeleteNo')),
+          h('button', {
+            type: 'button', key: 'yes', className: 'dg-btn dg-dangerBtn',
+            disabled: busy,
+            'data-gallery-confirm-yes': true,
+            onClick: onConfirm,
+          }, busy ? t('ctxDeleting') : t('ctxDeleteYes')),
+        ]),
+      ]))
+    }
+
+    function FileCard({ item, t, absPath, onOpenFolder, onPreview, onContextMenu }) {
       const ext = (item.extension ?? '').replace(/^\./, '').toLowerCase()
       const badge = (ext === '' ? 'FILE' : ext).slice(0, 4).toUpperCase()
       const [copied, setCopied] = React.useState(false)
@@ -686,6 +1153,11 @@ window.__ModuleLoader__.load({
 ${absPath}
 点击在 DSH 右侧栏预览`,
         onClick: () => onPreview(absPath),
+        onContextMenu: (event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          if (typeof onContextMenu === 'function') onContextMenu(item, absPath, event)
+        },
         onKeyDown: (event) => {
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault()
@@ -729,7 +1201,7 @@ ${absPath}
     }
 
     /** 单张缩略图卡片：独立加载、独立失败，互不影响。 */
-    function Card({ item, t, onOpen, limiter }) {
+    function Card({ item, t, onOpen, limiter, onContextMenu }) {
       const [state, setState] = React.useState({ status: 'pending' })
       const [node, setNode] = React.useState(null)
 
@@ -797,6 +1269,11 @@ ${absPath}
         title: item.relPath,
         'data-gallery-card': item.relPath,
         onClick: (event) => onOpen(item, event.currentTarget),
+        onContextMenu: (event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          if (typeof onContextMenu === 'function') onContextMenu(item, null, event)
+        },
       }, [
         h('div', { className: 'dg-thumb', key: 'thumb' },
           state.status === 'ready'
@@ -851,6 +1328,8 @@ ${absPath}
       const [dragging, setDragging] = React.useState(false)
       const bodyRef = React.useRef(null)
       const dragRef = React.useRef(null)
+      // 上一次拖动是否真的产生了位移（用于区分「拖图」和「单击关闭」）
+      const lastDragMoved = React.useRef(false)
 
       React.useEffect(() => {
         let alive = true
@@ -897,16 +1376,28 @@ ${absPath}
         dragRef.current = null
       }, [item.relPath])
 
-      // 滚轮缩放：仅图片模式生效。文本预览用原生滚动，不拦截滚轮。
+      // 滚轮缩放：以鼠标位置为中心，避免放大后目标跑出视野（仅图片模式）。
+      // 文本预览用原生滚动，不拦截滚轮。
       React.useEffect(() => {
         const node = bodyRef.current
         if (node === null || state.status !== 'ready' || isText) return undefined
         const onWheel = (event) => {
           event.preventDefault()
           const delta = event.deltaY < 0 ? 1 : -1
+          const rect = node.getBoundingClientRect()
+          // 光标相对预览框中心的偏移
+          const cx = event.clientX - (rect.left + rect.width / 2)
+          const cy = event.clientY - (rect.top + rect.height / 2)
+
           setZoom((current) => {
             const next = Math.min(MAX_ZOOM, Math.max(1, current + delta * ZOOM_STEP))
-            if (next === 1) setPan({ x: 0, y: 0 })
+            if (next === 1) { setPan({ x: 0, y: 0 }); return 1 }
+            // 以光标为不动点缩放：光标下的像素点在缩放前后保持同一屏幕位置
+            const ratio = next / current
+            setPan((p) => ({
+              x: cx - (cx - p.x) * ratio,
+              y: cy - (cy - p.y) * ratio,
+            }))
             return next
           })
         }
@@ -915,60 +1406,252 @@ ${absPath}
       }, [state.status, isText])
 
       /**
-       * 拖拽平移：仅放大超出预览框时生效，**按住鼠标中键（滚轮）拖动**。
-       * 左键保留给「点击退出」，避免两种手势打架。
+       * 拖拽平移：放大后生效。支持**左键拖动**与**中键拖动**。
+       * 区分「拖动」与「单击退出」：位移超过阈值才算拖动，否则视为点击关闭。
        */
       const onPointerDown = (event) => {
         if (zoom <= 1) return
-        // 只认中键（button === 1）。中键默认会触发浏览器自动滚动，必须拦截。
-        if (event.button !== 1) return
+        // 左键(0) 与中键(1) 都可拖；中键默认会触发浏览器自动滚动，需拦截
+        if (event.button !== 0 && event.button !== 1) return
         event.preventDefault()
         event.stopPropagation()
-        dragRef.current = { x: event.clientX, y: event.clientY, ox: pan.x, oy: pan.y }
+        dragRef.current = {
+          x: event.clientX,
+          y: event.clientY,
+          ox: pan.x,
+          oy: pan.y,
+          moved: false,
+        }
+        try { event.currentTarget.setPointerCapture(event.pointerId) } catch {}
         setDragging(true)
       }
       const onPointerMove = (event) => {
         const d = dragRef.current
         if (d === null) return
         event.preventDefault()
-        setPan({ x: d.ox + (event.clientX - d.x), y: d.oy + (event.clientY - d.y) })
+        const dx = event.clientX - d.x
+        const dy = event.clientY - d.y
+        // 3px 阈值，避免手抖导致「点了却变成微拖」
+        if (!d.moved && Math.abs(dx) + Math.abs(dy) > 3) d.moved = true
+        setPan({ x: d.ox + dx, y: d.oy + dy })
       }
-      const endDrag = () => {
-        if (dragRef.current === null) return
+      const endDrag = (event) => {
+        const d = dragRef.current
+        if (d === null) return
         dragRef.current = null
+        // 把「这次是否真的拖动了」记下来，供紧随其后的 click 判断
+        lastDragMoved.current = d.moved === true
         setDragging(false)
+        if (event !== undefined) {
+          try { event.currentTarget.releasePointerCapture(event.pointerId) } catch {}
+        }
       }
       // 中键按下时阻止浏览器默认的自动滚动
       const onMouseDown = (event) => {
         if (event.button === 1) event.preventDefault()
       }
-      // 点击退出：左键单击，且没有正在拖拽时触发
+      /**
+       * 点击退出：只在「本次按下没有拖动过」时触发。
+       * 放大状态下左键是用来拖图的，松手后若真的移动过就不算点击。
+       */
       const onClickBody = (event) => {
-        if (dragRef.current !== null) return
         event.preventDefault()
+        if (lastDragMoved.current === true) {
+          lastDragMoved.current = false
+          return
+        }
         onClose()
       }
 
-      React.useEffect(() => {
-        const onKey = (event) => {
-          if (event.key === 'Escape') {
-            event.preventDefault()
-            onClose()
-          } else if (event.key === 'ArrowLeft') {
-            event.preventDefault()
-            onStep(-1)
-          } else if (event.key === 'ArrowRight') {
-            event.preventDefault()
-            onStep(1)
-          }
-        }
-        window.addEventListener('keydown', onKey)
-        return () => window.removeEventListener('keydown', onKey)
-      }, [onClose, onStep])
+      // 键盘快捷键在 panStep/zoomBy 定义之后再绑定（见下方 effect）
 
       const dims = item.width !== null && item.height !== null
         ? format(t('dims'), { w: item.width, h: item.height })
         : t('dimsUnknown')
+
+      // ---- 右侧垂直拖动条（zoom > 1 时出现）----
+      // 滑块高度 = 视口高 / 缩放倍率；拖动滑块即沿 y 轴平移图片。
+      const clampPanY = React.useCallback((y) => {
+        const node = bodyRef.current
+        if (node === null || zoom <= 1) return 0
+        const overflow = Math.max(0, (node.clientHeight * (zoom - 1)) / 2)
+        return Math.max(-overflow, Math.min(overflow, y))
+      }, [zoom])
+
+      // ---- 缩放与平移的「无鼠标」友好操作 ----
+      // 远程控制（如 ToDesk）常常没有实体鼠标，滚轮与精细拖动都难用。
+      // 所以提供：点击轨道跳转、上下按钮、键盘方向键、缩放按钮。
+      const PAN_STEP = 0.25   // 每次按钮/键盘移动「可视范围」的 25%
+
+      /** 当前竖向可平移范围（居中坐标系，±overflow）。 */
+      const vOverflow = React.useCallback(() => {
+        const node = bodyRef.current
+        if (node === null || zoom <= 1) return 0
+        return Math.max(0, (node.clientHeight * (zoom - 1)) / 2)
+      }, [zoom])
+
+      /** 按比例平移：ratio 为 +1 → 移到顶部，-1 → 移到底部。 */
+      const panTo = React.useCallback((ratio) => {
+        const overflow = vOverflow()
+        if (overflow <= 0) return
+        const r = Math.max(-1, Math.min(1, ratio))
+        setPan((p) => ({ x: p.x, y: -r * overflow }))
+      }, [vOverflow])
+
+      /** 步进一步：direction = -1 向上、+1 向下。 */
+      const panStep = React.useCallback((direction) => {
+        const overflow = vOverflow()
+        if (overflow <= 0) return
+        const step = overflow * PAN_STEP * (direction > 0 ? -1 : 1)
+        setPan((p) => ({ x: p.x, y: Math.max(-overflow, Math.min(overflow, p.y + step)) }))
+      }, [vOverflow])
+
+      const zoomBy = React.useCallback((direction) => {
+        setZoom((current) => {
+          const next = Math.min(MAX_ZOOM, Math.max(1, current + direction * ZOOM_STEP))
+          if (next === 1) setPan({ x: 0, y: 0 })
+          return next
+        })
+      }, [])
+
+      /**
+       * 点击轨道空白处：直接跳到该位置（省去精细拖动）。
+       * 远程控制下这比拖滑块好用得多。
+       */
+      const onTrackClick = (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        const rect = event.currentTarget.getBoundingClientRect()
+        const ratio = (event.clientY - rect.top) / Math.max(1, rect.height)
+        // ratio 0 = 轨道顶部 → 图片顶部
+        panTo(1 - ratio * 2)
+      }
+
+      // 键盘：方向键左右切图、上下平移、+/- 缩放、Esc 退出。
+      // 远程控制下键盘比鼠标精确，是主要操作方式。
+      React.useEffect(() => {
+        const onKey = (event) => {
+          const key = event.key
+          if (key === 'Escape') {
+            event.preventDefault()
+            onClose()
+          } else if (key === 'ArrowLeft') {
+            event.preventDefault()
+            onStep(-1)
+          } else if (key === 'ArrowRight') {
+            event.preventDefault()
+            onStep(1)
+          } else if (key === 'ArrowUp') {
+            event.preventDefault()
+            panStep(-1)
+          } else if (key === 'ArrowDown') {
+            event.preventDefault()
+            panStep(1)
+          } else if (key === '+' || key === '=') {
+            event.preventDefault()
+            zoomBy(1)
+          } else if (key === '-' || key === '_') {
+            event.preventDefault()
+            zoomBy(-1)
+          } else if (key === '0') {
+            event.preventDefault()
+            setZoom(1)
+            setPan({ x: 0, y: 0 })
+          }
+        }
+        window.addEventListener('keydown', onKey)
+        return () => window.removeEventListener('keydown', onKey)
+      }, [onClose, onStep, panStep, zoomBy])
+
+      const sliderDragRef = React.useRef(null)
+      const onSliderPointerDown = (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        const node = bodyRef.current
+        if (node === null) return
+        const trackH = node.clientHeight
+        const overflow = Math.max(0, (trackH * (zoom - 1)) / 2)
+        if (overflow <= 0) return
+        sliderDragRef.current = { startY: event.clientY, startPanY: pan.y, overflow, trackH }
+        try { event.currentTarget.setPointerCapture(event.pointerId) } catch {}
+      }
+      const onSliderPointerMove = (event) => {
+        const d = sliderDragRef.current
+        if (d === null) return
+        event.preventDefault()
+        const sliderH = Math.max(24, d.trackH / zoom)
+        const travel = Math.max(1, d.trackH - sliderH)
+        const deltaPx = event.clientY - d.startY
+        // 滑块移动整条 travel 对应图片从 +overflow 移到 -overflow
+        const nextY = d.startPanY - (deltaPx * (2 * d.overflow)) / travel
+        setPan((p) => ({ x: p.x, y: clampPanY(nextY) }))
+      }
+      const endSliderDrag = (event) => {
+        if (sliderDragRef.current === null) return
+        sliderDragRef.current = null
+        if (event !== undefined) {
+          try { event.currentTarget.releasePointerCapture(event.pointerId) } catch {}
+        }
+      }
+
+      // 右侧竖列：↑ 按钮 + 轨道 + ↓ 按钮。远程控制下没有滚轮也能上下移动。
+      const slider = (() => {
+        if (isText || zoom <= 1 || state.status !== 'ready') return null
+        const node = bodyRef.current
+        const trackH = node === null ? 0 : node.clientHeight
+        if (trackH <= 0) return null
+        const overflow = Math.max(0, (trackH * (zoom - 1)) / 2)
+        const sliderH = Math.max(24, trackH / zoom)
+        const travel = Math.max(1, trackH - sliderH)
+        const ratio = overflow <= 0 ? 0.5 : (pan.y + overflow) / (2 * overflow)
+        const top = Math.max(0, Math.min(travel, travel * (1 - ratio)))
+        const atTop = overflow > 0 && pan.y >= overflow - 1
+        const atBottom = overflow > 0 && pan.y <= -overflow + 1
+
+        return h('div', { className: 'dg-panRail', key: 'panRail', 'data-gallery-panrail': true }, [
+          h('button', {
+            type: 'button',
+            className: 'dg-panBtn',
+            key: 'up',
+            'data-gallery-pan': 'up',
+            title: t('panUpHint'),
+            'aria-label': t('panUpHint'),
+            disabled: atTop,
+            onClick: (event) => { event.stopPropagation(); panStep(-1) },
+          }, '▲'),
+          h('div', {
+            className: 'dg-dragTrack',
+            key: 'dragTrack',
+            'data-gallery-dragtrack': true,
+            title: t('trackHint'),
+            onPointerDown: (event) => event.stopPropagation(),
+            onClick: onTrackClick,
+          }, h('div', {
+            className: `dg-dragThumb${dragging ? ' dg-dragThumbActive' : ''}`,
+            key: 'thumb',
+            'data-gallery-dragthumb': true,
+            role: 'slider',
+            'aria-orientation': 'vertical',
+            'aria-label': t('dragHint'),
+            style: { height: `${Math.round(sliderH)}px`, transform: `translateY(${Math.round(top)}px)` },
+            title: t('dragHint'),
+            onPointerDown: onSliderPointerDown,
+            onPointerMove: onSliderPointerMove,
+            onPointerUp: endSliderDrag,
+            onPointerCancel: endSliderDrag,
+          })),
+          h('button', {
+            type: 'button',
+            className: 'dg-panBtn',
+            key: 'down',
+            'data-gallery-pan': 'down',
+            title: t('panDownHint'),
+            'aria-label': t('panDownHint'),
+            disabled: atBottom,
+            onClick: (event) => { event.stopPropagation(); panStep(1) },
+          }, '▼'),
+        ])
+      })()
 
       return h('div', {
         className: 'dg-viewer',
@@ -979,52 +1662,85 @@ ${absPath}
       }, [
         h('div', { className: 'dg-viewerBar', key: 'bar' }, [
           h('span', { className: 'dg-viewerTitle', key: 'title' }, item.name),
+          zoom > 1
+            ? h('span', { className: 'dg-zoomBadge', key: 'zoom', 'data-gallery-zoom-badge': zoom }, `${zoom.toFixed(1)}×`)
+            : null,
+          // 缩放按钮：远程控制下没有滚轮也能操作
+          !isText && h('div', { className: 'dg-zoomCtl', key: 'zoomCtl' }, [
+            h('button', {
+              type: 'button', className: 'dg-btn dg-btnTiny', key: 'out',
+              'data-gallery-zoom-out': true,
+              disabled: zoom <= 1,
+              title: t('zoomOutHint'), 'aria-label': t('zoomOutHint'),
+              onClick: (event) => { event.stopPropagation(); zoomBy(-1) },
+            }, '－'),
+            h('button', {
+              type: 'button', className: 'dg-btn dg-btnTiny', key: 'in',
+              'data-gallery-zoom-in': true,
+              disabled: zoom >= MAX_ZOOM,
+              title: t('zoomInHint'), 'aria-label': t('zoomInHint'),
+              onClick: (event) => { event.stopPropagation(); zoomBy(1) },
+            }, '＋'),
+            h('button', {
+              type: 'button', className: 'dg-btn dg-btnTiny', key: 'fit',
+              'data-gallery-zoom-reset': true,
+              disabled: zoom <= 1,
+              title: t('zoomResetHint'), 'aria-label': t('zoomResetHint'),
+              onClick: (event) => { event.stopPropagation(); setZoom(1); setPan({ x: 0, y: 0 }) },
+            }, '1:1'),
+          ]),
           h('button', { type: 'button', className: 'dg-btn', key: 'prev', onClick: () => onStep(-1), 'aria-label': t('prev') }, '‹'),
           h('button', { type: 'button', className: 'dg-btn', key: 'next', onClick: () => onStep(1), 'aria-label': t('next') }, '›'),
           h('button', { type: 'button', className: 'dg-btn', key: 'close', onClick: onClose, 'aria-label': t('close') }, '✕'),
         ]),
-        h('div', {
-          className: `dg-viewerBody${isText ? ' dg-textBody' : ''}`,
-          key: 'body',
-          ref: bodyRef,
-          'data-gallery-zoom': isText ? 1 : zoom,
-          'data-gallery-text': isText ? true : undefined,
-          style: isText
-            ? { overflow: 'auto', cursor: 'default' }
-            : {
-                overflow: zoom > 1 ? 'hidden' : 'auto',
-                cursor: zoom > 1 ? (dragging ? 'grabbing' : 'grab') : 'zoom-out',
-              },
-          onClick: isText ? undefined : onClickBody,
-          onMouseDown: isText ? undefined : onMouseDown,
-          onPointerDown: isText ? undefined : onPointerDown,
-          onPointerMove: isText ? undefined : onPointerMove,
-          onPointerUp: isText ? undefined : endDrag,
-          onPointerLeave: isText ? undefined : endDrag,
-          onPointerCancel: isText ? undefined : endDrag,
-          onAuxClick: isText ? undefined : (event) => { if (event.button === 1) event.preventDefault() },
-        },
-          state.status === 'ready'
-            ? (isText
-                ? h('pre', { className: 'dg-textPre', key: 'text' }, state.text)
-                : h('img', {
-                    src: state.url,
-                    alt: item.name,
-                    decoding: 'async',
-                    draggable: false,
-                    style: {
-                      transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                      transition: dragRef.current === null ? 'transform 120ms ease-out' : 'none',
-                      userSelect: 'none',
-                      pointerEvents: 'none',
-                    },
-                  }))
-            : state.status === 'binary'
-              ? h('div', { className: 'dg-placeholder', key: 'bin' }, t('binaryHint'))
-            : h('div', { className: state.status === 'failed' ? 'dg-placeholder dg-error' : 'dg-placeholder' },
-                state.status === 'failed' ? `${t('thumbFailed')}：${item.name}` : t('loading')),
-        ),
-        h('div', { className: 'dg-viewerFoot', key: 'foot' }, `${dims} · ${formatBytes(item.size)} · ${formatTime(item.mtime)}`),
+        h('div', { className: 'dg-viewerStage', key: 'stage' }, [
+          h('div', {
+            className: `dg-viewerBody${isText ? ' dg-textBody' : ''}`,
+            key: 'body',
+            ref: bodyRef,
+            'data-gallery-zoom': isText ? 1 : zoom,
+            'data-gallery-text': isText ? true : undefined,
+            style: isText
+              ? { overflow: 'auto', cursor: 'default' }
+              : {
+                  overflow: zoom > 1 ? 'hidden' : 'auto',
+                  cursor: zoom > 1 ? (dragging ? 'grabbing' : 'grab') : 'zoom-out',
+                },
+            onClick: isText ? undefined : onClickBody,
+            onMouseDown: isText ? undefined : onMouseDown,
+            onPointerDown: isText ? undefined : onPointerDown,
+            onPointerMove: isText ? undefined : onPointerMove,
+            onPointerUp: isText ? undefined : endDrag,
+            onPointerLeave: isText ? undefined : endDrag,
+            onPointerCancel: isText ? undefined : endDrag,
+            onAuxClick: isText ? undefined : (event) => { if (event.button === 1) event.preventDefault() },
+          },
+            state.status === 'ready'
+              ? (isText
+                  ? h('pre', { className: 'dg-textPre', key: 'text' }, state.text)
+                  : h('img', {
+                      src: state.url,
+                      alt: item.name,
+                      decoding: 'async',
+                      draggable: false,
+                      style: {
+                        transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                        transition: dragRef.current === null ? 'transform 120ms ease-out' : 'none',
+                        userSelect: 'none',
+                        pointerEvents: 'none',
+                      },
+                    }))
+              : state.status === 'binary'
+                ? h('div', { className: 'dg-placeholder', key: 'bin' }, t('binaryHint'))
+                : h('div', { className: state.status === 'failed' ? 'dg-placeholder dg-error' : 'dg-placeholder' },
+                    state.status === 'failed' ? `${t('thumbFailed')}：${item.name}` : t('loading')),
+          ),
+          slider,
+        ]),
+        h('div', { className: 'dg-viewerFoot', key: 'foot' },
+          zoom > 1
+            ? `${dims} · ${formatBytes(item.size)} · ${formatTime(item.mtime)} · ${t('dragHint')}`
+            : `${dims} · ${formatBytes(item.size)} · ${formatTime(item.mtime)}`),
       ])
     }
 
@@ -1040,6 +1756,8 @@ ${absPath}
       const [error, setError] = React.useState(null)
       const [saving, setSaving] = React.useState(false)
       const [saved, setSaved] = React.useState(false)
+      const [clearing, setClearing] = React.useState(false)
+      const [hiddenCleared, setHiddenCleared] = React.useState(false)
 
       React.useEffect(() => {
         let alive = true
@@ -1085,6 +1803,28 @@ ${absPath}
         if (info.rootSource === 'config') return t('rootSourceConfig')
         return t('rootSourceAuto')
       }, [info, t])
+
+      /** 全部恢复：清空隐藏列表，让被隐藏的条目重新出现在列表里。 */
+      const clearHidden = React.useCallback(async () => {
+        if (info === null || info.hiddenCount === 0) return
+        setClearing(true)
+        setError(null)
+        setHiddenCleared(false)
+        try {
+          const payload = await callHost('clearHidden', {})
+          if (payload?.ok === false) throw new Error(payload?.error?.message ?? t('errorTitle'))
+          // 重新拉一次设置，拿到最新的 hiddenCount
+          const fresh = await callHost('settings')
+          if (fresh?.ok !== false) setInfo(fresh.settings)
+          setHiddenCleared(true)
+          setTimeout(() => setHiddenCleared(false), 2000)
+          if (typeof onSaved === 'function') onSaved()
+        } catch (e) {
+          setError(String(e?.message ?? e))
+        } finally {
+          setClearing(false)
+        }
+      }, [info, t, onSaved])
 
       return h('div', { className: 'dg-settingsLayer', key: 'settingsLayer' }, [
         h('div', {
@@ -1132,6 +1872,34 @@ ${absPath}
                     format(t('settingsFileAt'), { path: info.settingsFile })),
                 ]),
 
+                // ---- 已隐藏条目管理 ----
+                info === null ? null : h('div', { className: 'dg-hiddenBox', key: 'hiddenBox', 'data-gallery-hidden-box': info.hiddenCount }, [
+                  h('div', { className: 'dg-hiddenRow', key: 'row' }, [
+                    h('span', { className: 'dg-hiddenLabel', key: 'label' },
+                      format(t('hiddenCount'), { count: info.hiddenCount })),
+                    h('button', {
+                      type: 'button',
+                      className: 'dg-btn',
+                      key: 'clear',
+                      'data-gallery-clear-hidden': true,
+                      disabled: clearing || info.hiddenCount === 0,
+                      title: t('hiddenClearHint'),
+                      onClick: () => { void clearHidden() },
+                    }, clearing ? t('hiddenClearing') : t('hiddenClear')),
+                  ]),
+                  info.hiddenCount > 0 && Array.isArray(info.hiddenSample) && info.hiddenSample.length > 0
+                    ? h('ul', { className: 'dg-hiddenList', key: 'list' },
+                        info.hiddenSample.map((p) => h('li', { className: 'dg-hiddenItem', key: p, title: p }, p)))
+                    : null,
+                  info.hiddenCount > info.hiddenSample?.length
+                    ? h('div', { className: 'dg-hiddenMore', key: 'more' },
+                        format(t('hiddenMore'), { count: info.hiddenCount - info.hiddenSample.length }))
+                    : null,
+                  hiddenCleared
+                    ? h('p', { className: 'dg-status dg-ok', key: 'cleared' }, t('hiddenCleared'))
+                    : null,
+                ]),
+
                 error === null ? null : h('p', { className: 'dg-status dg-error', key: 'err' }, error),
                 saved ? h('p', { className: 'dg-status dg-ok', key: 'ok' }, t('savedImmediately')) : null,
 
@@ -1167,8 +1935,8 @@ ${absPath}
       const limiter = React.useRef(null)
       if (limiter.current === null) limiter.current = createLimiter(MAX_CONCURRENT)
 
-      const load = React.useCallback(async (signal, kind = 'image', scope = 'global') => {
-        const payload = await callHost('list', { kind, scope, sessionId }, signal)
+      const load = React.useCallback(async (signal, kind = 'image', scope = 'global', page = 1) => {
+        const payload = await callHost('list', { kind, scope, sessionId, page }, signal)
         if (payload?.ok === false) throw new Error(payload?.error?.message ?? t('errorTitle'))
         return payload
       }, [t, sessionId])
@@ -1177,11 +1945,29 @@ ${absPath}
       // 分类：全局资产（整个 G 盘产出）/ 当前对话（仅本对话产出过的）
       // 从「当前对话」切回「全局」时保留上次选择，但不持久化，避免误导。
       const [scope, setScope] = React.useState('global')
+      // 当前页码（从 1 开始）。切换 kind / scope 时回到第 1 页。
+      const [page, setPage] = React.useState(1)
       // 设置面板开关（改产出根目录）
       const [settingsOpen, setSettingsOpen] = React.useState(false)
+      // 右键菜单：{ item, absPath, x, y }
+      const [ctxMenu, setCtxMenu] = React.useState(null)
+      // 删除确认：{ item, busy }
+      const [deleteTarget, setDeleteTarget] = React.useState(null)
       // 网格滚动位置：打开查看器前记录，关闭后恢复，让视图停在原缩略图处
       const bodyScrollRef = React.useRef(null)
       const savedScrollRef = React.useRef(null)
+
+      /** 打开右键菜单。 */
+      const openContextMenu = React.useCallback((item, absPath, event) => {
+        setCtxMenu({
+          item,
+          absPath: absPath ?? buildAbsPath(view.status === 'ready' ? view.data.root : '', item.relPath),
+          x: event.clientX,
+          y: event.clientY,
+        })
+      }, [view])
+
+      const closeContextMenu = React.useCallback(() => setCtxMenu(null), [])
 
       /** 打开某张图：先记住当前滚动位置。 */
       const openViewer = React.useCallback((index, anchorEl) => {
@@ -1213,22 +1999,59 @@ ${absPath}
         })
       }, [])
 
+      /** 隐藏当前右键的条目（只从列表移除，不动文件）。 */
+      const doHide = React.useCallback(async (item) => {
+        try {
+          const payload = await callHost('hide', { path: item.relPath })
+          if (payload?.ok === false) throw new Error(payload?.error?.message ?? t('errorTitle'))
+          await load(undefined, kind, scope, page).then((data) => setView({ status: 'ready', data })).catch(() => {})
+        } catch (error) {
+          console.error('dsh-gallery: 隐藏失败', error)
+        }
+      }, [load, kind, scope, page, t])
+
+      /** 在资源管理器里定位。 */
+      const doReveal = React.useCallback(async (item) => {
+        try {
+          const payload = await callHost('reveal', { path: item.relPath })
+          if (payload?.ok === false) throw new Error(payload?.error?.message ?? t('errorTitle'))
+        } catch (error) {
+          console.error('dsh-gallery: reveal 失败', error)
+        }
+      }, [t])
+
+      /** 执行删除（需二次确认）。 */
+      const doDelete = React.useCallback(async () => {
+        const target = deleteTarget
+        if (target === null || target.busy === true) return
+        setDeleteTarget({ ...target, busy: true })
+        try {
+          const payload = await callHost('delete', { path: target.item.relPath, confirm: true })
+          if (payload?.ok === false) throw new Error(payload?.error?.message ?? t('errorTitle'))
+          setDeleteTarget(null)
+          await load(undefined, kind, scope, page).then((data) => setView({ status: 'ready', data })).catch(() => {})
+        } catch (error) {
+          console.error('dsh-gallery: 删除失败', error)
+          setDeleteTarget(null)
+        }
+      }, [deleteTarget, load, kind, scope, page, t])
+
       const refresh = React.useCallback(async () => {
         setRefreshing(true)
         try {
-          setView({ status: 'ready', data: await load(undefined, kind, scope) })
+          setView({ status: 'ready', data: await load(undefined, kind, scope, page) })
         } catch (error) {
           if (error?.name === 'AbortError') return
           setView({ status: 'failed', message: String(error?.message ?? error) })
         } finally {
           setRefreshing(false)
         }
-      }, [load, kind, scope])
+      }, [load, kind, scope, page])
 
       React.useEffect(() => {
         let alive = true
         const controller = new AbortController()
-        load(controller.signal, kind, scope)
+        load(controller.signal, kind, scope, page)
           .then((data) => {
             if (alive) setView({ status: 'ready', data })
           })
@@ -1239,7 +2062,7 @@ ${absPath}
           alive = false
           controller.abort()
         }
-      }, [load, kind, scope])
+      }, [load, kind, scope, page])
 
       // 自动刷新：定时拉取最新列表；查看器打开时暂停，避免打断放大查看
       React.useEffect(() => {
@@ -1247,7 +2070,7 @@ ${absPath}
         let alive = true
         const timer = setInterval(() => {
           if (!alive) return
-          load(undefined, kind, scope)
+          load(undefined, kind, scope, page)
             .then((data) => { if (alive) setView({ status: 'ready', data }) })
             .catch(() => { /* 自动刷新失败保持现有列表，避免闪错 */ })
         }, AUTO_REFRESH_MS)
@@ -1255,7 +2078,7 @@ ${absPath}
           alive = false
           clearInterval(timer)
         }
-      }, [load, kind, scope, viewer])
+      }, [load, kind, scope, page, viewer])
 
       React.useEffect(() => {
         if (viewer === null) return undefined
@@ -1285,7 +2108,7 @@ ${absPath}
           className: `dg-scopeBtn${scope === 'global' ? ' dg-scopeActive' : ''}`,
           'data-gallery-scope': 'global',
           title: t('scopeGlobalHint'),
-          onClick: () => { if (scope !== 'global') { setScope('global'); setViewer(null) } },
+          onClick: () => { if (scope !== 'global') { setScope('global'); setPage(1); setViewer(null) } },
         }, t('scopeGlobal')),
         h('button', {
           type: 'button',
@@ -1293,7 +2116,7 @@ ${absPath}
           className: `dg-scopeBtn${scope === 'session' ? ' dg-scopeActive' : ''}`,
           'data-gallery-scope': 'session',
           title: t('scopeSessionHint'),
-          onClick: () => { if (scope !== 'session') { setScope('session'); setViewer(null) } },
+          onClick: () => { if (scope !== 'session') { setScope('session'); setPage(1); setViewer(null) } },
         }, t('scopeSession')),
       ])
 
@@ -1324,14 +2147,14 @@ ${absPath}
             key: 'img',
             className: `dg-seg${kind === 'image' ? ' dg-segActive' : ''}`,
             'data-gallery-kind': 'image',
-            onClick: () => { setKind('image'); setViewer(null) },
+            onClick: () => { setKind('image'); setPage(1); setViewer(null) },
           }, t('kindImage')),
           h('button', {
             type: 'button',
             key: 'file',
             className: `dg-seg${kind === 'file' ? ' dg-segActive' : ''}`,
             'data-gallery-kind': 'file',
-            onClick: () => { setKind('file'); setViewer(null) },
+            onClick: () => { setKind('file'); setPage(1); setViewer(null) },
           }, t('kindFile')),
         ]),
         settingsBtn,
@@ -1391,6 +2214,7 @@ ${absPath}
               t,
               absPath: buildAbsPath(data.root, item.relPath),
               onOpenFolder: (abs) => { void callHost('reveal', { path: item.relPath }).catch((e) => console.error('dsh-gallery: reveal 失败', e)) },
+              onContextMenu: openContextMenu,
               onPreview: (abs) => {
                 const address = sessionFileAddressOf(sessionId, abs)
                 try {
@@ -1407,19 +2231,52 @@ ${absPath}
               item,
               t,
               limiter: limiter.current,
+              onContextMenu: openContextMenu,
               onOpen: (opened, anchorEl) => openViewer(items.indexOf(opened), anchorEl),
             }))
-        body = h('div', { className: `dg-body${kind === 'file' ? ' dg-fileBody' : ''}`, key: 'body', 'data-gallery-body': true, ref: bodyScrollRef }, [
-          h('div', { className: `dg-grid${kind === 'file' ? ' dg-fileGrid' : ''}`, key: 'grid' }, gridChildren),
-          data.hidden > 0
-            ? h('div', { className: 'dg-more', key: 'more', 'data-gallery-more': data.hidden },
-                format(t('more'), { count: data.hidden }))
-            : null,
-          data.scan.capped
-            ? h('div', { className: 'dg-more', key: 'capped' }, t('capped'))
-            : null,
+        // 网格区外面包一层定位容器，右侧放滚动辅助列（无滚轮场景用）
+        body = h('div', { className: 'dg-bodyWrap', key: 'bodyWrap' }, [
+          h('div', {
+            className: `dg-body${kind === 'file' ? ' dg-fileBody' : ''}`,
+            key: 'body',
+            'data-gallery-body': true,
+            ref: bodyScrollRef,
+          }, [
+            h('div', { className: `dg-grid${kind === 'file' ? ' dg-fileGrid' : ''}`, key: 'grid' }, gridChildren),
+            data.scan.capped
+              ? h('div', { className: 'dg-more', key: 'capped' }, t('capped'))
+              : null,
+          ]),
+          h(ScrollRail, {
+            key: 'rail',
+            scrollerRef: bodyScrollRef,
+            t,
+            railClassName: kind === 'file' ? 'dg-panRailFiles' : '',
+          }),
         ])
       }
+
+      // 分页条：常驻显示「还有 X 张」+ 页码。单页时只显示总数，不渲染页码按钮。
+      const pager = data !== null && items.length > 0
+        ? h(Pager, {
+            key: 'pager',
+            t,
+            page: data.page ?? 1,
+            pageCount: data.pageCount ?? 1,
+            pageSize: data.pageSize ?? items.length,
+            total: data.total,
+            remaining: data.hidden,
+            onGo: (next) => {
+              if (next === page) return
+              // 翻页时回到顶部，避免停在新页中段
+              const scroller = bodyScrollRef.current
+              if (scroller !== null) scroller.scrollTop = 0
+              savedScrollRef.current = null
+              setViewer(null)
+              setPage(next)
+            },
+          })
+        : null
 
       // 查看器作为覆盖层叠在网格上：网格保持挂载，滚动位置不丢
       const viewerLayer = viewer !== null && items.length > 0
@@ -1443,11 +2300,256 @@ ${absPath}
           })
         : null
 
+      // 右键菜单
+      const ctxLayer = ctxMenu !== null
+        ? h(ContextMenu, {
+            key: 'ctxMenu',
+            t,
+            x: ctxMenu.x,
+            y: ctxMenu.y,
+            item: ctxMenu.item,
+            onClose: closeContextMenu,
+            actions: {
+              onHide: () => { void doHide(ctxMenu.item) },
+              onReveal: () => { void doReveal(ctxMenu.item) },
+              onCopy: () => { void copyText(ctxMenu.absPath) },
+              onDelete: () => setDeleteTarget({ item: ctxMenu.item, busy: false }),
+            },
+          })
+        : null
+
+      // 删除确认弹窗
+      const confirmLayer = deleteTarget !== null
+        ? h(ConfirmDialog, {
+            key: 'confirmLayer',
+            t,
+            name: deleteTarget.item.name,
+            busy: deleteTarget.busy === true,
+            onCancel: () => setDeleteTarget(null),
+            onConfirm: () => { void doDelete() },
+          })
+        : null
+
       return h('div', { className: 'dg-root', 'data-gallery-root': true }, [
         header,
         body,
+        pager,
         viewerLayer,
         settingsLayer,
+        ctxLayer,
+        confirmLayer,
+      ])
+    }
+
+    /**
+     * 分页条：常驻在网格下方。
+     * 左边「还有 X 张」说清总量分布，右边页码点击切页。
+     * 单页时也渲染（只显示「共 N 张」），保持视觉稳定。
+     */
+    function Pager({ t, page, pageCount, pageSize, total, remaining, onGo }) {
+      const start = total === 0 ? 0 : (page - 1) * pageSize + 1
+      const end = Math.min(page * pageSize, total)
+
+      // 页码按钮：页数很多时折叠，始终露出首末页与当前页邻域
+      const numbers = React.useMemo(() => {
+        if (pageCount <= 7) return Array.from({ length: pageCount }, (_, i) => i + 1)
+        const set = new Set([1, pageCount, page, page - 1, page + 1])
+        if (page <= 3) [2, 3, 4].forEach((n) => set.add(n))
+        if (page >= pageCount - 2) [pageCount - 1, pageCount - 2, pageCount - 3].forEach((n) => set.add(n))
+        const sorted = [...set].filter((n) => n >= 1 && n <= pageCount).sort((a, b) => a - b)
+        // 插入省略号
+        const out = []
+        let prev = 0
+        for (const n of sorted) {
+          if (prev !== 0 && n - prev > 1) out.push('…' + n)
+          out.push(n)
+          prev = n
+        }
+        return out
+      }, [page, pageCount])
+
+      const kids = []
+      kids.push(h('span', {
+        className: 'dg-pagerInfo',
+        key: 'info',
+        'data-gallery-page-info': true,
+      }, format(t('pagerRange'), { start, end, total })))
+
+      if (remaining > 0) {
+        kids.push(h('span', {
+          className: 'dg-pagerRemain',
+          key: 'remain',
+          'data-gallery-more': remaining,
+        }, format(t('more'), { count: remaining })))
+      }
+
+      if (pageCount > 1) {
+        const btn = (key, label, target, extra) => h('button', {
+          type: 'button',
+          key,
+          className: `dg-pageBtn${extra ? ' ' + extra : ''}${target === page ? ' dg-pageActive' : ''}`,
+          'data-gallery-page': target,
+          disabled: target === page && extra !== 'nav',
+          title: format(t('pageTip'), { page: target }),
+          onClick: () => onGo(target),
+        }, label)
+
+        kids.push(h('div', { className: 'dg-pagerBtns', key: 'btns' }, [
+          btn('prev', '‹', Math.max(1, page - 1), 'nav'),
+          ...numbers.map((n) => typeof n === 'number'
+            ? btn('p' + n, String(n), n)
+            : h('span', { className: 'dg-pageGap', key: 'gap' + n }, '…')),
+          btn('next', '›', Math.min(pageCount, page + 1), 'nav'),
+        ]))
+      }
+
+      return h('div', { className: 'dg-pager', key: 'pagerBar', 'data-gallery-pager': page }, kids)
+    }
+
+    /**
+     * 通用滚动辅助列：▲ + 轨道 + ▼。
+     * 用于没有滚轮的场景（远程控制 / 触屏），列表页与放大页共用同一套交互。
+     *
+     * @param scrollerRef - 指向上层滚动容器（带 overflow 的那个 div）的 ref。
+     * @param t - 文案函数。
+     * @param onChange - 可选，滚动位置变化后的回调（放大页用它同步 pan）。
+     * @param zoom - 放大页传当前倍率；列表页不传（按 1 处理，滑块按内容比例）。
+     */
+    function ScrollRail({ scrollerRef, t, onChange, zoom = 1, trackClassName = '', railClassName = '' }) {
+      const [metrics, setMetrics] = React.useState({ scrollTop: 0, scrollHeight: 0, clientHeight: 0 })
+      const thumbDragRef = React.useRef(null)
+
+      const measure = React.useCallback(() => {
+        const el = scrollerRef.current
+        if (el === null) return
+        setMetrics({
+          scrollTop: el.scrollTop,
+          scrollHeight: el.scrollHeight,
+          clientHeight: el.clientHeight,
+        })
+      }, [scrollerRef])
+
+      // 监听滚动与尺寸变化，让滑块跟手
+      React.useEffect(() => {
+        const el = scrollerRef.current
+        if (el === null) return undefined
+        measure()
+        el.addEventListener('scroll', measure, { passive: true })
+        const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null
+        if (ro !== null) {
+          ro.observe(el)
+          // 内容（网格）高度变化也要重算：缩略图异步加载会改变 scrollHeight
+          for (const child of el.children) ro.observe(child)
+        }
+        // 缩略图陆续加载完成时高度会跳动，补几个延时测量
+        const timers = [80, 300, 900, 2000].map((ms) => setTimeout(measure, ms))
+        window.addEventListener('resize', measure)
+        return () => {
+          el.removeEventListener('scroll', measure)
+          if (ro !== null) ro.disconnect()
+          for (const t of timers) clearTimeout(t)
+          window.removeEventListener('resize', measure)
+        }
+      }, [scrollerRef, measure])
+
+      const maxScroll = Math.max(0, metrics.scrollHeight - metrics.clientHeight)
+      const canScroll = maxScroll > 1
+      const trackH = Math.max(1, metrics.clientHeight)
+      // 滑块高度按「可视 / 总内容」比例，至少 28px 保证可点
+      const thumbH = metrics.scrollHeight <= 0
+        ? trackH
+        : Math.max(28, Math.min(trackH, (metrics.clientHeight / metrics.scrollHeight) * trackH))
+      const travel = Math.max(1, trackH - thumbH)
+      const progress = maxScroll <= 0 ? 0 : metrics.scrollTop / maxScroll
+      const thumbTop = travel * progress
+
+      /** 滚到指定 scrollTop（0..maxScroll）。 */
+      const scrollTo = (value) => {
+        const el = scrollerRef.current
+        if (el === null) return
+        el.scrollTop = Math.max(0, Math.min(maxScroll, value))
+        measure()
+        if (typeof onChange === 'function') onChange()
+      }
+
+      /** 步进：一次半屏，远程操作下比滚轮更省力。 */
+      const step = (direction) => scrollTo(metrics.scrollTop + direction * (metrics.clientHeight * 0.75))
+
+      // 点轨道空白处直接跳转
+      const onTrackClick = (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        const rect = event.currentTarget.getBoundingClientRect()
+        const ratio = (event.clientY - rect.top) / Math.max(1, rect.height)
+        scrollTo(ratio * maxScroll)
+      }
+
+      // 拖滑块
+      const onThumbDown = (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        thumbDragRef.current = { startY: event.clientY, startTop: metrics.scrollTop }
+        try { event.currentTarget.setPointerCapture(event.pointerId) } catch {}
+      }
+      const onThumbMove = (event) => {
+        const d = thumbDragRef.current
+        if (d === null) return
+        event.preventDefault()
+        const deltaPx = event.clientY - d.startY
+        scrollTo(d.startTop + (deltaPx * maxScroll) / travel)
+      }
+      const onThumbUp = (event) => {
+        if (thumbDragRef.current === null) return
+        thumbDragRef.current = null
+        if (event !== undefined) {
+          try { event.currentTarget.releasePointerCapture(event.pointerId) } catch {}
+        }
+      }
+
+      const atTop = metrics.scrollTop <= 1
+      const atBottom = metrics.scrollTop >= maxScroll - 1
+
+      // 没有可滚动空间时不占位（避免列表很短时多出一列空栏）
+      if (!canScroll) return null
+
+      return h('div', {
+        className: `dg-panRail ${railClassName}`.trim(),
+        key: 'scrollRail',
+        'data-gallery-scrollrail': true,
+        onPointerDown: (event) => event.stopPropagation(),
+        onClick: (event) => event.stopPropagation(),
+      }, [
+        h('button', {
+          type: 'button', className: 'dg-panBtn', key: 'up',
+          'data-gallery-scroll': 'up',
+          disabled: atTop,
+          title: t('panUpHint'), 'aria-label': t('panUpHint'),
+          onClick: (event) => { event.stopPropagation(); step(-1) },
+        }, '▲'),
+        h('div', {
+          className: `dg-dragTrack ${trackClassName}`.trim(),
+          key: 'track',
+          title: t('trackHint'),
+          onClick: onTrackClick,
+        }, h('div', {
+          className: 'dg-dragThumb',
+          key: 'thumb',
+          'data-gallery-scrollthumb': true,
+          role: 'slider',
+          'aria-orientation': 'vertical',
+          style: { height: `${Math.round(thumbH)}px`, transform: `translateY(${Math.round(thumbTop)}px)` },
+          onPointerDown: onThumbDown,
+          onPointerMove: onThumbMove,
+          onPointerUp: onThumbUp,
+          onPointerCancel: onThumbUp,
+        })),
+        h('button', {
+          type: 'button', className: 'dg-panBtn', key: 'down',
+          'data-gallery-scroll': 'down',
+          disabled: atBottom,
+          title: t('panDownHint'), 'aria-label': t('panDownHint'),
+          onClick: (event) => { event.stopPropagation(); step(1) },
+        }, '▼'),
       ])
     }
 

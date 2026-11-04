@@ -75,7 +75,7 @@ function detectDefaultRoot() {
     path.join(home, 'Downloads', 'DSH产出'),
   ]
 
-  // 5. 遍历可用盘符（Windows）：依次尝试每个盘根下的「DSH产出」，不写死任何字母
+  // 5. 遍历可用盘符（Windows）：C:\DSH产出、D:\DSH产出 …… 不写死任何字母
   if (process.platform === 'win32') {
     for (let code = 67; code <= 90; code += 1) {   // C(67) → Z(90)
       const drive = String.fromCharCode(code) + ':'
@@ -145,6 +145,20 @@ function readSettingsFile(file) {
   } catch {
     return {}
   }
+}
+
+/**
+ * 读取「已隐藏」的相对路径集合。
+ * 隐藏只记录路径，不移动/删除文件；列表扫描时按此过滤。
+ * @param settingsFile - 配置文件路径。
+ * @returns 规范化（正斜杠）后的相对路径数组。
+ */
+async function readHiddenList(settingsFile) {
+  const stored = readSettingsFile(settingsFile)
+  if (!Array.isArray(stored.hidden)) return []
+  return stored.hidden
+    .filter((p) => typeof p === 'string' && p !== '')
+    .map((p) => p.replace(/\\/g, '/'))
 }
 
 /**
@@ -358,6 +372,8 @@ async function readSettingsPayload(config) {
   } catch {
     exists = false
   }
+  // 已隐藏条数：供设置面板显示「已隐藏 N 个 · 全部恢复」
+  const hidden = await readHiddenList(opts.settingsFile)
   return {
     root: opts.root,
     rootSource: opts.rootSource,
@@ -366,6 +382,9 @@ async function readSettingsPayload(config) {
     windowHours: opts.windowHours,
     maxItems: opts.maxItems,
     maxDepth: opts.maxDepth,
+    hiddenCount: hidden.length,
+    // 前若干条隐藏项，供面板预览（不返回全部，避免配置很大时拖慢）
+    hiddenSample: hidden.slice(0, 10),
     defaults: {
       // 给前端「恢复默认」用：自动探测的结果
       root: path.resolve(detectDefaultRoot()),
@@ -507,7 +526,7 @@ function extractOutputPaths(logText) {
 
 /**
  * 算出「本对话」产出过的任务目录。
- * 以产出根目录为基准，取路径第一层目录（也就是一次任务的产出目录）。
+ * 以 G:\DSH产出 为根，取路径第一层目录（也就是一次任务的产出目录）。
  * @param config - 用户配置。
  * @param sessionId - 当前会话 id。
  * @returns { taskDirs, paths, ok, reason }
@@ -547,12 +566,14 @@ async function resolveSessionScope(config, sessionId) {
  * 扫描画廊候选：广度优先、深度受限、跳过批量目录、有目录/条目预算。
  * 结果按修改时间倒序，只回传 maxItems 条，另外给出 total 供「还有 N 张」。
  */
-export async function scanGallery(config, kind = 'image', scope = 'global', sessionId = '') {
+export async function scanGallery(config, kind = 'image', scope = 'global', sessionId = '', page = 1) {
   const opts = resolveOptions(config)
   const now = Date.now()
   const cutoff = now - opts.windowHours * 3600_000
   const isFile = kind === 'file'
   const isSession = scope === 'session'
+  // 页码从 1 开始；非法值一律回到第 1 页
+  const currentPage = Math.max(1, Math.trunc(Number(page) || 1))
   // 图片格式永远排除在文件画廊之外；防止用户配置误把图片塞进来
   const extraImageEx = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff', '.heic', '.avif', '.ico'])
   const rawExts = isFile ? opts.fileExtensions : opts.extensions
@@ -566,6 +587,9 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
     scopeInfo = await resolveSessionScope(config, sessionId)
     taskDirSet = new Set(scopeInfo.taskDirs.map((d) => d.toLowerCase()))
   }
+
+  // 已隐藏的路径：扫描时直接跳过（不移动文件，只从列表里拿掉）
+  const hiddenSet = new Set(await readHiddenList(opts.settingsFile))
 
   const dirQueue = [{ dir: opts.root, depth: 0 }]
   const matches = []
@@ -625,8 +649,11 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
           continue
         }
         if (stat.size <= 0 || stat.mtimeMs < cutoff) continue
+        const relPath = path.relative(opts.root, fullPath).split(path.sep).join('/')
+        // 被隐藏的直接跳过（隐藏只影响列表展示，文件仍在磁盘上）
+        if (hiddenSet.has(relPath)) continue
         matches.push({
-          relPath: path.relative(opts.root, fullPath).split(path.sep).join('/'),
+          relPath,
           name: entryName,
           size: stat.size,
           mtime: stat.mtimeMs,
@@ -638,7 +665,11 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
 
   matches.sort((a, b) => b.mtime - a.mtime)
   const total = matches.length
-  const visible = matches.slice(0, opts.maxItems)
+  // 分页：每页 maxItems 条，保留 total 供页码条使用
+  const pageCount = Math.max(1, Math.ceil(total / opts.maxItems))
+  const safePage = Math.min(currentPage, pageCount)
+  const offset = (safePage - 1) * opts.maxItems
+  const visible = matches.slice(offset, offset + opts.maxItems)
 
   await Promise.all(visible.map(async (item) => {
     if (isFile) {
@@ -671,6 +702,11 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
     generatedAt: now,
     items: visible,
     total,
+    // 分页信息，客户端据此渲染页码条
+    page: safePage,
+    pageCount,
+    pageSize: opts.maxItems,
+    // 「还有 N 张」= 当前页之外的总数（不再只是「被截掉的」）
     hidden: Math.max(0, total - visible.length),
     rootMissing,
     scan: { directories, entries, capped },
@@ -736,7 +772,7 @@ export function apply(ctx, config) {
               const kind = body?.kind === 'file' ? 'file' : 'image'
               const scope = body?.scope === 'session' ? 'session' : 'global'
               const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
-              return json(await scanGallery(config, kind, scope, sessionId))
+              return json(await scanGallery(config, kind, scope, sessionId, body?.page))
             } catch (error) {
               return json({ ok: false, error: { code: 'scan-failed', message: String(error?.message ?? error) } }, 500)
             }
@@ -809,6 +845,76 @@ export function apply(ctx, config) {
               return json({ ok: true })
             } catch (error) {
               return json({ ok: false, error: { code: 'reveal-failed', message: String(error?.message ?? error) } }, 500)
+            }
+          }
+
+          // ---------- 隐藏 / 取消隐藏 ----------
+          // 隐藏只记路径，不动文件；列表扫描时过滤掉。
+          if (op === 'hide' || op === 'unhide') {
+            const rel = body?.path
+            if (typeof rel !== 'string' || rel === '') {
+              return json({ ok: false, error: { code: 'invalid-path', message: '缺少文件路径' } }, 400)
+            }
+            const normalized = rel.replace(/\\/g, '/')
+            if (normalized.split('/').some((s) => s === '..' || s === '')) {
+              return json({ ok: false, error: { code: 'invalid-path', message: '路径非法' } }, 400)
+            }
+            try {
+              const opts = resolveOptions(config)
+              const hidden = new Set(await readHiddenList(opts.settingsFile))
+              if (op === 'hide') hidden.add(normalized)
+              else hidden.delete(normalized)
+              await fsp.mkdir(path.dirname(opts.settingsFile), { recursive: true })
+              // 只改 hidden 字段，其余设置保留
+              const current = readSettingsFile(opts.settingsFile)
+              const next = { ...current, hidden: [...hidden] }
+              await fsp.writeFile(opts.settingsFile, JSON.stringify(next, null, 2), 'utf8')
+              return json({ ok: true, hidden: hidden.size })
+            } catch (error) {
+              return json({ ok: false, error: { code: 'hide-failed', message: String(error?.message ?? error) } }, 500)
+            }
+          }
+
+          // ---------- 全部恢复（清空隐藏列表）----------
+          if (op === 'clearHidden') {
+            try {
+              const opts = resolveOptions(config)
+              const current = readSettingsFile(opts.settingsFile)
+              const before = Array.isArray(current.hidden) ? current.hidden.length : 0
+              await fsp.mkdir(path.dirname(opts.settingsFile), { recursive: true })
+              await fsp.writeFile(
+                opts.settingsFile,
+                JSON.stringify({ ...current, hidden: [] }, null, 2),
+                'utf8',
+              )
+              return json({ ok: true, cleared: before })
+            } catch (error) {
+              return json({ ok: false, error: { code: 'clear-failed', message: String(error?.message ?? error) } }, 500)
+            }
+          }
+
+          // ---------- 删除文件（不可逆，前端必须二次确认）----------
+          if (op === 'delete') {
+            const found = await resolveReadable(resolved.root, body?.path, resolved)
+            if (found === null) return json({ ok: false, error: { code: 'not-readable', message: '文件不存在或不可读' } }, 404)
+            // 双保险：前端未明确确认则拒绝执行
+            if (body?.confirm !== true) {
+              return json({ ok: false, error: { code: 'need-confirm', message: '需要确认后才能删除' } }, 400)
+            }
+            try {
+              await fsp.rm(found.absolute, { force: true })
+              // 删除后从隐藏列表里清掉，避免残留
+              const opts = resolveOptions(config)
+              const hidden = new Set(await readHiddenList(opts.settingsFile))
+              const rel = body?.path.replace(/\\/g, '/')
+              if (hidden.has(rel)) {
+                hidden.delete(rel)
+                const current = readSettingsFile(opts.settingsFile)
+                await fsp.writeFile(opts.settingsFile, JSON.stringify({ ...current, hidden: [...hidden] }, null, 2), 'utf8')
+              }
+              return json({ ok: true, deleted: found.absolute })
+            } catch (error) {
+              return json({ ok: false, error: { code: 'delete-failed', message: String(error?.message ?? error) } }, 500)
             }
           }
 
