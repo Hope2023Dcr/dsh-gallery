@@ -1,13 +1,18 @@
-# 产出画廊 · DSH 插件
+# 产出画廊 · DeepSeek Harness (DSH) 插件
+
+> DSH（DeepSeek Harness）右侧栏的**产出画廊 / Output Gallery** 插件：把 Agent 写盘的产出目录变成实时画廊，图片自动刷新、文件一键原生预览。零依赖。
 
 [![Version](https://img.shields.io/badge/version-0.6.1-blue.svg)](#)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](#技术说明给想改代码的人)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#兼容性)
+[![DSH plugin](https://img.shields.io/badge/DSH-plugin-blueviolet.svg)](#)
+
+**关键词**：DeepSeek Harness 插件 · DSH plugin · 产出画廊 · output gallery · 图片画廊 · image gallery · 文件预览 · file preview · 侧边栏面板 · sidebar panel · Agent 产出管理 · output artifacts
 
 在 DSH 右侧栏看**你自己的产出目录**，不是对话框里的图。
 
-Agent 每轮跑完都把文件写到磁盘上，但 DSH 只会在任务末尾报一串路径。这个插件直接扫磁盘，把产出目录变成实时画廊：图片生成即可见，文件点一下就用 DSH 原生侧栏打开。
+Agent 每轮跑完都把文件写到磁盘上，但 DSH（DeepSeek Harness）只会在任务末尾报一串路径。这个插件直接扫磁盘，把产出目录变成实时画廊：图片生成即可见，文件点一下就用 DSH 原生侧栏打开。
 
 > **和市面上的「对话图片查看器」不一样在哪：**
 >
