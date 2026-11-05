@@ -59,6 +59,14 @@ window.__ModuleLoader__.load({
       // 设置面板
       settingsTitle: '设置产出根目录',
       rootLabel: '产出根目录',
+      rootsLabel: '扫描目录（{count} 个）',
+      rootAddPlaceholder: '输入要新增的目录绝对路径，如 D:\\输出',
+      addRoot: '添加目录',
+      addingRoot: '添加中…',
+      removeRootHint: '从扫描列表移除（不会删除文件）',
+      rootsTip: '可加多个目录：DSH 每个会话有独立工作目录，产出不一定落在同一个目录下。',
+      done: '完成',
+      resetDefaultHint: '改为自动探测到的默认目录（会替换整个列表）',
       rootHint: '当前来源：{source}',
       rootExists: '✓ 目录存在',
       rootMissingShort: '✗ 目录不存在，请修改',
@@ -149,6 +157,14 @@ window.__ModuleLoader__.load({
       // Settings panel
       settingsTitle: 'Output root folder',
       rootLabel: 'Output root',
+      rootsLabel: 'Scan folders ({count})',
+      rootAddPlaceholder: 'Absolute path to add, e.g. D:\\outputs',
+      addRoot: 'Add folder',
+      addingRoot: 'Adding…',
+      removeRootHint: 'Remove from scan list (files are not deleted)',
+      rootsTip: 'Multiple folders allowed: each DSH session has its own working directory, so outputs may land outside one root.',
+      done: 'Done',
+      resetDefaultHint: 'Switch to the auto-detected default folder (replaces the whole list)',
       rootHint: 'Current source: {source}',
       rootExists: '✓ Folder exists',
       rootMissingShort: '✗ Folder missing, please change it',
@@ -450,8 +466,68 @@ window.__ModuleLoader__.load({
 .dg-settingsTitle { flex: 1 1 auto; font-size: 13px; font-weight: 600; }
 .dg-settingsBody { padding: 12px; display: flex; flex-direction: column; gap: 10px; overflow: auto; }
 .dg-field { display: flex; flex-direction: column; gap: 6px; }
+.dg-fieldHead { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .dg-fieldLabel { font-size: 12px; font-weight: 600; }
-.dg-fieldHint { font-size: 11px; color: var(--dsw-alias-label-secondary); }
+.dg-fieldHint { font-size: 11px; color: var(--dsw-alias-label-secondary); line-height: 1.5; }
+
+/* ===== 多扫描目录列表 ===== */
+.dg-rootsList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 168px;
+  overflow: auto;
+}
+.dg-rootItem {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  font-size: 12px;
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+}
+.dg-rootItemMissing {
+  border-color: var(--dsw-alias-state-error-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 8%, transparent);
+}
+.dg-rootOk { flex: 0 0 auto; font-size: 12px; color: var(--dsw-alias-brand-primary); }
+.dg-rootItemMissing .dg-rootOk { color: var(--dsw-alias-state-error-primary); }
+.dg-rootPath {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-primary);
+}
+.dg-rootRemove {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.dg-rootRemove:hover:not(:disabled) {
+  color: var(--dsw-alias-state-error-primary);
+  border-color: var(--dsw-alias-state-error-primary);
+}
+.dg-rootRemove:disabled { opacity: .4; cursor: default; }
+.dg-rootAdd { display: flex; gap: 6px; align-items: center; }
+.dg-rootInput { flex: 1 1 auto; min-width: 0; }
 .dg-input {
   width: 100%; box-sizing: border-box;
   padding: 7px 10px;
@@ -1756,8 +1832,12 @@ ${absPath}
       const [error, setError] = React.useState(null)
       const [saving, setSaving] = React.useState(false)
       const [saved, setSaved] = React.useState(false)
+      // 全部恢复
       const [clearing, setClearing] = React.useState(false)
       const [hiddenCleared, setHiddenCleared] = React.useState(false)
+      // 多目录增删
+      const [adding, setAdding] = React.useState(false)
+      const [removing, setRemoving] = React.useState(null)
 
       React.useEffect(() => {
         let alive = true
@@ -1794,6 +1874,45 @@ ${absPath}
           setError(String(e?.message ?? e))
         } finally {
           setSaving(false)
+        }
+      }, [t, onSaved])
+
+      /** 追加一个扫描目录。 */
+      const addRoot = React.useCallback(async (nextRoot) => {
+        if (typeof nextRoot !== 'string' || nextRoot.trim() === '') return
+        setAdding(true)
+        setError(null)
+        try {
+          const payload = await callHost('addRoot', { root: nextRoot.trim() })
+          if (payload?.ok === false) throw new Error(payload?.error?.message ?? t('errorTitle'))
+          setInfo(payload.settings)
+          setDraft('')
+          setSaved(true)
+          setTimeout(() => setSaved(false), 2000)
+          if (typeof onSaved === 'function') onSaved()
+        } catch (e) {
+          setError(String(e?.message ?? e))
+        } finally {
+          setAdding(false)
+        }
+      }, [t, onSaved])
+
+      /** 移除一个扫描目录（至少保留一个）。 */
+      const removeRoot = React.useCallback(async (target) => {
+        if (typeof target !== 'string' || target === '') return
+        setRemoving(target)
+        setError(null)
+        try {
+          const payload = await callHost('removeRoot', { root: target })
+          if (payload?.ok === false) throw new Error(payload?.error?.message ?? t('errorTitle'))
+          setInfo(payload.settings)
+          setSaved(true)
+          setTimeout(() => setSaved(false), 2000)
+          if (typeof onSaved === 'function') onSaved()
+        } catch (e) {
+          setError(String(e?.message ?? e))
+        } finally {
+          setRemoving(null)
         }
       }, [t, onSaved])
 
@@ -1847,22 +1966,62 @@ ${absPath}
           loading
             ? h('p', { className: 'dg-status', key: 'loading' }, t('loading'))
             : h('div', { className: 'dg-settingsBody', key: 'body' }, [
-                h('label', { className: 'dg-field', key: 'root' }, [
-                  h('span', { className: 'dg-fieldLabel', key: 'l' }, t('rootLabel')),
-                  h('input', {
-                    type: 'text',
-                    className: 'dg-input',
-                    key: 'i',
-                    value: draft,
-                    spellCheck: false,
-                    'data-gallery-root-input': true,
-                    onChange: (event) => setDraft(event.target.value),
-                    onKeyDown: (event) => {
-                      if (event.key === 'Enter' && saving === false) { event.preventDefault(); void save(draft) }
-                    },
-                  }),
-                  h('span', { className: 'dg-fieldHint', key: 'h' },
-                    info === null ? '' : format(t('rootHint'), { source: sourceLabel })),
+                // ---- 扫描目录列表（多目录）----
+                h('div', { className: 'dg-field', key: 'roots' }, [
+                  h('div', { className: 'dg-fieldHead', key: 'head' }, [
+                    h('span', { className: 'dg-fieldLabel', key: 'l' },
+                      format(t('rootsLabel'), { count: info === null ? 0 : (info.roots?.length ?? 0) })),
+                    info === null ? null : h('span', { className: 'dg-fieldHint', key: 'h' },
+                      format(t('rootHint'), { source: sourceLabel })),
+                  ]),
+                  h('ul', { className: 'dg-rootsList', key: 'list', 'data-gallery-roots': info === null ? 0 : info.roots.length },
+                    (info?.rootsInfo ?? []).map((r, i) => h('li', {
+                      className: `dg-rootItem${r.exists ? '' : ' dg-rootItemMissing'}`,
+                      key: r.path,
+                      'data-gallery-root-item': r.path,
+                      title: r.path,
+                    }, [
+                      h('span', { className: 'dg-rootOk', key: 'ok' }, r.exists ? '✓' : '✗'),
+                      h('span', { className: 'dg-rootPath', key: 'p' }, r.path),
+                      (info.roots?.length ?? 0) > 1
+                        ? h('button', {
+                            type: 'button',
+                            className: 'dg-rootRemove',
+                            key: 'rm',
+                            disabled: saving || removing === r.path,
+                            title: t('removeRootHint'),
+                            'aria-label': t('removeRootHint'),
+                            'data-gallery-root-remove': r.path,
+                            onClick: () => { void removeRoot(r.path) },
+                          }, '✕')
+                        : null,
+                    ])),
+                  ),
+                  // 添加新目录
+                  h('div', { className: 'dg-rootAdd', key: 'add' }, [
+                    h('input', {
+                      type: 'text',
+                      className: 'dg-input dg-rootInput',
+                      key: 'i',
+                      value: draft,
+                      spellCheck: false,
+                      placeholder: t('rootAddPlaceholder'),
+                      'data-gallery-root-input': true,
+                      onChange: (event) => setDraft(event.target.value),
+                      onKeyDown: (event) => {
+                        if (event.key === 'Enter' && saving === false) { event.preventDefault(); void addRoot(draft) }
+                      },
+                    }),
+                    h('button', {
+                      type: 'button',
+                      className: 'dg-btn dg-primaryBtn',
+                      key: 'btn',
+                      disabled: saving || draft.trim() === '',
+                      'data-gallery-root-add': true,
+                      onClick: () => { void addRoot(draft) },
+                    }, adding ? t('addingRoot') : t('addRoot')),
+                  ]),
+                  h('span', { className: 'dg-fieldHint', key: 'tip' }, t('rootsTip')),
                 ]),
 
                 info === null ? null : h('div', { className: 'dg-settingsMeta', key: 'meta' }, [
@@ -1905,21 +2064,15 @@ ${absPath}
 
                 h('div', { className: 'dg-settingsActions', key: 'actions' }, [
                   h('button', {
-                    type: 'button', className: 'dg-btn dg-primaryBtn', key: 'save',
-                    disabled: saving || draft.trim() === '',
-                    'data-gallery-root-save': true,
-                    onClick: () => { void save(draft) },
-                  }, saving ? t('saving') : t('save')),
-                  h('button', {
                     type: 'button', className: 'dg-btn', key: 'reset',
                     disabled: saving || info === null,
+                    title: t('resetDefaultHint'),
                     onClick: () => { if (info !== null) { setDraft(info.defaults.root); void save(info.defaults.root) } },
                   }, t('resetDefault')),
                   h('button', {
-                    type: 'button', className: 'dg-btn', key: 'cancel',
-                    disabled: saving,
+                    type: 'button', className: 'dg-btn dg-primaryBtn', key: 'close2',
                     onClick: onClose,
-                  }, t('cancel')),
+                  }, t('done')),
                 ]),
               ]),
         ]),

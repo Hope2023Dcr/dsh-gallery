@@ -31,7 +31,13 @@ const DEFAULT_SETTINGS_FILE = path.join(DSH_HOME, 'dsh-gallery.json')
 
 /**
  * 会话日志里，哪些工具调用的参数算「本对话的产出」。
- * 只认写文件/改文件/声明交付这三类；读文件不算产出。
+ *
+ * 分三类：
+ * 1. **直接写文件**：write / edit / present 等 —— 路径一定是产出。
+ * 2. **脚本产出**：Python/命令行脚本跑出来的图，不在 write 调用里，
+ *    但 Agent 一定会用 read_image 打开它看效果 —— 所以「看过的图」也算产出。
+ *    这是「过程中即时可见」的关键：不然脚本生成的中间图和成品图都看不见。
+ * 3. **不看文件**：read / grep / glob 等纯读取，不算产出（避免把别人的文件算进来）。
  */
 const OUTPUT_TOOLS = new Set([
   'write',
@@ -41,6 +47,16 @@ const OUTPUT_TOOLS = new Set([
   'ops_write_file',
   'ops_edit_file',
 ])
+
+/**
+ * 「Agent 看过的图片」也算本对话产出。
+ * 只对图片生效（read_image 的参数就是图片路径），风险低：
+ * Agent 不会无缘无故打开一张与任务无关的图。
+ */
+const VIEW_TOOLS = new Set(['read_image'])
+
+/** 只从 VIEW_TOOLS 里接受的图片扩展名。 */
+const VIEW_IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.avif', '.tif', '.tiff'])
 
 /** zstd 帧起始魔数（小端 0x28B52FFD）。一个 .zstd 文件可能由多帧拼接而成。 */
 const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd])
@@ -162,37 +178,54 @@ async function readHiddenList(settingsFile) {
 }
 
 /**
- * 解析最终配置。root 的优先级（高 → 低）：
- *   1. 运行时配置文件里的 root（用户在面板内改的）
- *   2. cordis.patch.yml 里显式配的 root（部署者通过 YAML 指定）
- *   3. 自动探测（detectDefaultRoot）
+ * 解析最终配置。扫描目录（roots）的优先级（高 → 低）：
+ *   1. 运行时配置文件的 roots 数组（面板内可加多个目录）
+ *   2. 运行时配置文件的 root（旧版单目录写法，兼容保留）
+ *   3. cordis.patch.yml 里配的 root / roots
+ *   4. 自动探测（detectDefaultRoot）
  *
- * 注意：YAML 里如果把 root 写成本机的固定盘符路径，就会盖过自动探测。
- * 开源版发布的 patch.yml 故意不写 root，让自动探测生效。
+ * 为什么支持多目录：DSH 一个会话一个 cwd，产出可能写在任意工作区下
+ * （例如 G:\DSH任务文件\xxx），不一定落在 G:\DSH产出。只配一个目录必然漏。
  */
 function resolveOptions(config) {
   const merged = { ...DEFAULTS, ...(config ?? {}) }
   const settingsFile = String(merged.settingsFile ?? DEFAULT_SETTINGS_FILE)
   const stored = readSettingsFile(settingsFile)
 
-  // root 三级优先：运行时设置 > YAML 配置 > 自动探测
-  const storedRoot = typeof stored.root === 'string' ? stored.root.trim() : ''
-  const configuredRoot = typeof merged.root === 'string' ? merged.root.trim() : ''
-  let chosenRoot
-  let rootSource
-  if (storedRoot !== '') {
-    chosenRoot = storedRoot
-    rootSource = 'settings'
-  } else if (configuredRoot !== '') {
-    chosenRoot = configuredRoot
-    rootSource = 'config'
-  } else {
-    chosenRoot = detectDefaultRoot()
-    rootSource = 'auto-detect'
+  // 收集所有候选目录
+  const collected = []
+  const pushRoot = (value) => {
+    if (typeof value === 'string' && value.trim() !== '') collected.push(value.trim())
+  }
+  const pushList = (value) => {
+    if (Array.isArray(value)) for (const v of value) pushRoot(v)
   }
 
+  pushList(stored.roots)   // 1. 设置里的多目录
+  pushRoot(stored.root)    // 2. 设置里的单目录（旧格式）
+  pushList(merged.roots)   // 3. YAML 多目录
+  pushRoot(merged.root)    // 4. YAML 单目录
+
+  // 去重（Windows 路径大小写不敏感）
+  const deduped = []
+  const seenRoots = new Set()
+  const candidates = collected.length > 0 ? collected : [detectDefaultRoot()]
+  for (const r of candidates) {
+    const abs = path.resolve(r)
+    const key = abs.toLowerCase()
+    if (seenRoots.has(key)) continue
+    seenRoots.add(key)
+    deduped.push(abs)
+  }
+
+  const resolvedRoots = deduped.length > 0 ? deduped : [path.resolve(detectDefaultRoot())]
+  const rootSource = collected.length === 0
+    ? 'auto-detect'
+    : (typeof stored.root === 'string' || (Array.isArray(stored.roots) && stored.roots.length > 0) ? 'settings' : 'config')
+
   return {
-    root: path.resolve(chosenRoot),
+    root: resolvedRoots[0],
+    roots: resolvedRoots,
     rootSource,
     settingsFile,
     windowHours: numberOr(merged.windowHours, DEFAULTS.windowHours, 1, 24 * 30),
@@ -366,16 +399,24 @@ export async function writeSettingsFile(settingsFile, patch) {
  */
 async function readSettingsPayload(config) {
   const opts = resolveOptions(config)
-  let exists = false
-  try {
-    exists = (await fsp.stat(opts.root)).isDirectory()
-  } catch {
-    exists = false
+  // 逐个检查每个 root 是否存在
+  const rootsInfo = []
+  for (const r of opts.roots) {
+    let exists = false
+    try {
+      exists = (await fsp.stat(r)).isDirectory()
+    } catch {
+      exists = false
+    }
+    rootsInfo.push({ path: r, exists })
   }
+  const exists = rootsInfo.length > 0 ? rootsInfo[0].exists : false
   // 已隐藏条数：供设置面板显示「已隐藏 N 个 · 全部恢复」
   const hidden = await readHiddenList(opts.settingsFile)
   return {
     root: opts.root,
+    roots: opts.roots,
+    rootsInfo,
     rootSource: opts.rootSource,
     rootExists: exists,
     settingsFile: opts.settingsFile,
@@ -471,6 +512,82 @@ async function locateSessionDir(sessionsDir, sessionId) {
   return null
 }
 
+/**
+ * 找出某个会话的全部**子会话**目录（子智能体）。
+ *
+ * 修法 C：DSH 里子智能体是独立会话，有自己的 session 日志目录，
+ * 它的 write/present 调用**不出现在主会话日志里**。
+ * 所以「当前对话」必须把子会话的产出也算进去。
+ *
+ * 判定依据：子会话日志首行的 `parentSession` 字段指向主会话 id。
+ *
+ * @param sessionsDir - 会话根目录。
+ * @param parentSessionId - 主会话 id。
+ * @returns 子会话日志的绝对路径数组。
+ */
+async function findSubSessionLogs(sessionsDir, parentSessionId) {
+  const result = []
+  if (typeof parentSessionId !== 'string' || parentSessionId === '') return result
+  let groups
+  try {
+    groups = await fsp.readdir(sessionsDir, { withFileTypes: true })
+  } catch {
+    return result
+  }
+  for (const group of groups) {
+    if (!group.isDirectory()) continue
+    let sessions
+    try {
+      sessions = await fsp.readdir(path.join(sessionsDir, String(group.name)), { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const s of sessions) {
+      if (!s.isDirectory()) continue
+      const logPath = path.join(sessionsDir, String(group.name), String(s.name), 'session.v4.jsonl.zstd')
+      try {
+        const st = await fsp.stat(logPath)
+        if (!st.isFile()) continue
+      } catch {
+        continue
+      }
+      // 读首行判断 parentSession；日志可能很大，只解第一帧就够（首行一定在第一帧）
+      const headText = await readSessionLogHead(logPath)
+      if (headText === '') continue
+      try {
+        const first = JSON.parse(headText.split('\n')[0])
+        if (first?.type === 'session' && first?.parentSession === parentSessionId) {
+          result.push(logPath)
+        }
+      } catch {
+        // 首行解析失败就跳过
+      }
+    }
+  }
+  return result
+}
+
+/**
+ * 只解压会话日志的第一帧，取首行（判断 parentSession 用，避免读整个 9MB 日志）。
+ * @param fullPath - 日志路径。
+ * @returns 首帧解出的文本；失败返回空串。
+ */
+async function readSessionLogHead(fullPath) {
+  let buf
+  try {
+    buf = await fsp.readFile(fullPath)
+  } catch {
+    return ''
+  }
+  const hit = buf.indexOf(ZSTD_MAGIC, 0)
+  if (hit < 0) return ''
+  try {
+    return zstdDecompressSync(buf.subarray(hit)).toString('utf8')
+  } catch {
+    return ''
+  }
+}
+
 /** 递归收集 JSON 节点里所有以盘符开头的字符串（工具的 path 参数）。 */
 function collectAbsolutePaths(node, sink) {
   if (typeof node === 'string') {
@@ -488,7 +605,13 @@ function collectAbsolutePaths(node, sink) {
 
 /**
  * 从会话日志里读出「本对话产出过的绝对路径」。
- * 只取 write / edit / present 这类真正产生文件的工具调用。
+ *
+ * 覆盖两类来源：
+ * 1. `write` / `edit` / `present` 等直接写文件的调用 —— 路径必是产出。
+ * 2. `read_image` 打开过的图片 —— 脚本（Python 等）生成的图不在 write 调用里，
+ *    但 Agent 一定会打开看效果。不纳入这一条，「过程中生成的图」在
+ *    「当前对话」里就完全看不见（只有全局资产能看到）。
+ *
  * @param logText - 解压后的日志文本（每行一个 JSON）。
  * @returns 绝对路径的 Set。
  */
@@ -498,7 +621,7 @@ function extractOutputPaths(logText) {
   const lines = logText.split('\n')
   for (const line of lines) {
     if (line === '') continue
-    // 只快速预筛含写类工具名的行，避免全量 JSON.parse
+    // 快速预筛：只处理含 tool/call 的行，避免全量 JSON.parse
     if (!line.includes('tool/call')) continue
     let record
     try {
@@ -508,7 +631,12 @@ function extractOutputPaths(logText) {
     }
     if (record?.type !== 'tool/call') continue
     const name = record?.data?.name
-    if (typeof name !== 'string' || !OUTPUT_TOOLS.has(name)) continue
+    if (typeof name !== 'string') continue
+
+    const isWriter = OUTPUT_TOOLS.has(name)
+    const isViewer = VIEW_TOOLS.has(name)
+    if (!isWriter && !isViewer) continue
+
     const rawArgs = record?.data?.arguments
     if (typeof rawArgs !== 'string') continue
     let args
@@ -519,47 +647,86 @@ function extractOutputPaths(logText) {
     }
     const found = []
     collectAbsolutePaths(args, found)
-    for (const entry of found) paths.add(entry)
+    for (const entry of found) {
+      if (isViewer) {
+        // 查看类工具只认图片：避免把 read_image 参数里偶尔出现的
+        // 目录、配置等非图片路径当成产出
+        const ext = path.extname(entry).toLowerCase()
+        if (!VIEW_IMAGE_EXTS.has(ext)) continue
+      }
+      paths.add(entry)
+    }
   }
   return paths
 }
 
 /**
- * 算出「本对话」产出过的任务目录。
- * 以 G:\DSH产出 为根，取路径第一层目录（也就是一次任务的产出目录）。
+ * 算出「本对话」产出过的路径与任务目录。
+ *
+ * 支持多扫描目录（roots）：逐个判断路径落在哪个 root 下。
+ * 修法 B：文件**直接躺在 root 根目录下**（没有子目录）时也要能匹配，
+ * 原实现只取「第一层目录」并要求至少两段，导致根目录文件全部判为 0。
+ *
  * @param config - 用户配置。
  * @param sessionId - 当前会话 id。
- * @returns { taskDirs, paths, ok, reason }
+ * @param allRoots - 已解析的扫描目录列表（不传则内部再解析一次）。
+ * @returns { ok, reason, taskDirs, paths, relPaths }
  */
-async function resolveSessionScope(config, sessionId) {
+async function resolveSessionScope(config, sessionId, allRoots) {
   const opts = resolveOptions(config)
+  const roots = Array.isArray(allRoots) && allRoots.length > 0 ? allRoots : opts.roots
   const sessionsDir = typeof config?.sessionsDir === 'string' && config.sessionsDir !== ''
     ? path.resolve(config.sessionsDir)
     : DEFAULT_SESSIONS_DIR
   const sessionDir = await locateSessionDir(sessionsDir, sessionId)
   if (sessionDir === null) {
-    return { ok: false, reason: 'session-not-found', taskDirs: [], paths: [] }
+    return { ok: false, reason: 'session-not-found', taskDirs: [], paths: [], relPaths: [], subSessions: 0 }
   }
   const logPath = path.join(sessionDir, 'session.v4.jsonl.zstd')
   const logText = await readSessionLogText(logPath)
   if (logText === '') {
-    return { ok: false, reason: 'log-empty', taskDirs: [], paths: [] }
+    return { ok: false, reason: 'log-empty', taskDirs: [], paths: [], relPaths: [], subSessions: 0 }
   }
   const allPaths = extractOutputPaths(logText)
+
+  // 修法 C：合并所有子会话（子智能体）的产出路径
+  const subLogs = await findSubSessionLogs(sessionsDir, sessionId)
+  for (const subLog of subLogs) {
+    const subText = await readSessionLogText(subLog)
+    if (subText === '') continue
+    for (const p of extractOutputPaths(subText)) allPaths.add(p)
+  }
+
   const normalized = []
+  const relPaths = []
+  const taskDirs = new Set()
+
   for (const entry of allPaths) {
     const absolute = path.resolve(entry)
-    if (!isInside(opts.root, absolute)) continue
+    // 找出该路径属于哪个 root
+    let ownerRoot = null
+    for (const r of roots) {
+      if (isInside(r, absolute)) { ownerRoot = r; break }
+    }
+    if (ownerRoot === null) continue
     normalized.push(absolute)
-  }
-  // 第一层目录 = 一次任务的产出目录
-  const taskDirs = new Set()
-  for (const absolute of normalized) {
-    const rel = path.relative(opts.root, absolute)
+
+    const rel = path.relative(ownerRoot, absolute)
     const segs = rel.split(path.sep).filter((s) => s !== '')
+    relPaths.push(rel.split(path.sep).join('/'))
+    // 修法 B：有子目录时取第一层；没有子目录（文件直接在 root 下）时，
+    // 用空字符串占位，表示「只在根目录层匹配」，不再直接丢弃
     if (segs.length >= 2) taskDirs.add(segs[0])
   }
-  return { ok: true, reason: 'ok', taskDirs: [...taskDirs], paths: normalized }
+
+  return {
+    ok: true,
+    reason: 'ok',
+    taskDirs: [...taskDirs],
+    paths: normalized,
+    relPaths,
+    subSessions: subLogs.length,
+  }
 }
 
 /**
@@ -580,32 +747,46 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
   const extSet = new Set(rawExts.filter((e) => !(isFile && extraImageEx.has(e))))
   const skipSet = new Set(opts.skipDirs)
 
-  // 当前对话范围：先解析会话日志，得到「本对话产出过的任务目录」
-  let scopeInfo = { ok: true, reason: 'global', taskDirs: [], paths: [] }
-  let taskDirSet = null
+  // 当前对话范围：先解析会话日志（含子智能体会话），得到「本对话产出过的路径」
+  let scopeInfo = { ok: true, reason: 'global', taskDirs: [], paths: [], relPaths: [], subSessions: 0 }
+  let sessionRelSet = null
   if (isSession) {
-    scopeInfo = await resolveSessionScope(config, sessionId)
-    taskDirSet = new Set(scopeInfo.taskDirs.map((d) => d.toLowerCase()))
+    scopeInfo = await resolveSessionScope(config, sessionId, opts.roots)
+    // 修法 B：用「精确相对路径」集合判定，而不是只靠第一层目录名。
+    // 这样既能处理有子目录的情况，也能处理「文件直接躺在 root 根目录下」。
+    sessionRelSet = new Set((scopeInfo.relPaths ?? []).map((p) => p.toLowerCase()))
   }
 
   // 已隐藏的路径：扫描时直接跳过（不移动文件，只从列表里拿掉）
   const hiddenSet = new Set(await readHiddenList(opts.settingsFile))
 
-  const dirQueue = [{ dir: opts.root, depth: 0 }]
   const matches = []
   let directories = 0
   let entries = 0
   let capped = false
-  let rootMissing = false
+  let anyRootExists = false
+  const missingRoots = []
 
-  try {
-    const st = await fsp.stat(opts.root)
-    if (!st.isDirectory()) rootMissing = true
-  } catch {
-    rootMissing = true
-  }
+  // 遍历所有扫描目录（多目录支持）
+  for (const rootDir of opts.roots) {
+    if (directories >= opts.maxDirectories || entries >= opts.maxEntries) {
+      capped = true
+      break
+    }
+    let rootOk = false
+    try {
+      const st = await fsp.stat(rootDir)
+      rootOk = st.isDirectory()
+    } catch {
+      rootOk = false
+    }
+    if (!rootOk) {
+      missingRoots.push(rootDir)
+      continue
+    }
+    anyRootExists = true
 
-  if (!rootMissing) {
+    const dirQueue = [{ dir: rootDir, depth: 0 }]
     while (dirQueue.length > 0) {
       if (directories >= opts.maxDirectories || entries >= opts.maxEntries) {
         capped = true
@@ -613,12 +794,6 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
       }
       const { dir, depth } = dirQueue.shift()
       directories += 1
-      // 当前对话范围：只下探本对话产出过的任务目录，其余目录整体跳过
-      if (taskDirSet !== null && depth > 0) {
-        const rel = path.relative(opts.root, dir)
-        const top = rel.split(path.sep)[0] ?? ''
-        if (!taskDirSet.has(top.toLowerCase())) continue
-      }
       let dirents
       try {
         dirents = await fsp.readdir(dir, { withFileTypes: true })
@@ -642,6 +817,9 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
         if (!dirent.isFile()) continue
         const ext = path.extname(entryName).toLowerCase()
         if (!extSet.has(ext)) continue
+        // 当前对话范围：按精确相对路径判定（支持根目录文件与多层子目录）
+        const relPath = path.relative(rootDir, fullPath).split(path.sep).join('/')
+        if (sessionRelSet !== null && !sessionRelSet.has(relPath.toLowerCase())) continue
         let stat
         try {
           stat = await fsp.stat(fullPath)
@@ -649,11 +827,13 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
           continue
         }
         if (stat.size <= 0 || stat.mtimeMs < cutoff) continue
-        const relPath = path.relative(opts.root, fullPath).split(path.sep).join('/')
         // 被隐藏的直接跳过（隐藏只影响列表展示，文件仍在磁盘上）
         if (hiddenSet.has(relPath)) continue
         matches.push({
           relPath,
+          relKey: `${opts.roots.indexOf(rootDir)}:${relPath}`,
+          rootDir,
+          rootIndex: opts.roots.indexOf(rootDir),
           name: entryName,
           size: stat.size,
           mtime: stat.mtimeMs,
@@ -662,6 +842,8 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
       }
     }
   }
+
+  const rootMissing = !anyRootExists
 
   matches.sort((a, b) => b.mtime - a.mtime)
   const total = matches.length
@@ -678,8 +860,9 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
       item.height = null
       return
     }
+    // 多目录：用该条目自己所属的 rootDir 拼绝对路径
     const measured = measureImage(
-      await readHead(path.join(opts.root, ...item.relPath.split('/')), 65536),
+      await readHead(path.join(item.rootDir, ...item.relPath.split('/')), 65536),
       item.extension,
     )
     item.width = measured?.width ?? null
@@ -694,8 +877,14 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
       reason: scopeInfo.reason,
       taskDirs: scopeInfo.taskDirs.length,
       paths: scopeInfo.paths.length,
+      relPaths: (scopeInfo.relPaths ?? []).length,
+      // 子智能体会话数：> 0 表示已纳入它们的产出
+      subSessions: scopeInfo.subSessions ?? 0,
     },
     root: opts.root,
+    roots: opts.roots,
+    rootSource: opts.rootSource,
+    missingRoots,
     windowHours: opts.windowHours,
     maxItems: opts.maxItems,
     maxDepth: opts.maxDepth,
@@ -713,20 +902,28 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
   }
 }
 
-/** 把一个相对路径解析成根目录内的绝对路径；越界或不存在返回 null。 */
-async function resolveReadable(root, relPath, opts) {
+/**
+ * 把一个相对路径解析成根目录内的绝对路径；越界或不存在返回 null。
+ * 多目录支持：第一个 root 找不到就逐个试其余 root。
+ * @param roots - 扫描目录列表（或单个 root 字符串，兼容旧调用）。
+ */
+async function resolveReadable(roots, relPath, opts) {
+  const list = Array.isArray(roots) ? roots : [roots]
   if (typeof relPath !== 'string' || relPath === '') return null
   const normalized = relPath.replace(/\\/g, '/')
   if (normalized.split('/').some((segment) => segment === '..' || segment === '')) return null
-  const absolute = path.resolve(root, ...normalized.split('/'))
-  if (!isInside(root, absolute)) return null
-  try {
-    const stat = await fsp.stat(absolute)
-    if (!stat.isFile() || stat.size <= 0 || stat.size > opts.maxImageBytes) return null
-    return { absolute, stat }
-  } catch {
-    return null
+  for (const root of list) {
+    const absolute = path.resolve(root, ...normalized.split('/'))
+    if (!isInside(root, absolute)) continue
+    try {
+      const stat = await fsp.stat(absolute)
+      if (!stat.isFile() || stat.size <= 0 || stat.size > opts.maxImageBytes) continue
+      return { absolute, stat, root }
+    } catch {
+      // 换下一个 root
+    }
   }
+  return null
 }
 
 function contentTypeFor(ext) {
@@ -787,7 +984,7 @@ export function apply(ctx, config) {
             }
           }
 
-          // 修改产出根目录：校验 → 写入运行时配置 → 立即生效
+          // 修改产出根目录（单值，保留兼容）：会覆盖 roots，只留这一个
           if (op === 'setRoot') {
             const candidate = body?.root
             const check = await validateRootCandidate(candidate)
@@ -805,7 +1002,71 @@ export function apply(ctx, config) {
             }
             try {
               const opts = resolveOptions(config)
-              await writeSettingsFile(opts.settingsFile, { root: check.root })
+              // 写 roots 数组，并把旧的单值 root 清掉，避免重复
+              const current = readSettingsFile(opts.settingsFile)
+              delete current.root
+              await fsp.mkdir(path.dirname(opts.settingsFile), { recursive: true })
+              await fsp.writeFile(
+                opts.settingsFile,
+                JSON.stringify({ ...current, roots: [check.root] }, null, 2),
+                'utf8',
+              )
+              return json({ ok: true, settings: await readSettingsPayload(config) })
+            } catch (error) {
+              return json({ ok: false, error: { code: 'write-failed', message: String(error?.message ?? error) } }, 500)
+            }
+          }
+
+          // 追加一个扫描目录（多目录支持）
+          if (op === 'addRoot') {
+            const check = await validateRootCandidate(body?.root)
+            if (check.ok !== true) {
+              const messages = {
+                empty: '目录不能为空',
+                'not-absolute': '必须是绝对路径',
+                'not-directory': '该路径不是目录',
+                'not-found': '目录不存在',
+              }
+              return json({ ok: false, error: { code: check.reason, message: messages[check.reason] ?? '目录无效' } }, 400)
+            }
+            try {
+              const opts = resolveOptions(config)
+              const current = readSettingsFile(opts.settingsFile)
+              const list = Array.isArray(current.roots) && current.roots.length > 0
+                ? current.roots.slice()
+                : opts.roots.slice()
+              // 去重（大小写不敏感）
+              if (!list.some((r) => path.resolve(r).toLowerCase() === check.root.toLowerCase())) {
+                list.push(check.root)
+              }
+              delete current.root
+              await fsp.mkdir(path.dirname(opts.settingsFile), { recursive: true })
+              await fsp.writeFile(opts.settingsFile, JSON.stringify({ ...current, roots: list }, null, 2), 'utf8')
+              return json({ ok: true, settings: await readSettingsPayload(config) })
+            } catch (error) {
+              return json({ ok: false, error: { code: 'write-failed', message: String(error?.message ?? error) } }, 500)
+            }
+          }
+
+          // 移除一个扫描目录
+          if (op === 'removeRoot') {
+            const target = typeof body?.root === 'string' ? body.root.trim() : ''
+            if (target === '') {
+              return json({ ok: false, error: { code: 'empty', message: '缺少要移除的目录' } }, 400)
+            }
+            try {
+              const opts = resolveOptions(config)
+              const current = readSettingsFile(opts.settingsFile)
+              const list = (Array.isArray(current.roots) && current.roots.length > 0
+                ? current.roots.slice()
+                : opts.roots.slice()
+              ).filter((r) => path.resolve(r).toLowerCase() !== path.resolve(target).toLowerCase())
+              if (list.length === 0) {
+                return json({ ok: false, error: { code: 'last-root', message: '至少要保留一个扫描目录' } }, 400)
+              }
+              delete current.root
+              await fsp.mkdir(path.dirname(opts.settingsFile), { recursive: true })
+              await fsp.writeFile(opts.settingsFile, JSON.stringify({ ...current, roots: list }, null, 2), 'utf8')
               return json({ ok: true, settings: await readSettingsPayload(config) })
             } catch (error) {
               return json({ ok: false, error: { code: 'write-failed', message: String(error?.message ?? error) } }, 500)
@@ -813,7 +1074,7 @@ export function apply(ctx, config) {
           }
 
           if (op === 'raw') {
-            const found = await resolveReadable(resolved.root, body?.path, resolved)
+            const found = await resolveReadable(resolved.roots, body?.path, resolved)
             if (found === null) return json({ ok: false, error: { code: 'not-readable', message: '文件不存在或不可读' } }, 404)
             let bytes
             try {
@@ -833,7 +1094,7 @@ export function apply(ctx, config) {
 
           // 在文件管理器中定位该文件（仅 Windows）
           if (op === 'reveal') {
-            const found = await resolveReadable(resolved.root, body?.path, resolved)
+            const found = await resolveReadable(resolved.roots, body?.path, resolved)
             if (found === null) return json({ ok: false, error: { code: 'not-readable', message: '文件不存在或不可读' } }, 404)
             try {
               const { spawn } = await import('node:child_process')
@@ -895,7 +1156,7 @@ export function apply(ctx, config) {
 
           // ---------- 删除文件（不可逆，前端必须二次确认）----------
           if (op === 'delete') {
-            const found = await resolveReadable(resolved.root, body?.path, resolved)
+            const found = await resolveReadable(resolved.roots, body?.path, resolved)
             if (found === null) return json({ ok: false, error: { code: 'not-readable', message: '文件不存在或不可读' } }, 404)
             // 双保险：前端未明确确认则拒绝执行
             if (body?.confirm !== true) {

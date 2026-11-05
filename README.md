@@ -2,7 +2,7 @@
 
 > DSH（DeepSeek Harness）右侧栏的**产出画廊 / Output Gallery** 插件：把 Agent 写盘的产出目录变成实时画廊，图片自动刷新、文件一键原生预览。零依赖。
 
-[![Version](https://img.shields.io/badge/version-0.6.1-blue.svg)](#)
+[![Version](https://img.shields.io/badge/version-0.7.2-blue.svg)](#)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](#技术说明给想改代码的人)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#兼容性)
@@ -97,18 +97,45 @@ DSH 默认把产出**攒到任务末尾**才列名称和路径，中间过程看
 [全局资产]  [当前对话]
 ```
 
-- **全局资产**：产出目录下全部内容，按时间倒序
-- **当前对话**：只显示**本对话真正产出过**的文件 —— 通过解析 DSH 会话日志得出（只认 `write` / `edit` / `present` 这类真正产生文件的调用），不是按时间瞎猜
+- **全局资产**：所有扫描目录下的全部内容，按时间倒序
+- **当前对话**：只显示**本对话真正产出过**的文件 —— 通过解析 DSH 会话日志得出，不是按时间瞎猜
+
+「当前对话」的产出判定覆盖三类来源：
+
+| 来源 | 为什么算 |
+|---|---|
+| `write` / `edit` / `present` | Agent 直接写文件 / 声明交付，路径必是产出 |
+| **`read_image` 打开过的图片** | Python 等**脚本生成的图**不在 `write` 调用里，但 Agent 一定会打开看效果 |
+| **子智能体会话里的产出** | 子智能体是独立会话，按 `parentSession` 合并它的产出路径 |
+
+> 这条设计是为了「任务进行中即时可见、便于及时校正」——
+> 中间产物、调试图、脚本输出都能在过程里看到，而不是等任务收尾。
+
+### 多扫描目录
+
+DSH 每个会话有独立的 cwd，产出可能落在任意工作区（如 `G:\DSH任务文件\xxx`），
+不一定都在 `G:\DSH产出`。所以插件支持**配置多个扫描目录**：
+
+```json
+{
+  "roots": [
+    "G:/DSH产出",
+    "G:/DSH任务文件"
+  ]
+}
+```
+
+设置面板（⚙）里可直接增删，每项显示 `✓`（存在）/ `✗`（缺失标红）。改完立即生效。
 
 ### 产出根目录可配置
 
-**装上不会空白。** 插件按这个顺序确定产出目录：
+**装上不会空白。** 插件按这个顺序确定扫描目录：
 
-1. **面板内设置**（最高优先，改完**立即生效，无需重启**）
-2. `cordis.patch.yml` 里显式配置的 `root`
+1. **面板内设置的多目录列表**（最高优先，改完**立即生效，无需重启**）
+2. 设置或 `cordis.patch.yml` 里的单个 `root`（旧写法，兼容）
 3. **自动探测**：先找 `~/DSH产出`、`~/Documents/DSH产出`、`~/Desktop/DSH产出`、`~/Downloads/DSH产出`，再遍历各盘符找 `<盘符>:\DSH产出`（循环 A–Z，代码里不写死任何字母，所以装在哪个盘都能自动找到）
 
-目录找不到时，面板会直接给出「修改产出根目录」按钮，点开就能改。
+一个目录都没有时，面板会直接给出「修改产出根目录」的入口。
 
 ### 隐藏管理
 

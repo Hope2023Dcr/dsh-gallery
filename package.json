@@ -1,6 +1,6 @@
 {
   "name": "dsh-gallery",
-  "version": "0.6.1",
+  "version": "0.7.2",
   "private": true,
   "type": "module",
   "description": "产出画廊：右侧栏浏览产出目录下的图片与文件（缩略图 / 缩放拖动 / 原生侧栏预览），产出根目录可配置",
