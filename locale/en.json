@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Output Gallery",
-    "description": "Browse images and files modified in the last 24 hours under your output folder as a thumbnail grid in the right sidebar, with scope filters, refresh, zoom and click-to-preview."
+    "description": "Fixes DSH reporting produced files only after a task ends: watches your output folders live, with auto-refreshing image thumbnails and native file preview, so you can verify and intervene mid-task."
   }
 }
