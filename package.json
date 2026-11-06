@@ -1,6 +1,6 @@
 {
   "name": "dsh-gallery",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "type": "module",
   "description": "产出画廊：解决 DSH 只在任务结尾才列出产出、过程不可见的问题。实时监控产出目录，图片自动刷新、文件原生预览，任务进行中即可校验纠正。",
   "repository": {

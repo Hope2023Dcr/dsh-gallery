@@ -2364,8 +2364,16 @@ ${absPath}
 
       const closeContextMenu = React.useCallback(() => setCtxMenu(null), [])
 
-      /** 打开某张图：先记住当前滚动位置。 */
-      const openViewer = React.useCallback((index, anchorEl) => {
+      /**
+       * 打开某张图：先记住当前滚动位置。
+       *
+       * @param index - 在 list 里的下标。
+       * @param anchorEl - 被点击的卡片元素（用于退出时精确回位）。
+       * @param list - 该图片所属的列表快照。**必须传**：
+       *   分组视图下卡片来自 `data.groups[i].files`，与当前页的扁平 `items` 是两个不同的集合，
+       *   直接用全局 `items` 的索引会「点哪张都跳出同一张图」。
+       */
+      const openViewer = React.useCallback((index, anchorEl, list) => {
         const scroller = bodyScrollRef.current
         if (scroller !== null) {
           savedScrollRef.current = {
@@ -2376,7 +2384,15 @@ ${absPath}
               : null,
           }
         }
-        setViewer({ index })
+        // 只保留查看器需要的字段，避免把整个分组对象塞进 state
+        const snapshot = list.map((it) => ({
+          relPath: it.relPath,
+          name: it.name ?? it.relPath.split('/').pop(),
+          extension: it.extension ?? ('.' + (it.relPath.split('.').pop() || '')),
+          width: it.width ?? null,
+          height: it.height ?? null,
+        }))
+        setViewer({ index, list: snapshot })
       }, [])
 
       /** 关闭查看器：恢复到原来那张缩略图的位置。 */
@@ -2502,10 +2518,14 @@ ${absPath}
       }, [data])
 
       const step = React.useCallback((delta) => {
-        setViewer((current) => current === null ? null : {
-          index: (current.index + delta + items.length) % items.length,
+        setViewer((current) => {
+          if (current === null) return null
+          // 用查看器自己的列表长度（不是全局 items），分组视图下两者不同
+          const len = current.list.length
+          if (len === 0) return current
+          return { ...current, index: (current.index + delta + len) % len }
         })
-      }, [items.length])
+      }, [])
 
       // 分类开关：全局资产 / 当前对话
       const scopeSwitch = h('div', { className: 'dg-scopeSwitch', key: 'scope' }, [
@@ -2645,7 +2665,7 @@ ${absPath}
         const useGroups = scope === 'global' && Array.isArray(data.groups) && data.groups.length > 0
 
         if (useGroups) {
-          const cardFor = (item, groupKey) => {
+          const cardFor = (item, groupKey, listForViewer) => {
             // 分组里的文件也走同一套卡片组件
             const enriched = {
               ...item,
@@ -2678,7 +2698,18 @@ ${absPath}
               t,
               limiter: limiter.current,
               onContextMenu: openContextMenu,
-              onOpen: (opened) => openViewer(opened.globalIndex ?? 0, null),
+              onOpen: (opened, anchorEl) => {
+                // 用**该组当前可见的文件**作为查看器列表：
+                // 左右切图应在本组内循环，而不是跳到别的对话的图。
+                const list = Array.isArray(listForViewer) ? listForViewer : group.files
+                let pos = list.indexOf(opened)
+                if (pos < 0) {
+                  // 对象引用对不上时按 relPath 找（enriched 是浅拷贝，引用可能不同）
+                  pos = list.findIndex((f) => f.relPath === opened.relPath)
+                }
+                if (pos < 0) return
+                openViewer(pos, anchorEl ?? null, list)
+              },
             })
           }
 
@@ -2758,7 +2789,7 @@ ${absPath}
                     h('div', { className: 'dg-groupBody', key: 'body' }, [
                       visibleFiles.length > 0
                         ? h('div', { className: `dg-grid${kind === 'file' ? ' dg-fileGrid' : ''}`, key: 'grid' },
-                            visibleFiles.map((f) => cardFor(f, headKey)))
+                            visibleFiles.map((f) => cardFor(f, headKey, visibleFiles)))
                         : h('div', { className: 'dg-groupEmpty', key: 'empty' }, t('groupEmpty')),
                       group.truncated
                         ? h('div', { className: 'dg-groupEmpty', key: 'trunc', style: { marginTop: '8px' } },
@@ -2815,7 +2846,7 @@ ${absPath}
               t,
               limiter: limiter.current,
               onContextMenu: openContextMenu,
-              onOpen: (opened, anchorEl) => openViewer(items.indexOf(opened), anchorEl),
+              onOpen: (opened, anchorEl) => openViewer(items.indexOf(opened), anchorEl, items),
             }))
         // 网格区外面包一层定位容器，右侧放滚动辅助列（无滚轮场景用）
         body = h('div', { className: 'dg-bodyWrap', key: 'bodyWrap' }, [
@@ -2865,11 +2896,13 @@ ${absPath}
         : null
 
       // 查看器作为覆盖层叠在网格上：网格保持挂载，滚动位置不丢
-      const viewerLayer = viewer !== null && items.length > 0
+      // 用 viewer.list（打开时记录的快照），不用全局 items：
+      // 分组视图下卡片来自组内文件，与当前页的扁平 items 不是同一个集合。
+      const viewerLayer = viewer !== null && Array.isArray(viewer.list) && viewer.list.length > 0
         ? h('div', { className: 'dg-viewerLayer', key: 'viewerLayer' },
             h(Viewer, {
-              items,
-              index: viewer.index,
+              items: viewer.list,
+              index: Math.min(viewer.index, viewer.list.length - 1),
               t,
               onClose: closeViewer,
               onStep: step,
