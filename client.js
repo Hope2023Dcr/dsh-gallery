@@ -50,12 +50,39 @@ window.__ModuleLoader__.load({
       kindFile: '文件',
       scopeGlobal: '全局资产',
       scopeSession: '当前对话',
-      scopeGlobalHint: 'G 盘全部产出，按产出时间倒序',
+      scopeGlobalHint: '按对话分组的全部产出',
       scopeSessionHint: '仅本对话产出过的文件',
       scopeUnknown: '未记录本对话产出',
       scopeNotFound: '找不到本对话的会话记录',
       scopeLogEmpty: '本对话的会话记录为空',
       subCount: '{shown} / {total} 条',
+      // ===== 资产分类（三色边框）=====
+      catFinal: '最终',
+      catInput: '输入',
+      catIntermediate: '中间',
+      catUnknown: '未归类',
+      catLegendFinal: '最终交付物',
+      catLegendInput: '输入素材',
+      catLegendIntermediate: '中间产物',
+      catLegendUnknown: '未归类',
+      catLegendHint: '边框颜色代表资产类型；「未归类」是会话记录里查不到归属的历史文件',
+      // ===== 全局按对话分组 =====
+      groupCount: '{count} 个',
+      groupFinal: '最终 {n}',
+      groupInput: '输入 {n}',
+      groupIntermediate: '中间 {n}',
+      groupUnknown: '未归类 {n}',
+      groupTruncated: '仅显示最近 {shown} 个，共 {total} 个',
+      groupHistoryTitle: '历史资产',
+      groupCurrentBadge: '当前对话',
+      groupHistoryHint: '这些文件在会话记录里查不到归属对话',
+      groupUnassigned: '未归属对话',
+      groupFiles: '{n} 个文件',
+      groupExpand: '展开',
+      groupCollapse: '收起',
+      groupEmpty: '没有资产',
+      groupShowIntermediate: '显示中间产物 {n}',
+      groupHideIntermediate: '隐藏中间产物 {n}',
       // 设置面板
       settingsTitle: '设置产出根目录',
       rootLabel: '产出根目录',
@@ -148,12 +175,39 @@ window.__ModuleLoader__.load({
       kindFile: 'Files',
       scopeGlobal: 'All assets',
       scopeSession: 'This chat',
-      scopeGlobalHint: 'Every output on the G drive, newest first',
+      scopeGlobalHint: 'All outputs, grouped by conversation',
       scopeSessionHint: 'Only files produced in this chat',
       scopeUnknown: 'No outputs recorded for this chat',
       scopeNotFound: 'Cannot find this chat’s session log',
       scopeLogEmpty: 'This chat’s session log is empty',
       subCount: '{shown} of {total}',
+      // Asset categories (colored borders)
+      catFinal: 'Final',
+      catInput: 'Input',
+      catIntermediate: 'Interim',
+      catUnknown: 'Unclassified',
+      catLegendFinal: 'Final deliverable',
+      catLegendInput: 'Input material',
+      catLegendIntermediate: 'Interim product',
+      catLegendUnknown: 'Unclassified',
+      catLegendHint: 'Border color shows the asset type; “Unclassified” means the session logs have no record of it',
+      // Grouped by conversation (global view)
+      groupCount: '{count} files',
+      groupFinal: 'Final {n}',
+      groupInput: 'Input {n}',
+      groupIntermediate: 'Interim {n}',
+      groupUnknown: 'Unclassified {n}',
+      groupTruncated: 'Showing latest {shown} of {total}',
+      groupHistoryTitle: 'Older assets',
+      groupCurrentBadge: 'This chat',
+      groupHistoryHint: 'These files have no conversation recorded in the session logs',
+      groupUnassigned: 'No conversation',
+      groupFiles: '{n} files',
+      groupExpand: 'Expand',
+      groupCollapse: 'Collapse',
+      groupEmpty: 'No assets',
+      groupShowIntermediate: 'Show interim files ({n})',
+      groupHideIntermediate: 'Hide interim files ({n})',
       // Settings panel
       settingsTitle: 'Output root folder',
       rootLabel: 'Output root',
@@ -639,6 +693,167 @@ window.__ModuleLoader__.load({
 }
 .dg-card:hover { border-color: var(--dsw-alias-border-l2); }
 .dg-card:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
+
+/* ===== 资产分类：三色边框 + 角标 =====
+   输入 = 灰蓝、中间 = 橙色、最终 = 绿色。
+   边框加粗到 2px 以便一眼分辨。 */
+.dg-card { position: relative; }
+.dg-cat-final      { border: 2px solid #1A936F; }
+.dg-cat-input      { border: 2px solid #8A8F99; }
+.dg-cat-intermediate { border: 2px solid #D48806; }
+.dg-cat-unknown    { border: 2px solid #C8CDD6; }
+.dg-cat-final:hover      { border-color: #157A5C; }
+.dg-cat-input:hover      { border-color: #6B7079; }
+.dg-cat-intermediate:hover { border-color: #B36F05; }
+.dg-cat-unknown:hover    { border-color: #A8AEB8; }
+
+/* 角标：贴在缩略图右上角 */
+.dg-catBadge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  padding: 2px 7px;
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: #FFFFFF;
+  pointer-events: none;
+}
+.dg-catBadge-final      { background: #1A936F; }
+.dg-catBadge-input      { background: #8A8F99; }
+.dg-catBadge-intermediate { background: #D48806; }
+.dg-catBadge-unknown    { background: #8C93A0; }
+
+/* ===== 图例（分类颜色说明）===== */
+.dg-legend {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 7px 10px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+}
+.dg-legendItem { display: inline-flex; align-items: center; gap: 5px; }
+.dg-legendSwatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+.dg-legendSwatch-final      { background: #1A936F; }
+.dg-legendSwatch-input      { background: #8A8F99; }
+.dg-legendSwatch-intermediate { background: #D48806; }
+.dg-legendSwatch-unknown    { background: #8C93A0; }
+
+/* ===== 分组（全局按对话）===== */
+.dg-groups { display: flex; flex-direction: column; gap: 8px; }
+.dg-group {
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--dsw-alias-bg-layer-1);
+}
+.dg-groupHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 11px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: none;
+  border-bottom: 1px solid transparent;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  appearance: none;
+}
+.dg-groupHead:hover { background: var(--dsw-alias-bg-layer-3, var(--dsw-alias-bg-layer-2)); }
+.dg-groupHeadOpen { border-bottom-color: var(--dsw-alias-border-l1); }
+.dg-groupArrow {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--dsw-alias-label-secondary);
+  transition: transform .15s ease;
+  width: 10px;
+}
+.dg-groupArrowOpen { transform: rotate(90deg); }
+.dg-groupTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dg-groupHistory .dg-groupTitle { color: var(--dsw-alias-label-secondary); font-weight: 500; }
+
+/* 当前对话组：置顶 + 左侧强调条 + 徽标，让用户一眼认出「这就是我刚才那次」 */
+.dg-groupCurrent {
+  border-color: var(--dsw-alias-brand-primary);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--dsw-alias-brand-primary) 22%, transparent);
+}
+.dg-groupCurrent .dg-groupHead {
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 7%, var(--dsw-alias-bg-layer-2));
+}
+.dg-groupCurrentBadge {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.6;
+  color: #FFFFFF;
+  background: var(--dsw-alias-brand-primary);
+}
+.dg-groupCurrent .dg-groupTitle { font-weight: 700; }
+.dg-groupDate {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+}
+.dg-groupChips { display: inline-flex; gap: 5px; flex: 0 0 auto; }
+.dg-chip {
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.6;
+  color: #FFFFFF;
+}
+.dg-chip-final { background: #1A936F; }
+.dg-chip-input { background: #8A8F99; }
+.dg-chip-intermediate { background: #D48806; }
+.dg-chip-unknown { background: #8C93A0; }
+.dg-chipMuted {
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  border: 1px solid var(--dsw-alias-border-l1);
+  font-weight: 500;
+}
+.dg-groupBody { padding: 10px; }
+.dg-groupEmpty {
+  padding: 14px 10px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+  text-align: center;
+}
+.dg-groupHint {
+  padding: 7px 11px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-1);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
 .dg-thumb {
   display: flex;
   align-items: center;
@@ -1341,9 +1556,10 @@ ${absPath}
       return h('button', {
         type: 'button',
         ref: setNode,
-        className: 'dg-card',
-        title: item.relPath,
+        className: `dg-card dg-cat-${item.category || 'none'}`,
+        title: `${item.relPath}${item.category ? `\n[${t('cat' + item.category[0].toUpperCase() + item.category.slice(1))}]` : ''}`,
         'data-gallery-card': item.relPath,
+        'data-gallery-category': item.category || '',
         onClick: (event) => onOpen(item, event.currentTarget),
         onContextMenu: (event) => {
           event.preventDefault()
@@ -1351,6 +1567,14 @@ ${absPath}
           if (typeof onContextMenu === 'function') onContextMenu(item, null, event)
         },
       }, [
+        // 分类角标
+        item.category
+          ? h('span', {
+              className: `dg-catBadge dg-catBadge-${item.category}`,
+              key: 'badge',
+              'data-gallery-badge': item.category,
+            }, t('cat' + item.category[0].toUpperCase() + item.category.slice(1)))
+          : null,
         h('div', { className: 'dg-thumb', key: 'thumb' },
           state.status === 'ready'
             ? h('img', {
@@ -2102,6 +2326,24 @@ ${absPath}
       const [page, setPage] = React.useState(1)
       // 设置面板开关（改产出根目录）
       const [settingsOpen, setSettingsOpen] = React.useState(false)
+      // 全局分组：哪些组是展开的（键是 sessionId 或 '__history__'）
+      const [openGroups, setOpenGroups] = React.useState(new Set())
+      // 分组默认展开只做一次：当前对话组优先，没有则展开第一个。
+      // 用 ref 记住「已初始化」，否则用户手动收起后每次渲染又被强制展开。
+      const groupsInitRef = React.useRef(false)
+      // 全局分组：哪些组显示了中间产物
+      const [showInterim, setShowInterim] = React.useState({})
+      const toggleGroup = React.useCallback((key) => {
+        setOpenGroups((prev) => {
+          const next = new Set(prev)
+          if (next.has(key)) next.delete(key)
+          else next.add(key)
+          return next
+        })
+      }, [])
+      const toggleInterim = React.useCallback((key) => {
+        setShowInterim((prev) => ({ ...prev, [key]: !prev[key] }))
+      }, [])
       // 右键菜单：{ item, absPath, x, y }
       const [ctxMenu, setCtxMenu] = React.useState(null)
       // 删除确认：{ item, busy }
@@ -2247,6 +2489,18 @@ ${absPath}
 
       const data = view.status === 'ready' ? view.data : null
       const items = data?.items ?? []
+
+      // 分组首次渲染时，默认展开「当前对话」那一组（没有则展开第一组）。
+      // 只做一次：之后用户手动收起/展开都保留。
+      React.useEffect(() => {
+        if (groupsInitRef.current) return
+        if (data === null || !Array.isArray(data.groups) || data.groups.length === 0) return
+        groupsInitRef.current = true
+        const target = data.groups.find((g) => g.isCurrent === true) ?? data.groups[0]
+        if (target === undefined) return
+        setOpenGroups(new Set([target.sessionId ?? '__history__']))
+      }, [data])
+
       const step = React.useCallback((delta) => {
         setViewer((current) => current === null ? null : {
           index: (current.index + delta + items.length) % items.length,
@@ -2321,6 +2575,33 @@ ${absPath}
         }, refreshing ? t('refreshing') : t('refresh')),
       ])
 
+      // 分类图例：告诉用户三种边框颜色代表什么（只在有数据时显示）
+      // 「未归类」只有在确实存在这类文件时才显示，避免图例噪音
+      const hasUnknown = data !== null && Array.isArray(data.groups) &&
+        data.groups.some((gr) => (gr.counts?.unknown ?? 0) > 0)
+      const legend = data !== null && items.length > 0
+        ? h('div', { className: 'dg-legend', key: 'legend', title: t('catLegendHint') }, [
+            h('span', { className: 'dg-legendItem', key: 'f' }, [
+              h('span', { className: 'dg-legendSwatch dg-legendSwatch-final', key: 's' }),
+              h('span', { key: 'l' }, t('catLegendFinal')),
+            ]),
+            h('span', { className: 'dg-legendItem', key: 'i' }, [
+              h('span', { className: 'dg-legendSwatch dg-legendSwatch-input', key: 's' }),
+              h('span', { key: 'l' }, t('catLegendInput')),
+            ]),
+            h('span', { className: 'dg-legendItem', key: 'm' }, [
+              h('span', { className: 'dg-legendSwatch dg-legendSwatch-intermediate', key: 's' }),
+              h('span', { key: 'l' }, t('catLegendIntermediate')),
+            ]),
+            hasUnknown
+              ? h('span', { className: 'dg-legendItem', key: 'u' }, [
+                  h('span', { className: 'dg-legendSwatch dg-legendSwatch-unknown', key: 's' }),
+                  h('span', { key: 'l' }, t('catLegendUnknown')),
+                ])
+              : null,
+          ])
+        : null
+
       let body
       if (view.status === 'loading') {
         body = h('div', { className: 'dg-body', key: 'body' }, h('p', { className: 'dg-status' }, t('loading')))
@@ -2360,6 +2641,155 @@ ${absPath}
         body = h('div', { className: 'dg-body', key: 'body' },
           h('p', { className: 'dg-status' }, emptyText))
       } else {
+        // 全局模式 + 有分组数据 → 按对话分组渲染（可折叠）
+        const useGroups = scope === 'global' && Array.isArray(data.groups) && data.groups.length > 0
+
+        if (useGroups) {
+          const cardFor = (item, groupKey) => {
+            // 分组里的文件也走同一套卡片组件
+            const enriched = {
+              ...item,
+              name: item.name ?? item.relPath.split('/').pop(),
+              extension: item.extension ?? ('.' + (item.relPath.split('.').pop() || '')),
+            }
+            if (kind === 'file') {
+              return h(FileCard, {
+                key: `${groupKey}:${item.relPath}`,
+                item: enriched,
+                t,
+                absPath: buildAbsPath(data.root, item.relPath),
+                onOpenFolder: () => { void callHost('reveal', { path: item.relPath }).catch((e) => console.error('dsh-gallery: reveal 失败', e)) },
+                onContextMenu: openContextMenu,
+                onPreview: (abs) => {
+                  const address = sessionFileAddressOf(sessionId, abs)
+                  try {
+                    ctxRef.current.sidebarRight.openResource(address, { kind: 'text' })
+                  } catch (error) {
+                    console.error('dsh-gallery: 侧栏预览失败', error, address)
+                    void copyText(abs)
+                  }
+                },
+                onCopy: (abs) => { void copyText(abs) },
+              })
+            }
+            return h(Card, {
+              key: `${groupKey}:${item.relPath}`,
+              item: enriched,
+              t,
+              limiter: limiter.current,
+              onContextMenu: openContextMenu,
+              onOpen: (opened) => openViewer(opened.globalIndex ?? 0, null),
+            })
+          }
+
+          const groupNodes = data.groups.map((group, gi) => {
+            const groupKey = group.sessionId ?? '__history__'
+            const isOpen = openGroups.has(groupKey)
+            // 组内中间产物的显隐：
+            //   - 当前对话：**默认显示**（用户刚做完的就是要看过程，可选收起）
+            //   - 其他对话 / 历史资产：**默认隐藏**（避免别人调试图淹没列表）
+            // 用户手动切换后，以 showInterim 里记录的为准（true=显示 / false=隐藏）。
+            const interimDefault = group.isCurrent === true
+            const stored = showInterim[groupKey]
+            const showIntermediate = stored === undefined ? interimDefault : stored
+            const visibleFiles = showIntermediate
+              ? group.files
+              : group.files.filter((f) => f.category !== 'intermediate')
+            const hiddenCount = group.files.length - visibleFiles.length
+
+            const chips = []
+            if (group.counts.final > 0) {
+              chips.push(h('span', { className: 'dg-chip dg-chip-final', key: 'f' }, format(t('groupFinal'), { n: group.counts.final })))
+            }
+            if (group.counts.input > 0) {
+              chips.push(h('span', { className: 'dg-chip dg-chip-input', key: 'i' }, format(t('groupInput'), { n: group.counts.input })))
+            }
+            if (group.counts.intermediate > 0) {
+              chips.push(h('span', { className: 'dg-chip dg-chip-intermediate', key: 'm' }, format(t('groupIntermediate'), { n: group.counts.intermediate })))
+            }
+            if ((group.counts.unknown ?? 0) > 0) {
+              chips.push(h('span', { className: 'dg-chip dg-chip-unknown', key: 'u' }, format(t('groupUnknown'), { n: group.counts.unknown })))
+            }
+
+            const headKey = group.sessionId ?? '__history__'
+            return h('div', {
+              className: `dg-group${group.isHistory ? ' dg-groupHistory' : ''}${group.isCurrent ? ' dg-groupCurrent' : ''}`,
+              key: `g:${headKey}`,
+              'data-gallery-group': headKey,
+              'data-gallery-group-current': group.isCurrent === true ? '1' : '0',
+            }, [
+              h('button', {
+                type: 'button',
+                className: `dg-groupHead${isOpen ? ' dg-groupHeadOpen' : ''}`,
+                key: 'head',
+                onClick: () => toggleGroup(headKey),
+                title: group.title || t('groupHistoryTitle'),
+              }, [
+                h('span', { className: `dg-groupArrow${isOpen ? ' dg-groupArrowOpen' : ''}`, key: 'a' }, '▶'),
+                group.isCurrent === true
+                  ? h('span', { className: 'dg-groupCurrentBadge', key: 'cur', 'data-gallery-current-badge': true }, t('groupCurrentBadge'))
+                  : null,
+                h('span', { className: 'dg-groupTitle', key: 't' },
+                  group.isHistory ? t('groupHistoryTitle') : (group.title || t('groupUnassigned'))),
+                h('span', { className: 'dg-groupDate', key: 'd' },
+                  group.isHistory ? format(t('groupFiles'), { n: group.fileCount }) : formatTime(group.createdAt)),
+                h('span', { className: 'dg-groupChips', key: 'c' }, chips),
+              ]),
+              isOpen
+                ? [
+                    group.isHistory
+                      ? h('div', { className: 'dg-groupHint', key: 'hint' }, t('groupHistoryHint'))
+                      : null,
+                    // 只有该组确实存在中间产物时才给切换按钮：
+                    // 否则「显示中间产物」点了也没东西可显示，按钮是死的。
+                    (group.counts.intermediate ?? 0) > 0
+                      ? h('div', { className: 'dg-groupHint', key: 'toggle' }, [
+                          h('button', {
+                            type: 'button',
+                            className: 'dg-btn dg-btnSmall',
+                            'data-gallery-toggle-interim': headKey,
+                            'data-gallery-interim-shown': showIntermediate ? '1' : '0',
+                            onClick: () => toggleInterim(headKey),
+                          }, showIntermediate
+                            ? format(t('groupHideIntermediate'), { n: group.counts.intermediate })
+                            : format(t('groupShowIntermediate'), { n: hiddenCount })),
+                        ])
+                      : null,
+                    h('div', { className: 'dg-groupBody', key: 'body' }, [
+                      visibleFiles.length > 0
+                        ? h('div', { className: `dg-grid${kind === 'file' ? ' dg-fileGrid' : ''}`, key: 'grid' },
+                            visibleFiles.map((f) => cardFor(f, headKey)))
+                        : h('div', { className: 'dg-groupEmpty', key: 'empty' }, t('groupEmpty')),
+                      group.truncated
+                        ? h('div', { className: 'dg-groupEmpty', key: 'trunc', style: { marginTop: '8px' } },
+                            format(t('groupTruncated'), { shown: group.returnedCount, total: group.fileCount }))
+                        : null,
+                    ]),
+                  ]
+                : null,
+            ])
+          })
+
+          body = h('div', { className: 'dg-bodyWrap', key: 'bodyWrap' }, [
+            h('div', {
+              className: `dg-body${kind === 'file' ? ' dg-fileBody' : ''}`,
+              key: 'body',
+              'data-gallery-body': true,
+              ref: bodyScrollRef,
+            }, [
+              h('div', { className: 'dg-groups', key: 'groups' }, groupNodes),
+              data.scan.capped
+                ? h('div', { className: 'dg-more', key: 'capped' }, t('capped'))
+                : null,
+            ]),
+            h(ScrollRail, {
+              key: 'rail',
+              scrollerRef: bodyScrollRef,
+              t,
+              railClassName: kind === 'file' ? 'dg-panRailFiles' : '',
+            }),
+          ])
+        } else {
         const gridChildren = items.map((item) => kind === 'file'
           ? h(FileCard, {
               key: item.relPath,
@@ -2407,10 +2837,13 @@ ${absPath}
             railClassName: kind === 'file' ? 'dg-panRailFiles' : '',
           }),
         ])
+        }
       }
 
       // 分页条：常驻显示「还有 X 张」+ 页码。单页时只显示总数，不渲染页码按钮。
-      const pager = data !== null && items.length > 0
+      // 全局分组模式下不分页（分组自己带折叠），所以只在「当前对话」与非分组时显示。
+      const usePager = scope !== 'global' || (data !== null && !Array.isArray(data.groups))
+      const pager = usePager && data !== null && items.length > 0
         ? h(Pager, {
             key: 'pager',
             t,
@@ -2485,6 +2918,7 @@ ${absPath}
 
       return h('div', { className: 'dg-root', 'data-gallery-root': true }, [
         header,
+        legend,
         body,
         pager,
         viewerLayer,

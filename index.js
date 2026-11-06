@@ -12,6 +12,7 @@ import { promises as fsp, readFileSync, statSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { zstdDecompressSync } from 'node:zlib'
+import { buildSessionIndex, clearSessionIndexCache } from './session-index.js'
 
 /** 路由：一个 POST 通道，op 区分 list / raw / reveal / settings。exact Fetch 路由必须以 / 开头。 */
 export const ROUTE = '/api/dsh-gallery'
@@ -57,6 +58,12 @@ const VIEW_TOOLS = new Set(['read_image'])
 
 /** 只从 VIEW_TOOLS 里接受的图片扩展名。 */
 const VIEW_IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.avif', '.tif', '.tiff'])
+
+/**
+ * 命令执行类工具。它参数里的路径只作为「弱证据」：
+ * 出现在命令文本里 → 该文件是被处理过的，不算「纯输入」。
+ */
+const BASH_TOOLS = new Set(['ops_bash', 'pwsh', 'bash'])
 
 /** zstd 帧起始魔数（小端 0x28B52FFD）。一个 .zstd 文件可能由多帧拼接而成。 */
 const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd])
@@ -117,7 +124,9 @@ function detectDefaultRoot() {
 
 const DEFAULTS = {
   // root 不在默认值里写死，由 resolveOptions 三级优先推导
-  windowHours: 24,
+  // 扫描时间窗口（小时）。默认一年：全局资产要能覆盖历史对话，
+  // 否则「按对话分组」看不到旧成果。24 小时会把历史全滤掉。
+  windowHours: 24 * 365,
   maxItems: 60,
   maxDepth: 3,
   extensions: ['.png', '.jpg', '.jpeg', '.webp'],
@@ -228,7 +237,7 @@ function resolveOptions(config) {
     roots: resolvedRoots,
     rootSource,
     settingsFile,
-    windowHours: numberOr(merged.windowHours, DEFAULTS.windowHours, 1, 24 * 30),
+    windowHours: numberOr(merged.windowHours, DEFAULTS.windowHours, 1, 24 * 366),
     maxItems: numberOr(merged.maxItems, DEFAULTS.maxItems, 1, 500),
     maxDepth: numberOr(merged.maxDepth, DEFAULTS.maxDepth, 0, 8),
     extensions: arrayOfStrings(merged.extensions, DEFAULTS.extensions).map((e) => e.toLowerCase()),
@@ -604,7 +613,30 @@ function collectAbsolutePaths(node, sink) {
 }
 
 /**
- * 从会话日志里读出「本对话产出过的绝对路径」。
+ * 资产分类常量。
+ *
+ * 分类判据（按优先级，从高到低）：
+ *   1. 被 `present` 声明过 → **最终资产**（正式交付物）
+ *   2. 只被 `read_image` 看过、从未被写入 → **输入资产**（用户给的参考图/资料）
+ *   3. 其余（write/edit/脚本产出/bash 提到） → **中间资产**
+ *   4. 会话日志里查不到任何记录 → **未归类**（历史文件，不能冒充「输入」）
+ *
+ * 为什么要有 UNKNOWN：早先版本把查不到归属的文件兜底成 input，
+ * 结果 4995 个历史文件全被标成「输入」，把真正的输入资产淹没了。
+ * 「不知道」就老老实实说不知道，不要瞎猜。
+ */
+const ASSET_CATEGORY = {
+  INPUT: 'input',
+  INTERMEDIATE: 'intermediate',
+  FINAL: 'final',
+  UNKNOWN: 'unknown',
+}
+
+/** 中文/英文标签映射（客户端也可自行翻译，这里只给分类值）。 */
+const CATEGORY_ORDER = ['final', 'input', 'intermediate']
+
+/**
+ * 从会话日志里读出「本对话产出过的绝对路径 + 分类」。
  *
  * 覆盖两类来源：
  * 1. `write` / `edit` / `present` 等直接写文件的调用 —— 路径必是产出。
@@ -613,13 +645,23 @@ function collectAbsolutePaths(node, sink) {
  *    「当前对话」里就完全看不见（只有全局资产能看到）。
  *
  * @param logText - 解压后的日志文本（每行一个 JSON）。
- * @returns 绝对路径的 Set。
+ * @param sessionStartMs - 本会话开始时间（毫秒时间戳）。
+ *   用于区分「用户提供的素材」和「会话期间生成的产物」：
+ *   前者必定早于会话开始就存在。传 0 表示拿不到，此时不做输入判定。
+ * @returns Map<绝对路径, { category, presented, written, viewed, bashMentioned }>
  */
-function extractOutputPaths(logText) {
-  const paths = new Set()
-  if (typeof logText !== 'string' || logText === '') return paths
-  const lines = logText.split('\n')
-  for (const line of lines) {
+function extractAssetInfo(logText, sessionStartMs = 0) {
+  const assets = new Map()
+  if (typeof logText !== 'string' || logText === '') return assets
+
+  const ensure = (abs) => {
+    if (!assets.has(abs)) {
+      assets.set(abs, { presented: false, written: false, viewed: false, bashMentioned: false })
+    }
+    return assets.get(abs)
+  }
+
+  for (const line of logText.split('\n')) {
     if (line === '') continue
     // 快速预筛：只处理含 tool/call 的行，避免全量 JSON.parse
     if (!line.includes('tool/call')) continue
@@ -633,10 +675,6 @@ function extractOutputPaths(logText) {
     const name = record?.data?.name
     if (typeof name !== 'string') continue
 
-    const isWriter = OUTPUT_TOOLS.has(name)
-    const isViewer = VIEW_TOOLS.has(name)
-    if (!isWriter && !isViewer) continue
-
     const rawArgs = record?.data?.arguments
     if (typeof rawArgs !== 'string') continue
     let args
@@ -645,8 +683,39 @@ function extractOutputPaths(logText) {
     } catch {
       continue
     }
-    const found = []
-    collectAbsolutePaths(args, found)
+
+    // ---- bash / pwsh：命令文本里提到的路径，只作为「非输入」的弱证据 ----
+    if (BASH_TOOLS.has(name)) {
+      const cmdText = `${args?.command ?? ''} ${args?.script_path ?? ''}`
+      const re = /[A-Za-z]:[\\/][^\s"'|&;<>()*?]+/g
+      for (const m of cmdText.matchAll(re)) {
+        const candidate = m[0].replace(/[\\/]+$/, '')
+        const ext = path.extname(candidate).toLowerCase()
+        // 只接受看起来像文件的路径（有扩展名）
+        if (ext === '') continue
+        try {
+          const info = ensure(path.resolve(candidate))
+          info.bashMentioned = true
+        } catch {
+          // 解析失败就跳过
+        }
+      }
+      continue
+    }
+
+    const isWriter = OUTPUT_TOOLS.has(name)
+    const isViewer = VIEW_TOOLS.has(name)
+    const isPresenter = name === 'present'
+    if (!isWriter && !isViewer && !isPresenter) continue
+
+    // present 的参数结构是 { files: [{ path, description }]}
+    let found = []
+    if (isPresenter && Array.isArray(args?.files)) {
+      found = args.files.map((f) => f?.path).filter((p) => typeof p === 'string')
+    } else {
+      collectAbsolutePaths(args, found)
+    }
+
     for (const entry of found) {
       if (isViewer) {
         // 查看类工具只认图片：避免把 read_image 参数里偶尔出现的
@@ -654,10 +723,93 @@ function extractOutputPaths(logText) {
         const ext = path.extname(entry).toLowerCase()
         if (!VIEW_IMAGE_EXTS.has(ext)) continue
       }
-      paths.add(entry)
+      const info = ensure(path.resolve(entry))
+      if (isPresenter) info.presented = true
+      else if (isViewer) info.viewed = true
+      else info.written = true
     }
   }
-  return paths
+
+  // ---- 归类 ----
+  for (const [abs, info] of assets) {
+    classifyAsset(abs, info, sessionStartMs)
+  }
+
+  return assets
+}
+
+/**
+ * 从会话日志首行解析会话开始时间（createdAt）。
+ * @param logText - 解压后的日志文本。
+ * @returns 毫秒时间戳；解析失败返回 0。
+ */
+function parseSessionStartMs(logText) {
+  if (typeof logText !== 'string' || logText === '') return 0
+  const firstLine = logText.split('\n')[0]
+  try {
+    const first = JSON.parse(firstLine)
+    return typeof first?.createdAt === 'number' ? first.createdAt : 0
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * 给单个资产定分类。**唯一**的分类入口，别在别处复制这套判据。
+ *
+ * 规则（按优先级）：
+ *   1. present 过 → 最终
+ *   2. 「只被 read_image 看过」是候选输入，但必须能证明它早于会话开始就存在：
+ *      - mtime < 会话开始 → 输入（用户预先提供的素材）
+ *      - mtime >= 会话开始 → 中间（会话期间生成的，脚本产出常见这种）
+ *   3. 其余 → 中间
+ *
+ * 为什么必须看时间：「被 read_image 看过」既可能是用户素材，也可能是脚本产出的图，
+ * Agent 两者都会打开看。实测反例：
+ *   - architecture.png：write 写的是脚本，file_path 不是它，只在 read_image 出现
+ *   - 缩略图尺寸对比.png：文件名写在 bash 的 python 代码里，不是绝对路径
+ * 这两类旧判据都会误判成「输入」。
+ *
+ * @param abs - 文件绝对路径。
+ * @param info - extractAssetInfo 收集到的动作标记（会被写入 category）。
+ * @param sessionStartMs - 会话开始时间；0 表示未知（此时不做输入判定）。
+ */
+function classifyAsset(abs, info, sessionStartMs) {
+  info.path = abs
+
+  if (info.presented) {
+    info.category = ASSET_CATEGORY.FINAL
+    return
+  }
+
+  const looksLikeInput = info.viewed === true && info.written !== true && info.bashMentioned !== true
+  if (!looksLikeInput) {
+    info.category = ASSET_CATEGORY.INTERMEDIATE
+    return
+  }
+
+  let mtimeMs = null
+  try {
+    mtimeMs = statSync(abs).mtimeMs
+  } catch {
+    mtimeMs = null
+  }
+
+  if (mtimeMs !== null && sessionStartMs > 0 && mtimeMs < sessionStartMs) {
+    info.category = ASSET_CATEGORY.INPUT
+  } else {
+    // 会话开始后才出现（或文件已不存在）→ 归中间，不冒充用户素材
+    info.category = ASSET_CATEGORY.INTERMEDIATE
+  }
+}
+
+/**
+ * 从会话日志里读出「本对话产出过的绝对路径」。
+ * @param logText - 解压后的日志文本（每行一个 JSON）。
+ * @returns 绝对路径的 Set。
+ */
+function extractOutputPaths(logText) {
+  return new Set(extractAssetInfo(logText).keys())
 }
 
 /**
@@ -687,22 +839,43 @@ async function resolveSessionScope(config, sessionId, allRoots) {
   if (logText === '') {
     return { ok: false, reason: 'log-empty', taskDirs: [], paths: [], relPaths: [], subSessions: 0 }
   }
-  const allPaths = extractOutputPaths(logText)
+  // 会话开始时间：用于区分「用户素材」与「会话期间产出」
+  const sessionStartMs = parseSessionStartMs(logText)
+  const allAssets = extractAssetInfo(logText, sessionStartMs)
 
   // 修法 C：合并所有子会话（子智能体）的产出路径
   const subLogs = await findSubSessionLogs(sessionsDir, sessionId)
   for (const subLog of subLogs) {
     const subText = await readSessionLogText(subLog)
     if (subText === '') continue
-    for (const p of extractOutputPaths(subText)) allPaths.add(p)
+    for (const [abs, info] of extractAssetInfo(subText, sessionStartMs)) {
+      const existing = allAssets.get(abs)
+      if (existing) {
+        // 合并标记：任一处 present 就算最终
+        existing.presented = existing.presented || info.presented
+        existing.written = existing.written || info.written
+        existing.viewed = existing.viewed || info.viewed
+        existing.bashMentioned = existing.bashMentioned || info.bashMentioned
+      } else {
+        allAssets.set(abs, info)
+      }
+    }
+  }
+
+  // 合并后重新归类（因为 presented/written 可能变了）。
+  // 统一走 classifyAsset，避免两处判据分叉 —— v0.8.1 就是这里漏改导致分类不准。
+  for (const [abs, info] of allAssets) {
+    classifyAsset(abs, info, sessionStartMs)
   }
 
   const normalized = []
   const relPaths = []
   const taskDirs = new Set()
+  // relPath(小写) → 分类，供扫描时标注
+  const categoryByRel = new Map()
 
-  for (const entry of allPaths) {
-    const absolute = path.resolve(entry)
+  for (const [abs, info] of allAssets) {
+    const absolute = path.resolve(abs)
     // 找出该路径属于哪个 root
     let ownerRoot = null
     for (const r of roots) {
@@ -713,7 +886,9 @@ async function resolveSessionScope(config, sessionId, allRoots) {
 
     const rel = path.relative(ownerRoot, absolute)
     const segs = rel.split(path.sep).filter((s) => s !== '')
-    relPaths.push(rel.split(path.sep).join('/'))
+    const relPath = rel.split(path.sep).join('/')
+    relPaths.push(relPath)
+    categoryByRel.set(relPath.toLowerCase(), info.category)
     // 修法 B：有子目录时取第一层；没有子目录（文件直接在 root 下）时，
     // 用空字符串占位，表示「只在根目录层匹配」，不再直接丢弃
     if (segs.length >= 2) taskDirs.add(segs[0])
@@ -725,6 +900,7 @@ async function resolveSessionScope(config, sessionId, allRoots) {
     taskDirs: [...taskDirs],
     paths: normalized,
     relPaths,
+    categoryByRel,
     subSessions: subLogs.length,
   }
 }
@@ -755,6 +931,38 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
     // 修法 B：用「精确相对路径」集合判定，而不是只靠第一层目录名。
     // 这样既能处理有子目录的情况，也能处理「文件直接躺在 root 根目录下」。
     sessionRelSet = new Set((scopeInfo.relPaths ?? []).map((p) => p.toLowerCase()))
+  }
+
+  // 会话索引：建立「文件 → 所属对话 + 分类」的映射，供全局按对话分组用
+  const sessionsDir = typeof config?.sessionsDir === 'string' && config.sessionsDir !== ''
+    ? path.resolve(config.sessionsDir)
+    : DEFAULT_SESSIONS_DIR
+  let sessionIndex = null
+  // 全局模式才需要索引（当前对话模式已有自己的 scopeInfo）
+  if (!isSession) {
+    sessionIndex = await buildSessionIndex(sessionsDir, opts, {
+      readSessionLogText,
+      extractAssetInfo,
+    })
+  }
+
+  // 文件绝对路径 → { sessionId, title, category }
+  const ownerByAbs = new Map()
+  if (sessionIndex !== null) {
+    for (const [sid, entry] of sessionIndex) {
+      for (const [abs, cat] of entry.files) {
+        // 同一个文件被多个对话产出时，取最近的那个对话
+        const prev = ownerByAbs.get(abs)
+        if (prev === undefined || entry.createdAt > prev.createdAt) {
+          ownerByAbs.set(abs, {
+            sessionId: sid,
+            title: entry.title || '',
+            createdAt: entry.createdAt,
+            category: cat,
+          })
+        }
+      }
+    }
   }
 
   // 已隐藏的路径：扫描时直接跳过（不移动文件，只从列表里拿掉）
@@ -845,10 +1053,34 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
 
   const rootMissing = !anyRootExists
 
+  // 给每个条目附加「分类」和「所属对话」
+  for (const item of matches) {
+    const abs = path.join(item.rootDir, ...item.relPath.split('/'))
+    const owner = ownerByAbs.get(abs)
+    item.absPath = abs
+    if (isSession) {
+      item.category = (scopeInfo.categoryByRel?.get(item.relPath.toLowerCase())) ?? null
+      item.sessionId = sessionId
+    } else if (owner !== undefined) {
+      item.category = owner.category
+      item.sessionId = owner.sessionId
+      item.sessionTitle = owner.title
+      item.sessionCreatedAt = owner.createdAt
+    } else {
+      // 不属于任何已知对话的文件：归到「历史资产」，分类记为**未归类**
+      // 不能兜底成 input —— 那会把 4995 个历史文件全标成「输入」
+      item.category = ASSET_CATEGORY.UNKNOWN
+      item.sessionId = null
+    }
+  }
+
   matches.sort((a, b) => b.mtime - a.mtime)
   const total = matches.length
   // 分页：每页 maxItems 条，保留 total 供页码条使用
-  const pageCount = Math.max(1, Math.ceil(total / opts.maxItems))
+  // 全局分组模式下不分页（客户端自己分组折叠），所有条目都返回摘要
+  const pageCount = isSession
+    ? Math.max(1, Math.ceil(total / opts.maxItems))
+    : Math.max(1, Math.ceil(total / opts.maxItems))
   const safePage = Math.min(currentPage, pageCount)
   const offset = (safePage - 1) * opts.maxItems
   const visible = matches.slice(offset, offset + opts.maxItems)
@@ -868,6 +1100,27 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
     item.width = measured?.width ?? null
     item.height = measured?.height ?? null
   }))
+
+  // 全量统计：供「全局按对话分组」使用（不受分页限制）
+  const allItemsSummary = []
+  if (!isSession) {
+    for (const item of matches) {
+      allItemsSummary.push({
+        absPath: item.absPath,
+        relPath: item.relPath,
+        sessionId: item.sessionId,
+        sessionTitle: item.sessionTitle ?? '',
+        sessionCreatedAt: item.sessionCreatedAt ?? 0,
+        category: item.category,
+        mtime: item.mtime,
+        width: item.width ?? null,
+        height: item.height ?? null,
+        size: item.size,
+        name: item.name,
+        extension: item.extension,
+      })
+    }
+  }
 
   return {
     kind,
@@ -899,7 +1152,98 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
     hidden: Math.max(0, total - visible.length),
     rootMissing,
     scan: { directories, entries, capped },
+    // 全局模式额外返回：按对话分组的数据（客户端做折叠展示用）
+    groups: isSession ? null : buildGroups(allItemsSummary, 120, sessionId),
   }
+}
+
+/**
+ * 把扁平的资产列表按「所属对话」分组。
+ *
+ * 分组规则：
+ *   - 属于某个已知对话的文件 → 归到该对话（标题用会话标题）
+ *   - 其余（日志里查不到归属的历史文件）→ 统一归到「历史资产」组
+ *
+ * 排序（v0.8.2 调整）：
+ *   1. **当前对话永远置顶** —— 用户打开「全局资产」最想先看自己这次做了什么，
+ *      按时间倒序会把它压到中间（当前对话可能很早创建、但一直在用）。
+ *   2. 其余对话按创建时间倒序。
+ *   3. 「历史资产」永远最后。
+ *
+ * ⚠️ 体积控制：每组只返回前 maxPerGroup 条明细 + 完整总数。
+ * 为什么必须截断：历史组有 4995 个文件，全量返回会让单次响应达到 1.3 MB，
+ * 前端解析/渲染都会卡，面板看起来「只显示两组」。
+ *
+ * @param summary - 扁平资产摘要数组。
+ * @param maxPerGroup - 每组最多返回多少条明细（默认 120）。
+ * @param currentSessionId - 当前打开的会话 id；匹配到的组会标记 isCurrent 并置顶。
+ * @returns 分组数组。
+ */
+function buildGroups(summary, maxPerGroup = 120, currentSessionId = '') {
+  if (!Array.isArray(summary) || summary.length === 0) return []
+
+  const groups = new Map()
+  for (const item of summary) {
+    const key = item.sessionId ?? '__unassigned__'
+    if (!groups.has(key)) {
+      groups.set(key, {
+        sessionId: item.sessionId,
+        title: item.sessionId === null ? '' : (item.sessionTitle || item.sessionId.slice(0, 8)),
+        createdAt: item.sessionCreatedAt || 0,
+        files: [],
+      })
+    }
+    const g = groups.get(key)
+    g.files.push({
+      absPath: item.absPath,
+      relPath: item.relPath,
+      category: item.category,
+      mtime: item.mtime,
+      width: item.width ?? null,
+      height: item.height ?? null,
+      size: item.size ?? 0,
+      name: item.name ?? item.relPath.split('/').pop(),
+    })
+    if (item.sessionId === null && item.mtime > g.createdAt) g.createdAt = item.mtime
+  }
+
+  const out = []
+  for (const g of groups.values()) {
+    g.files.sort((a, b) => b.mtime - a.mtime)
+    const counts = { final: 0, input: 0, intermediate: 0, unknown: 0 }
+    for (const f of g.files) {
+      if (counts[f.category] !== undefined) counts[f.category] += 1
+    }
+    // 只回传前 maxPerGroup 条明细（客户端滚动到底再按需请求）
+    const returned = g.files.slice(0, maxPerGroup)
+    out.push({
+      sessionId: g.sessionId,
+      isHistory: g.sessionId === null,
+      // 当前打开的会话：客户端据此置顶并默认展开
+      isCurrent: currentSessionId !== '' && g.sessionId === currentSessionId,
+      title: g.title,
+      createdAt: g.createdAt,
+      fileCount: g.files.length,
+      returnedCount: returned.length,
+      truncated: g.files.length > returned.length,
+      counts,
+      files: returned,
+      latestMtime: g.files.length > 0 ? g.files[0].mtime : 0,
+    })
+  }
+
+  // 组排序：
+  //   1. 当前对话永远第一（按时间倒序会把它压到中间）
+  //   2. 其余对话按创建时间倒序
+  //   3. 「历史资产」永远最后
+  out.sort((a, b) => {
+    if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1
+    if (a.isHistory && !b.isHistory) return 1
+    if (b.isHistory && !a.isHistory) return -1
+    return b.createdAt - a.createdAt
+  })
+
+  return out
 }
 
 /**

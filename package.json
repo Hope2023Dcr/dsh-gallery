@@ -1,9 +1,16 @@
 {
   "name": "dsh-gallery",
-  "version": "0.7.2",
-  "private": true,
+  "version": "0.8.3",
   "type": "module",
   "description": "产出画廊：解决 DSH 只在任务结尾才列出产出、过程不可见的问题。实时监控产出目录，图片自动刷新、文件原生预览，任务进行中即可校验纠正。",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Hope2023Dcr/dsh-gallery.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Hope2023Dcr/dsh-gallery/issues"
+  },
+  "homepage": "https://github.com/Hope2023Dcr/dsh-gallery#readme",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -13,9 +20,13 @@
   "files": [
     "index.js",
     "client.js",
+    "session-index.js",
     "cordis.patch.yml",
     "locale/*.json",
-    "icon.svg"
+    "icon.svg",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "dsh": {
     "bundle": {
@@ -31,13 +42,24 @@
     }
   },
   "author": {
-    "name": "Chief (DS Bot)"
+    "name": "Hope2023Dcr"
   },
   "license": "MIT",
   "keywords": [
     "dsh-plugin",
-    "gallery",
-    "preview",
-    "output-artifacts"
-  ]
+    "deepseek-harness",
+    "dsh",
+    "output-gallery",
+    "image-gallery",
+    "file-preview",
+    "sidebar-plugin",
+    "agent-tools"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "engines": {
+    "node": ">=20"
+  }
 }

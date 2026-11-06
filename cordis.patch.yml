@@ -16,7 +16,11 @@
       name: 'dsh-gallery'
       config:
         # root 留空 → 走自动探测 / 运行时设置
-        windowHours: 24
+        #
+        # ⚠️ windowHours 不要在这里写死！
+        # 它是「扫描多久以内的文件」。写死 24 会让「全局按对话分组」只剩当天产出，
+        # 历史对话全部看不到（这正是 v0.8.0 分组只显示 2 组的原因）。
+        # 代码里的默认值是一整年；想覆盖请改 <DSH_HOME>/dsh-gallery.json 里的 windowHours。
         maxItems: 60
         maxDepth: 3
         extensions:
