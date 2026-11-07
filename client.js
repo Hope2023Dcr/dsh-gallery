@@ -13,6 +13,20 @@ window.__ModuleLoader__.load({
     const THUMB_SIZE = 200
     /** 放大视图最长边；仍然是 canvas 缩放结果，不把原图直接塞进 <img>。 */
     const VIEW_SIZE = 1600
+    /** 可内联解码的图片扩展名（缩略图/查看器/原图模式共用一份定义）。 */
+    const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']
+    /** 判断某条目是否是图片（大小写不敏感）。 */
+    function isImageItem(it) {
+      const ext = String(it?.extension ?? '').toLowerCase()
+      if (IMAGE_EXTS.includes(ext)) return true
+      // extension 缺失时退回看 relPath 的扩展名
+      if (ext === '') {
+        const rel = String(it?.relPath ?? '')
+        const dot = rel.lastIndexOf('.')
+        if (dot >= 0) return IMAGE_EXTS.includes(rel.slice(dot).toLowerCase())
+      }
+      return false
+    }
     /** 单图请求超时，避免一张卡死的图拖住整面板。 */
     const RAW_TIMEOUT_MS = 15000
     /** 同一时刻最多几个缩略图在解码，避免一次性拉扯大量原图。 */
@@ -137,6 +151,18 @@ window.__ModuleLoader__.load({
       ctxHiddenDone: '已隐藏，可在设置里恢复',
       ctxDeleting: '删除中…',
       ctxDeleteFailed: '删除失败',
+      // 原图（原尺寸查看）
+      ctxOpenOriginal: '查看原图（原尺寸细节）',
+      ctxOpenOriginalHint: '按原图像素打开，适合看细节；大图加载会慢一些',
+      viewerToOriginal: '原图',
+      viewerToPreview: '预览',
+      viewerOriginalLoading: '正在加载原图 {pct}%',
+      viewerOriginalLoadingIndeterminate: '正在加载原图…',
+      viewerOriginalReady: '原图 {w} × {h}',
+      viewerOriginalFailed: '原图加载失败',
+      viewerSwapHint: '右键或按 O 切换原图对比',
+      viewerSwappedToOriginal: '已切换原图，细节更清楚',
+      viewerSwappedToPreview: '已切回预览图',
       // 已隐藏管理
       hiddenCount: '已隐藏 {count} 个',
       hiddenClear: '全部恢复',
@@ -261,6 +287,17 @@ window.__ModuleLoader__.load({
       ctxHiddenDone: 'Hidden. Restore it in settings later.',
       ctxDeleting: 'Deleting…',
       ctxDeleteFailed: 'Delete failed',
+      ctxOpenOriginal: 'View original (full detail)',
+      ctxOpenOriginalHint: 'Opens at the image’s own pixel size; large images take longer to load',
+      viewerToOriginal: 'Original',
+      viewerToPreview: 'Preview',
+      viewerOriginalLoading: 'Loading original {pct}%',
+      viewerOriginalLoadingIndeterminate: 'Loading original…',
+      viewerOriginalReady: 'Original {w} × {h}',
+      viewerOriginalFailed: 'Original failed to load',
+      viewerSwapHint: 'Right-click or press O to compare the original',
+      viewerSwappedToOriginal: 'Original shown — full detail',
+      viewerSwappedToPreview: 'Back to the preview',
       hiddenCount: '{count} hidden',
       hiddenClear: 'Restore all',
       hiddenClearing: 'Restoring…',
@@ -318,8 +355,12 @@ window.__ModuleLoader__.load({
       return response.json()
     }
 
-    /** 拉取一张原图的 Blob；超时即放弃，让调用方显示占位符。 */
-    async function fetchRaw(relPath, signal) {
+    /**
+     * 拉取一张原图的 Blob；超时即放弃，让调用方显示占位符。
+     * `onProgress(loaded, total)` 可选：有 Content-Length 时按字节回报进度（total=-1 表示不确定）。
+     * 原图可能是几十 MB，前端需要进度反馈，否则用户以为卡死。
+     */
+    async function fetchRaw(relPath, signal, onProgress) {
       const timeout = new AbortController()
       const timer = setTimeout(() => timeout.abort(), RAW_TIMEOUT_MS)
       const merged = typeof AbortSignal.any === 'function' ? AbortSignal.any([signal, timeout.signal]) : timeout.signal
@@ -332,7 +373,30 @@ window.__ModuleLoader__.load({
           signal: merged,
         })
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        return await response.blob()
+        if (typeof onProgress !== 'function') return await response.blob()
+
+        // 有可读的 body 流且知道总字节数时，边读边报进度；否则退回整块读取
+        const total = Number(response.headers.get('content-length') ?? '') || 0
+        if (total === 0 || response.body === null || typeof response.body.getReader !== 'function') {
+          onProgress(-1, -1)
+          return await response.blob()
+        }
+        const reader = response.body.getReader()
+        const chunks = []
+        let loaded = 0
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            chunks.push(value)
+            loaded += value.length
+            onProgress(loaded, total)
+          }
+        } catch (error) {
+          try { await reader.cancel() } catch {}
+          throw error
+        }
+        return new Blob(chunks, { type: response.headers.get('content-type') ?? 'application/octet-stream' })
       } finally {
         clearTimeout(timer)
       }
@@ -389,6 +453,23 @@ window.__ModuleLoader__.load({
         reader.onload = () => resolve(String(reader.result))
         reader.onerror = () => reject(new Error('read failed'))
         reader.readAsDataURL(blob)
+      })
+    }
+
+    /**
+     * 读图片真实像素尺寸。优先用 host 已解析好的 item.width/height（零成本）；
+     * 缺失时才解码一次图像测 naturalWidth/Height（大图解码有开销，能免则免）。
+     */
+    async function readImageSize(url, item) {
+      if (typeof item?.width === 'number' && typeof item?.height === 'number'
+          && item.width > 0 && item.height > 0) {
+        return { w: item.width, h: item.height }
+      }
+      return await new Promise((resolve) => {
+        const img = new Image()
+        img.onload = () => resolve({ w: img.naturalWidth || 0, h: img.naturalHeight || 0 })
+        img.onerror = () => resolve({ w: 0, h: 0 })
+        img.src = url
       })
     }
 
@@ -1230,6 +1311,24 @@ window.__ModuleLoader__.load({
 .dg-fileCardClickable:focus-visible { outline: 2px solid var(--dsw-alias-border-accent, #4b9eff); outline-offset: 1px; }
 .dg-copied { color: var(--dsw-alias-label-primary); font-weight: 600; opacity: .85; }
 .dg-viewerFoot { flex: 0 0 auto; padding: 6px 10px 10px; color: var(--dsw-alias-label-secondary); font-size: 11px; word-break: break-all; }
+/* 原图/预览切换按钮：远程控制（无鼠标）时的主要入口，要够显眼够大 */
+.dg-btnOrig { white-space: nowrap; min-width: 86px; }
+.dg-btnOrigActive {
+  border-color: var(--dsw-alias-accent-default, #4a7cff) !important;
+  color: var(--dsw-alias-accent-default, #4a7cff) !important;
+  font-weight: 600;
+}
+/* 原图加载失败的警示条：不说明原因用户会以为图坏了 */
+.dg-viewerWarn {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  margin: 0 8px;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-error, rgba(220, 60, 60, 0.12));
+  color: var(--dsw-alias-label-error, #d93a3a);
+  font-size: 11px;
+  word-break: break-all;
+}
 .dg-open { white-space: nowrap; }
 .dg-openCompact { padding: 2px 6px; line-height: 16px; font-size: 12px; }
 `
@@ -1365,6 +1464,10 @@ window.__ModuleLoader__.load({
         style: { left: `${pos.left}px`, top: `${pos.top}px` },
       }, [
         h('div', { className: 'dg-ctxHead', key: 'head' }, item.name),
+        // 「查看原图」只对图片出现：文件卡片没有原图概念，避免无效按钮
+        actions.onOpenOriginal !== undefined
+          ? entry('original', t('ctxOpenOriginal'), '🔍', () => actions.onOpenOriginal())
+          : null,
         entry('hide', t('ctxHide'), '🚫', () => actions.onHide()),
         entry('reveal', t('ctxReveal'), '📂', () => actions.onReveal()),
         entry('copy', t('ctxCopy'), '⧉', () => actions.onCopy()),
@@ -1616,8 +1719,13 @@ ${absPath}
      * 面板内放大查看（**仅图片**）。
      * 交互：左键点图退出、滚轮缩放、中键拖动平移。
      * 文件不走这里——文件点击直接交给 DSH 自带侧栏预览。
+     *
+     * 原图对比：预览图压到 VIEW_SIZE（1600px），看细节会糊。
+     * 因此提供「原图模式」按需加载（不预加载，避免几千张图拖垮内存/带宽）：
+     *   - 右键预览区、按 O、点底部按钮 三种方式切换
+     *   - 切换时**保留当前缩放与位置**，否则切过去跳回 1x 就没法对比
      */
-    function Viewer({ items, index, onClose, onStep, t }) {
+    function Viewer({ items, index, onClose, onStep, t, initialOriginal }) {
       const item = items[index]
       // 文件预览已改走 DSH 原生侧栏（session 地址）；此处 Viewer 仅处理图片，isText 恒 false，
       // 下面的文本分支保留为死代码，供 v0.2 若需插件内预览时复用
@@ -1631,13 +1739,110 @@ ${absPath}
       // 上一次拖动是否真的产生了位移（用于区分「拖图」和「单击关闭」）
       const lastDragMoved = React.useRef(false)
 
+      // ---- 原图模式 ----
+      // originalMode: 用户当前是否处在「看原图」状态
+      // original: { status: 'idle'|'loading'|'ready'|'failed', url, pct, w, h, message }
+      // originalRequestedRef: 一旦开始加载就不再重复发起（切回预览再切回来直接复用）
+      const [originalMode, setOriginalMode] = React.useState(initialOriginal === true)
+      const [original, setOriginal] = React.useState({ status: 'idle' })
+      const originalRequestedRef = React.useRef(false)
+      const originalAbortRef = React.useRef(null)
+      // 记录当前原图 URL，卸载时释放（object URL 不主动释放会一直占内存）
+      const originalRef = React.useRef(null)
+
+      /** 加载原图（幂等：同一张图只拉一次；失败可重试）。 */
+      const ensureOriginal = React.useCallback(() => {
+        if (originalRequestedRef.current) return
+        originalRequestedRef.current = true
+        const controller = new AbortController()
+        originalAbortRef.current = controller
+        setOriginal({ status: 'loading', pct: -1 })
+        fetchRaw(item.relPath, controller.signal, (loaded, total) => {
+          if (controller.signal.aborted) return
+          const pct = total > 0 ? Math.round((loaded / total) * 100) : -1
+          setOriginal((cur) => (cur.status === 'loading' ? { status: 'loading', pct } : cur))
+        })
+          .then(async (blob) => {
+            if (controller.signal.aborted) return
+            const url = URL.createObjectURL(blob)
+            if (controller.signal.aborted) { URL.revokeObjectURL(url); return }
+            // 先量尺寸再挂 state：图片解码后可立即按原始像素显示
+            const dims = await readImageSize(url, item)
+            if (controller.signal.aborted) { URL.revokeObjectURL(url); return }
+            setOriginal((cur) => {
+              // 替换旧的原图 URL，避免泄漏
+              if (cur.status === 'ready' && cur.url) URL.revokeObjectURL(cur.url)
+              originalRef.current = url
+              return { status: 'ready', url, w: dims.w, h: dims.h }
+            })
+          })
+          .catch((error) => {
+            if (controller.signal.aborted) return
+            setOriginal({ status: 'failed', message: String(error?.message ?? error) })
+            // 失败后允许重试
+            originalRequestedRef.current = false
+          })
+      }, [item.relPath, item.extension])
+
+      // 卸载时释放原图 object URL，避免内存泄漏
+      React.useEffect(() => () => {
+        const url = originalRef.current
+        if (url) URL.revokeObjectURL(url)
+      }, [])
+
+      /** 切换原图/预览。切换时保留 zoom 与 pan，才能对比同一点细节。 */
+      const toggleOriginal = React.useCallback(() => {
+        setOriginalMode((was) => {
+          const next = !was
+          if (next) ensureOriginal()
+          return next
+        })
+      }, [ensureOriginal])
+
+      // 换图时重置原图状态（不同图片的原图互不复用）。
+      // ⚠️ 必须跳过「首次挂载」：本 effect 依赖 item.relPath，挂载时也会跑一次，
+      // 若在这里无条件 setOriginalMode(false)，会把 initialOriginal 设的初始状态清掉，
+      // 导致「右键查看原图」打开后显示的仍是预览图（已踩过）。
+      // 所以只在本组件已经渲染过某张图、且 relPath 变化时才重置。
+      const lastRelPathRef = React.useRef(item.relPath)
+      React.useEffect(() => {
+        if (lastRelPathRef.current === item.relPath) return
+        lastRelPathRef.current = item.relPath
+        originalRequestedRef.current = false
+        setOriginalMode(false)
+        setOriginal({ status: 'idle' })
+        return () => {
+          if (originalAbortRef.current !== null) originalAbortRef.current.abort()
+        }
+      }, [item.relPath])
+
+      // 首次挂载时如果要求直接看原图，立刻开始加载。
+      // 放在「换图重置」之后，顺序上不会再被清掉。
+      React.useEffect(() => {
+        if (initialOriginal === true) ensureOriginal()
+        // 仅打开时报一次；之后用户手动切换由 toggleOriginal 负责
+      }, [])
+
+      // 防御：若查看器已在显示时又收到「以原图打开」的请求（比如再次右键同一张），
+      // 组件不会重建，initialOriginal 的初值就失效了。这里补一次响应。
+      const initialOriginalAppliedRef = React.useRef(initialOriginal === true)
+      React.useEffect(() => {
+        if (initialOriginal !== true) {
+          initialOriginalAppliedRef.current = false
+          return
+        }
+        if (initialOriginalAppliedRef.current) return
+        initialOriginalAppliedRef.current = true
+        ensureOriginal()
+        setOriginalMode(true)
+      }, [initialOriginal, ensureOriginal])
+
       React.useEffect(() => {
         let alive = true
         const controller = new AbortController()
         setState({ status: 'pending' })
         // 既不是文本、也不是图片的二进制文件（pdf/docx/zip 等）不做内联解码
-        const ext = String(item.extension ?? '').toLowerCase()
-        const isImage = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'].includes(ext)
+        const isImage = isImageItem(item)
         if (!isText && !isImage) {
           setState({ status: 'binary' })
           return () => { alive = false }
@@ -1857,11 +2062,15 @@ ${absPath}
             event.preventDefault()
             setZoom(1)
             setPan({ x: 0, y: 0 })
+          } else if (key === 'o' || key === 'O') {
+            // 原图/预览切换：保留当前 zoom 与 pan，方便对比同一点细节
+            event.preventDefault()
+            toggleOriginal()
           }
         }
         window.addEventListener('keydown', onKey)
         return () => window.removeEventListener('keydown', onKey)
-      }, [onClose, onStep, panStep, zoomBy])
+      }, [onClose, onStep, panStep, zoomBy, toggleOriginal])
 
       const sliderDragRef = React.useRef(null)
       const onSliderPointerDown = (event) => {
@@ -1989,6 +2198,23 @@ ${absPath}
               onClick: (event) => { event.stopPropagation(); setZoom(1); setPan({ x: 0, y: 0 }) },
             }, '1:1'),
           ]),
+          // 原图 / 预览 切换按钮：远程控制（无鼠标）时的唯一入口，必须有
+          !isText && h('button', {
+            type: 'button',
+            key: 'orig',
+            className: `dg-btn dg-btnOrig${originalMode ? ' dg-btnOrigActive' : ''}`,
+            'data-gallery-original-toggle': originalMode ? 'on' : 'off',
+            'data-gallery-original-state': original.status,
+            title: `${t('viewerSwapHint')}  ·  ${t('ctxOpenOriginalHint')}`,
+            'aria-label': originalMode ? t('viewerToPreview') : t('viewerToOriginal'),
+            'aria-pressed': originalMode,
+            disabled: original.status === 'loading',
+            onClick: (event) => { event.stopPropagation(); toggleOriginal() },
+          }, original.status === 'loading'
+            ? h('span', { key: 'load' }, original.pct >= 0
+                ? format(t('viewerOriginalLoading'), { pct: original.pct })
+                : t('viewerOriginalLoadingIndeterminate'))
+            : (originalMode ? `◉ ${t('viewerToPreview')}` : `◎ ${t('viewerToOriginal')}`)),
           h('button', { type: 'button', className: 'dg-btn', key: 'prev', onClick: () => onStep(-1), 'aria-label': t('prev') }, '‹'),
           h('button', { type: 'button', className: 'dg-btn', key: 'next', onClick: () => onStep(1), 'aria-label': t('next') }, '›'),
           h('button', { type: 'button', className: 'dg-btn', key: 'close', onClick: onClose, 'aria-label': t('close') }, '✕'),
@@ -2014,12 +2240,20 @@ ${absPath}
             onPointerLeave: isText ? undefined : endDrag,
             onPointerCancel: isText ? undefined : endDrag,
             onAuxClick: isText ? undefined : (event) => { if (event.button === 1) event.preventDefault() },
+            // 右键 = 切换原图/预览（需求 2）。不弹浏览器菜单，避免打断对比
+            onContextMenu: isText ? undefined : (event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              toggleOriginal()
+            },
           },
             state.status === 'ready'
               ? (isText
                   ? h('pre', { className: 'dg-textPre', key: 'text' }, state.text)
                   : h('img', {
-                      src: state.url,
+                      // 原图模式下显示原图 URL（按需加载好后才有）；
+                      // 未就绪时继续显示预览图，避免黑屏跳变
+                      src: originalMode && original.status === 'ready' ? original.url : state.url,
                       alt: item.name,
                       decoding: 'async',
                       draggable: false,
@@ -2037,10 +2271,21 @@ ${absPath}
           ),
           slider,
         ]),
-        h('div', { className: 'dg-viewerFoot', key: 'foot' },
-          zoom > 1
-            ? `${dims} · ${formatBytes(item.size)} · ${formatTime(item.mtime)} · ${t('dragHint')}`
-            : `${dims} · ${formatBytes(item.size)} · ${formatTime(item.mtime)}`),
+        // 原图加载状态条：失败要能看见并知道原因，否则用户以为图坏了
+        original.status === 'failed'
+          ? h('div', { className: 'dg-viewerWarn', key: 'origFail', 'data-gallery-original-warn': 'failed' },
+              `⚠ ${t('viewerOriginalFailed')}：${original.message ?? ''}`)
+          : null,
+        h('div', { className: 'dg-viewerFoot', key: 'foot' }, [
+          h('span', { key: 'meta' }, [
+            originalMode && original.status === 'ready' && original.w > 0
+              ? format(t('viewerOriginalReady'), { w: original.w, h: original.h })
+              : dims,
+            ` · ${formatBytes(item.size)} · ${formatTime(item.mtime)}`,
+            zoom > 1 && !isText ? ` · ${t('dragHint')}` : '',
+            isText ? '' : ` · ${t('viewerSwapHint')}`,
+          ].join('')),
+        ]),
       ])
     }
 
@@ -2309,6 +2554,9 @@ ${absPath}
       const [view, setView] = React.useState({ status: 'loading' })
       const [refreshing, setRefreshing] = React.useState(false)
       const [viewer, setViewer] = React.useState(null)
+      // 让回调（如右键菜单）读到最新值而不必重建依赖
+      const viewerRef = React.useRef(null)
+      React.useEffect(() => { viewerRef.current = viewer }, [viewer])
       const limiter = React.useRef(null)
       if (limiter.current === null) limiter.current = createLimiter(MAX_CONCURRENT)
 
@@ -2373,7 +2621,7 @@ ${absPath}
        *   分组视图下卡片来自 `data.groups[i].files`，与当前页的扁平 `items` 是两个不同的集合，
        *   直接用全局 `items` 的索引会「点哪张都跳出同一张图」。
        */
-      const openViewer = React.useCallback((index, anchorEl, list) => {
+      const openViewer = React.useCallback((index, anchorEl, list, asOriginal) => {
         const scroller = bodyScrollRef.current
         if (scroller !== null) {
           savedScrollRef.current = {
@@ -2392,8 +2640,38 @@ ${absPath}
           width: it.width ?? null,
           height: it.height ?? null,
         }))
-        setViewer({ index, list: snapshot })
+        setViewer({ index, list: snapshot, asOriginal: asOriginal === true })
       }, [])
+
+      /**
+       * 从右键菜单「查看原图」打开：按 relPath 在「打开时记录的列表」里定位。
+       * 分组视图与扁平视图的列表不同，所以用 viewer 当前列表优先，
+       * 找不到再退回全局 items / 各分组文件，最后兜底单张列表。
+       */
+      const openViewerByItem = React.useCallback((target, asOriginal) => {
+        const samePath = (it) => it.relPath === target.relPath
+        // 1) 当前查看器列表
+        const cur = viewerRef.current
+        if (cur !== null && Array.isArray(cur.list)) {
+          const i = cur.list.findIndex(samePath)
+          if (i >= 0) { openViewer(i, null, cur.list, true); return }
+        }
+        // 2) 全局 items（扁平/分页视图）
+        const flat = itemsRef.current ?? []
+        const j = flat.findIndex(samePath)
+        if (j >= 0) { openViewer(j, null, flat, true); return }
+        // 3) 任一对话分组的文件列表（全局分组视图）
+        const groups = groupsRef.current
+        if (Array.isArray(groups)) {
+          for (const g of groups) {
+            if (!Array.isArray(g.files)) continue
+            const k = g.files.findIndex(samePath)
+            if (k >= 0) { openViewer(k, null, g.files, true); return }
+          }
+        }
+        // 4) 兜底：单独一张（此时左右切图无意义，但不至于打不开）
+        openViewer(0, null, [target], true)
+      }, [openViewer])
 
       /** 关闭查看器：恢复到原来那张缩略图的位置。 */
       const closeViewer = React.useCallback(() => {
@@ -2505,6 +2783,11 @@ ${absPath}
 
       const data = view.status === 'ready' ? view.data : null
       const items = data?.items ?? []
+      // 右键菜单的回调要在不重建依赖的前提下读到最新的列表，所以同步到 ref
+      const itemsRef = React.useRef(items)
+      itemsRef.current = items
+      const groupsRef = React.useRef(null)
+      groupsRef.current = Array.isArray(data?.groups) ? data.groups : null
 
       // 分组首次渲染时，默认展开「当前对话」那一组（没有则展开第一组）。
       // 只做一次：之后用户手动收起/展开都保留。
@@ -2904,6 +3187,7 @@ ${absPath}
               items: viewer.list,
               index: Math.min(viewer.index, viewer.list.length - 1),
               t,
+              initialOriginal: viewer.asOriginal === true,
               onClose: closeViewer,
               onStep: step,
             }))
@@ -2929,6 +3213,10 @@ ${absPath}
             item: ctxMenu.item,
             onClose: closeContextMenu,
             actions: {
+              // 只对图片提供「查看原图」：直接以原图模式打开查看器
+              onOpenOriginal: isImageItem(ctxMenu.item)
+                ? () => { openViewerByItem(ctxMenu.item, true) }
+                : undefined,
               onHide: () => { void doHide(ctxMenu.item) },
               onReveal: () => { void doReveal(ctxMenu.item) },
               onCopy: () => { void copyText(ctxMenu.absPath) },
