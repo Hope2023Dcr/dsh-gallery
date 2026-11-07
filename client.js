@@ -6,6 +6,8 @@ window.__ModuleLoader__.load({
 
     /** 与 Host 半部一致的路由（exact Fetch 路由的 path）。 */
     const ROUTE = '/api/dsh-gallery'
+    /** 音视频直链（GET，支持 Range）——给 <video>/<audio> 用 */
+    const MEDIA_ROUTE = '/api/dsh-gallery/media'
     /** tab 类型的身份；也是正文与标题在 keyed slot 里的 key。 */
     const KIND = 'gallery'
     const ID = 'dsh-gallery'
@@ -151,6 +153,19 @@ window.__ModuleLoader__.load({
       ctxHiddenDone: '已隐藏，可在设置里恢复',
       ctxDeleting: '删除中…',
       ctxDeleteFailed: '删除失败',
+      // 音视频画廊（v0.10.1）
+      kindMedia: '音视频',
+      emptyMedia: '这段时间没有音视频产出',
+      mediaPlay: '播放',
+      mediaOpenExternal: '用系统播放器打开',
+      mediaDuration: '时长',
+      mediaNoPreview: '浏览器无法解码该格式',
+      mediaLoadFailed: '加载失败',
+      mediaThumbPending: '生成首帧中…',
+      mediaThumbFailed: '无法生成首帧',
+      mediaOpenHint: '点击在面板内播放；右键可用系统播放器打开',
+      mediaCloseHint: '关闭播放器',
+      mediaPlaying: '播放中',
       // 原图（原尺寸查看）
       ctxOpenOriginal: '查看原图（原尺寸细节）',
       ctxOpenOriginalHint: '按原图像素打开，适合看细节；大图加载会慢一些',
@@ -287,6 +302,18 @@ window.__ModuleLoader__.load({
       ctxHiddenDone: 'Hidden. Restore it in settings later.',
       ctxDeleting: 'Deleting…',
       ctxDeleteFailed: 'Delete failed',
+      kindMedia: 'Media',
+      emptyMedia: 'No audio or video produced in this period',
+      mediaPlay: 'Play',
+      mediaOpenExternal: 'Open in system player',
+      mediaDuration: 'Duration',
+      mediaNoPreview: 'The browser cannot decode this format',
+      mediaLoadFailed: 'Load failed',
+      mediaThumbPending: 'Making a first frame…',
+      mediaThumbFailed: 'Cannot make a first frame',
+      mediaOpenHint: 'Click to play in the panel; right-click to open in the system player',
+      mediaCloseHint: 'Close the player',
+      mediaPlaying: 'Playing',
       ctxOpenOriginal: 'View original (full detail)',
       ctxOpenOriginalHint: 'Opens at the image’s own pixel size; large images take longer to load',
       viewerToOriginal: 'Original',
@@ -1329,6 +1356,107 @@ window.__ModuleLoader__.load({
   font-size: 11px;
   word-break: break-all;
 }
+/* ===== 音视频画廊（v0.10.1） ===== */
+.dg-mediaGrid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+.dg-mediaCard {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-default, rgba(255,255,255,0.10));
+  background: var(--dsw-alias-bg-secondary, rgba(255,255,255,0.03));
+  cursor: pointer;
+  text-align: left;
+  aspect-ratio: 16 / 10;
+}
+.dg-mediaCard:hover { border-color: var(--dsw-alias-accent-default, #4a7cff); }
+.dg-mediaCard:focus-visible { outline: 2px solid var(--dsw-alias-accent-default, #4a7cff); outline-offset: 2px; }
+.dg-mediaAudio { aspect-ratio: 16 / 8; }
+.dg-mediaThumb {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: repeating-linear-gradient(45deg, rgba(255,255,255,0.03), rgba(255,255,255,0.03) 8px, transparent 8px, transparent 16px);
+  overflow: hidden;
+}
+.dg-mediaThumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.dg-mediaPlaceholder { font-size: 26px; opacity: 0.55; font-size: 13px; color: var(--dsw-alias-label-secondary); }
+.dg-mediaFail { color: var(--dsw-alias-label-error, #d93a3a); }
+/* 播放键悬停才明显，避免遮住首帧 */
+.dg-mediaPlayIco {
+  position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  width: 42px; height: 42px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.55);
+  color: #fff; font-size: 16px;
+  opacity: 0.85;
+  transition: opacity 120ms ease, transform 120ms ease;
+  pointer-events: none;
+}
+.dg-mediaCard:hover .dg-mediaPlayIco { opacity: 1; transform: translate(-50%, -50%) scale(1.08); }
+.dg-mediaBadge {
+  position: absolute; top: 8px; left: 8px;
+  padding: 2px 6px; border-radius: 4px;
+  background: rgba(0,0,0,0.62); color: #fff;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.4px;
+  pointer-events: none;
+}
+.dg-mediaMeta {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 18px 8px 8px;
+  background: linear-gradient(180deg, transparent, rgba(0,0,0,0.78));
+  display: flex; flex-direction: column; gap: 2px;
+  pointer-events: none;
+}
+.dg-mediaName {
+  font-size: 12px; color: #fff; font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dg-mediaSub {
+  font-size: 10px; color: rgba(255,255,255,0.72);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* 播放器弹层 */
+.dg-mediaLayer {
+  position: absolute; inset: 0; z-index: 40;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.82);
+  padding: 16px;
+}
+.dg-mediaPanel {
+  display: flex; flex-direction: column;
+  width: 100%; max-width: 720px; max-height: 100%;
+  background: var(--dsw-alias-bg-primary, #16181d);
+  border-radius: 10px; overflow: hidden;
+  border: 1px solid var(--dsw-alias-border-default, rgba(255,255,255,0.12));
+  box-shadow: 0 12px 40px rgba(0,0,0,0.55);
+}
+.dg-mediaBar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--dsw-alias-border-default, rgba(255,255,255,0.08));
+}
+.dg-mediaPTitle {
+  flex: 1 1 auto; min-width: 0;
+  font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dg-mediaStage {
+  display: flex; align-items: center; justify-content: center;
+  background: #000; min-height: 120px;
+  padding: 0;
+}
+.dg-mediaPanelVideo .dg-mediaStage video { width: 100%; max-height: 60vh; display: block; }
+.dg-mediaPanelAudio .dg-mediaStage { padding: 24px 16px; background: transparent; }
+.dg-mediaPanelAudio .dg-mediaStage audio { width: 100%; }
+.dg-mediaFoot {
+  padding: 6px 10px 10px;
+  font-size: 11px; color: var(--dsw-alias-label-secondary);
+  word-break: break-all;
+}
+
 .dg-open { white-space: nowrap; }
 .dg-openCompact { padding: 2px 6px; line-height: 16px; font-size: 12px; }
 `
@@ -1512,6 +1640,220 @@ window.__ModuleLoader__.load({
           }, busy ? t('ctxDeleting') : t('ctxDeleteYes')),
         ]),
       ]))
+    }
+
+    /**
+     * 音视频卡片（v0.10.1）。
+     *
+     * 首帧缩略图：视频用 <video> 解码到稍后一帧，再画进 canvas 存成 data URL。
+     * 抽帧是**懒加载**的（进入视口才做），否则一页几十个视频会同时解码把面板卡死。
+     * 音频没有画面，只显示音符图标。
+     */
+    function MediaCard({ item, t, absPath, onPlay, onContextMenu }) {
+      const isVideo = item.mediaType === 'video'
+      const [thumb, setThumb] = React.useState(null)
+      const nodeRef = React.useRef(null)
+      const startedRef = React.useRef(false)
+
+      React.useEffect(() => {
+        if (!isVideo) return undefined
+        const node = nodeRef.current
+        const run = () => { void makeFirstFrame() }
+        if (node === null || typeof IntersectionObserver !== 'function') {
+          run()
+          return undefined
+        }
+        const observer = new IntersectionObserver((entries) => {
+          for (const entry of entries) {
+            if (!entry.isIntersecting) continue
+            observer.disconnect()
+            run()
+          }
+        }, { rootMargin: '120px' })
+        observer.observe(node)
+        return () => observer.disconnect()
+
+        async function makeFirstFrame() {
+          if (startedRef.current) return
+          startedRef.current = true
+          setThumb({ status: 'pending' })
+          const url = mediaUrlOf(item.relPath, item.mtime)
+          const video = document.createElement('video')
+          video.muted = true
+          video.playsInline = true
+          video.preload = 'metadata'
+          let settled = false
+          let timer = null
+          const cleanup = () => {
+            video.removeAttribute('src')
+            try { video.load() } catch {}
+          }
+          const fail = (reason) => {
+            if (settled) return
+            settled = true
+            if (timer !== null) clearTimeout(timer)
+            cleanup()
+            setThumb({ status: 'failed', message: reason })
+          }
+          const finish = () => {
+            if (settled) return
+            settled = true
+            if (timer !== null) clearTimeout(timer)
+            try {
+              const w = video.videoWidth
+              const h = video.videoHeight
+              if (w === 0 || h === 0) throw new Error('empty-frame')
+              const maxEdge = 320
+              const scale = Math.min(1, maxEdge / Math.max(w, h))
+              const cw = Math.max(1, Math.round(w * scale))
+              const ch = Math.max(1, Math.round(h * scale))
+              const canvas = document.createElement('canvas')
+              canvas.width = cw
+              canvas.height = ch
+              const c2d = canvas.getContext('2d')
+              if (c2d === null) throw new Error('no-2d-context')
+              c2d.drawImage(video, 0, 0, cw, ch)
+              setThumb({ status: 'ready', url: canvas.toDataURL('image/jpeg', 0.8) })
+            } catch (error) {
+              setThumb({ status: 'failed', message: String(error?.message ?? error) })
+            } finally {
+              cleanup()
+            }
+          }
+          timer = setTimeout(() => fail('timeout'), 12000)
+          video.onloadeddata = () => {
+            try {
+              video.currentTime = Math.min(0.5, (video.duration || 1) * 0.15)
+            } catch { finish() }
+          }
+          video.onseeked = () => finish()
+          video.onerror = () => fail('decode-error')
+          video.src = url
+        }
+      }, [item.relPath, item.mtime, isVideo])
+
+      const badge = (item.extension ?? '').replace(/^\./, '').toUpperCase().slice(0, 4)
+      const meta = `${formatBytes(item.size)} · ${formatTime(item.mtime)}`
+
+      return h('div', {
+        ref: nodeRef,
+        className: `dg-card dg-mediaCard${isVideo ? ' dg-mediaVideo' : ' dg-mediaAudio'}`,
+        role: 'button',
+        tabIndex: 0,
+        title: `${item.name}\n${absPath}\n${t('mediaOpenHint')}`,
+        'data-gallery-media': item.relPath,
+        'data-gallery-media-type': item.mediaType ?? '',
+        onClick: () => onPlay(item),
+        onContextMenu: (event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          if (typeof onContextMenu === 'function') onContextMenu(item, absPath, event)
+        },
+        onKeyDown: (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            onPlay(item)
+          }
+        },
+      }, [
+        h('div', { className: 'dg-mediaThumb', key: 'thumb' }, (
+          thumb !== null && thumb.status === 'ready'
+            ? h('img', { src: thumb.url, alt: item.name, key: 'img', loading: 'lazy' })
+            : h('span', {
+                className: `dg-mediaPlaceholder${thumb !== null && thumb.status === 'failed' ? ' dg-mediaFail' : ''}`,
+                key: 'ph',
+              }, thumb === null ? (isVideo ? '🎞' : '♪')
+                : thumb.status === 'pending' ? t('mediaThumbPending')
+                  : (isVideo ? '🎞' : '♪'))
+        )),
+        h('span', { className: 'dg-mediaPlayIco', key: 'play' }, '▶'),
+        h('span', { className: 'dg-mediaBadge', key: 'badge' }, badge),
+        h('div', { className: 'dg-mediaMeta', key: 'meta' }, [
+          h('span', { className: 'dg-mediaName', key: 'n' }, item.name),
+          h('span', { className: 'dg-mediaSub', key: 's' }, meta),
+        ]),
+      ])
+    }
+
+    /**
+     * 面板内媒体播放器（弹层）。
+     * 视频 <video>、音频 <audio>，都指向 MEDIA_ROUTE 的 GET 直链（支持 Range，可拖进度）。
+     */
+    function MediaPlayer({ item, t, onClose }) {
+      const isVideo = item.mediaType === 'video'
+      const [failed, setFailed] = React.useState(false)
+      const [dims, setDims] = React.useState(null)
+      const url = mediaUrlOf(item.relPath, item.mtime)
+
+      React.useEffect(() => {
+        const onKey = (event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            onClose()
+          }
+        }
+        window.addEventListener('keydown', onKey)
+        return () => window.removeEventListener('keydown', onKey)
+      }, [onClose])
+
+      return h('div', {
+        className: 'dg-mediaLayer',
+        key: 'mediaLayer',
+        'data-gallery-player': item.relPath,
+        onClick: onClose,
+      }, h('div', {
+        className: `dg-mediaPanel${isVideo ? ' dg-mediaPanelVideo' : ' dg-mediaPanelAudio'}`,
+        key: 'panel',
+        onClick: (event) => event.stopPropagation(),
+      }, [
+        h('div', { className: 'dg-mediaBar', key: 'bar' }, [
+          h('span', { className: 'dg-mediaPTitle', key: 'title' }, item.name),
+          h('button', {
+            type: 'button', className: 'dg-btn', key: 'close',
+            title: t('mediaCloseHint'), 'aria-label': t('mediaCloseHint'),
+            onClick: onClose,
+          }, '✕'),
+        ]),
+        h('div', { className: 'dg-mediaStage', key: 'stage' }, (
+          failed
+            ? h('div', { className: 'dg-placeholder dg-error' }, t('mediaNoPreview'))
+            : isVideo
+              ? h('video', {
+                  src: url,
+                  controls: true,
+                  autoPlay: true,
+                  preload: 'metadata',
+                  key: 'v',
+                  'data-gallery-video': item.relPath,
+                  onError: () => setFailed(true),
+                  onLoadedMetadata: (event) => {
+                    const v = event.currentTarget
+                    if (v.videoWidth > 0) setDims({ w: v.videoWidth, h: v.videoHeight })
+                  },
+                })
+              : h('audio', {
+                  src: url,
+                  controls: true,
+                  autoPlay: true,
+                  preload: 'metadata',
+                  key: 'a',
+                  'data-gallery-audio': item.relPath,
+                  onError: () => setFailed(true),
+                })
+        )),
+        h('div', { className: 'dg-mediaFoot', key: 'foot' },
+          `${formatBytes(item.size)} · ${formatTime(item.mtime)}`
+          + (dims !== null ? ` · ${dims.w} × ${dims.h}` : '')),
+      ]))
+    }
+
+    /**
+     * 媒体直链：GET /api/dsh-gallery/media?path=<relPath>
+     * 带 mtime 作为缓存破坏参数（文件被覆盖后浏览器不会用旧缓存）。
+     */
+    function mediaUrlOf(relPath, mtime) {
+      const stamp = typeof mtime === 'number' ? mtime : 0
+      return MEDIA_ROUTE + '?path=' + encodeURIComponent(relPath) + '&v=' + stamp
     }
 
     function FileCard({ item, t, absPath, onOpenFolder, onPreview, onContextMenu }) {
@@ -2554,6 +2896,8 @@ ${absPath}
       const [view, setView] = React.useState({ status: 'loading' })
       const [refreshing, setRefreshing] = React.useState(false)
       const [viewer, setViewer] = React.useState(null)
+      // 音视频播放器（v0.10.1）：独立于图片查看器，因为交互与 DOM 完全不同
+      const [mediaPlaying, setMediaPlaying] = React.useState(null)
       // 让回调（如右键菜单）读到最新值而不必重建依赖
       const viewerRef = React.useRef(null)
       React.useEffect(() => { viewerRef.current = viewer }, [viewer])
@@ -2850,7 +3194,7 @@ ${absPath}
               : format(t('subCount'), { shown: items.length, total: data.total })),
         ]),
         scopeSwitch,
-        // 图片 / 文件 双画廊切换
+        // 图片 / 文件 / 音视频 三画廊切换（v0.10.1）
         h('div', { className: 'dg-switch', key: 'switch' }, [
           h('button', {
             type: 'button',
@@ -2866,6 +3210,13 @@ ${absPath}
             'data-gallery-kind': 'file',
             onClick: () => { setKind('file'); setPage(1); setViewer(null) },
           }, t('kindFile')),
+          h('button', {
+            type: 'button',
+            key: 'media',
+            className: `dg-seg${kind === 'media' ? ' dg-segActive' : ''}`,
+            'data-gallery-kind': 'media',
+            onClick: () => { setKind('media'); setPage(1); setViewer(null) },
+          }, t('kindMedia')),
         ]),
         settingsBtn,
         h('button', {
@@ -2930,7 +3281,9 @@ ${absPath}
       } else if (items.length === 0) {
         // 当前对话为空时，要区分：会话记录没找到 / 日志空 / 找到了但确实没产出
         // 全局为空时，按画廊类型给不同文案（图片 / 文件）
-        let emptyText = kind === 'file' ? t('emptyFile') : t('empty')
+        let emptyText = kind === 'file' ? t('emptyFile')
+          : kind === 'media' ? t('emptyMedia')
+            : t('empty')
         if (scope === 'session' && data !== null) {
           const info = data.scopeInfo ?? {}
           if (info.ok === false) {
@@ -3104,7 +3457,18 @@ ${absPath}
             }),
           ])
         } else {
-        const gridChildren = items.map((item) => kind === 'file'
+        // 音视频：卡片直接播放（不走图片查看器）
+      const mediaGridChildren = items.map((item) => h(MediaCard, {
+        key: item.relPath,
+        item,
+        t,
+        limiter: limiter.current,
+        absPath: buildAbsPath(data === null ? '' : data.root, item.relPath),
+        onPlay: (target) => setMediaPlaying(target),
+        onContextMenu: openContextMenu,
+      }))
+
+      const gridChildren = items.map((item) => kind === 'file'
           ? h(FileCard, {
               key: item.relPath,
               item,
@@ -3139,7 +3503,7 @@ ${absPath}
             'data-gallery-body': true,
             ref: bodyScrollRef,
           }, [
-            h('div', { className: `dg-grid${kind === 'file' ? ' dg-fileGrid' : ''}`, key: 'grid' }, gridChildren),
+            h('div', { className: `dg-grid${kind === 'file' ? ' dg-fileGrid' : ''}${kind === 'media' ? ' dg-mediaGrid' : ''}`, key: 'grid' }, kind === 'media' ? mediaGridChildren : gridChildren),
             data.scan.capped
               ? h('div', { className: 'dg-more', key: 'capped' }, t('capped'))
               : null,
@@ -3193,6 +3557,16 @@ ${absPath}
             }))
         : null
 
+      // 音视频播放器层（v0.10.1）
+      const mediaLayer = mediaPlaying !== null
+        ? h(MediaPlayer, {
+            key: 'mediaPlayer',
+            item: mediaPlaying,
+            t,
+            onClose: () => setMediaPlaying(null),
+          })
+        : null
+
       // 设置面板：覆盖在整块之上
       const settingsLayer = settingsOpen
         ? h(SettingsPanel, {
@@ -3243,6 +3617,7 @@ ${absPath}
         body,
         pager,
         viewerLayer,
+        mediaLayer,
         settingsLayer,
         ctxLayer,
         confirmLayer,
