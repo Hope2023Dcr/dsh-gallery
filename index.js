@@ -8,14 +8,18 @@
  *
  * 缩略图压缩在客户端用 canvas 完成（本文件不生成缩略图，只给原始字节）。
  */
-import { promises as fsp, readFileSync, statSync } from 'node:fs'
+import { promises as fsp, readFileSync, statSync, createReadStream } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { Readable } from 'node:stream'
 import { zstdDecompressSync } from 'node:zlib'
 import { buildSessionIndex, clearSessionIndexCache } from './session-index.js'
 
 /** 路由：一个 POST 通道，op 区分 list / raw / reveal / settings。exact Fetch 路由必须以 / 开头。 */
 export const ROUTE = '/api/dsh-gallery'
+
+/** 音视频直链（GET）：给 <video>/<audio> 用，支持 Range。 */
+export const MEDIA_ROUTE = '/api/dsh-gallery/media'
 
 /** DSH 主目录：优先环境变量，回退 ~/.dsh。 */
 const DSH_HOME = process.env.DSH_HOME ?? path.join(os.homedir(), '.dsh')
@@ -122,8 +126,12 @@ function detectDefaultRoot() {
   return defaultRootCache
 }
 
+/** 视频扩展名（与 DEFAULTS.mediaExtensions 里的音频部分相对）。 */
+const VIDEO_EXTS = new Set([
+  '.mp4', '.webm', '.mov', '.m4v', '.mkv', '.avi', '.ogv',
+])
+
 const DEFAULTS = {
-  // root 不在默认值里写死，由 resolveOptions 三级优先推导
   // 扫描时间窗口（小时）。默认一年：全局资产要能覆盖历史对话，
   // 否则「按对话分组」看不到旧成果。24 小时会把历史全滤掉。
   windowHours: 24 * 365,
@@ -131,8 +139,21 @@ const DEFAULTS = {
   maxDepth: 3,
   extensions: ['.png', '.jpg', '.jpeg', '.webp'],
   /**
+   * 音视频画廊（v0.10.1）：视频 + 音频，独立一个 kind。
+   * 用浏览器原生 <video>/<audio> 播放，不引入 ffmpeg 等后端转码，保持零依赖。
+   * 体积大的片子先不进列表（见 maxMediaBytes），避免一次性拉几十 MB 把面板卡死。
+   */
+  mediaExtensions: [
+    // 视频
+    '.mp4', '.webm', '.mov', '.m4v', '.mkv', '.avi', '.ogv',
+    // 音频
+    '.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.oga', '.opus', '.wma',
+  ],
+  /** 单个音视频文件的大小上限（字节）。超过就不列，避免加载卡顿。 */
+  maxMediaBytes: 200 * 1024 * 1024,
+  /**
    * 文件画廊：只放「产出文件」——文档、代码、数据、压缩包、链接。
-   * 不收任何图片格式（图片归图片画廊），也不收音视频（体积大且非文档产出）。
+   * 不收任何图片格式（图片归图片画廊），也不收音视频（音视频有独立画廊）。
    */
   fileExtensions: [
     '.md', '.markdown', '.txt', '.log',
@@ -242,10 +263,12 @@ function resolveOptions(config) {
     maxDepth: numberOr(merged.maxDepth, DEFAULTS.maxDepth, 0, 8),
     extensions: arrayOfStrings(merged.extensions, DEFAULTS.extensions).map((e) => e.toLowerCase()),
     fileExtensions: arrayOfStrings(merged.fileExtensions, DEFAULTS.fileExtensions).map((e) => e.toLowerCase()),
+    mediaExtensions: arrayOfStrings(merged.mediaExtensions, DEFAULTS.mediaExtensions).map((e) => e.toLowerCase()),
     skipDirs: arrayOfStrings(merged.skipDirs, DEFAULTS.skipDirs).map((e) => e.toLowerCase()),
     maxDirectories: numberOr(merged.maxDirectories, DEFAULTS.maxDirectories, 1, 200000),
     maxEntries: numberOr(merged.maxEntries, DEFAULTS.maxEntries, 1, 1000000),
     maxImageBytes: numberOr(merged.maxImageBytes, DEFAULTS.maxImageBytes, 1, 512 * 1024 * 1024),
+    maxMediaBytes: numberOr(merged.maxMediaBytes, DEFAULTS.maxMediaBytes, 1, 1024 * 1024 * 1024),
   }
 }
 
@@ -914,13 +937,23 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
   const now = Date.now()
   const cutoff = now - opts.windowHours * 3600_000
   const isFile = kind === 'file'
+  const isMedia = kind === 'media'
   const isSession = scope === 'session'
   // 页码从 1 开始；非法值一律回到第 1 页
   const currentPage = Math.max(1, Math.trunc(Number(page) || 1))
   // 图片格式永远排除在文件画廊之外；防止用户配置误把图片塞进来
   const extraImageEx = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff', '.heic', '.avif', '.ico'])
-  const rawExts = isFile ? opts.fileExtensions : opts.extensions
-  const extSet = new Set(rawExts.filter((e) => !(isFile && extraImageEx.has(e))))
+  // 音视频同样不能混进文件画廊（v0.10.1）：音视频有自己的画廊
+  const mediaEx = new Set(opts.mediaExtensions)
+  let rawExts
+  if (isFile) rawExts = opts.fileExtensions
+  else if (isMedia) rawExts = opts.mediaExtensions
+  else rawExts = opts.extensions
+  const extSet = new Set(rawExts.filter((e) => !(
+    (isFile && extraImageEx.has(e))
+    || (isFile && mediaEx.has(e))
+    || (isMedia && extraImageEx.has(e))
+  )))
   const skipSet = new Set(opts.skipDirs)
 
   // 当前对话范围：先解析会话日志（含子智能体会话），得到「本对话产出过的路径」
@@ -1035,6 +1068,8 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
           continue
         }
         if (stat.size <= 0 || stat.mtimeMs < cutoff) continue
+        // 音视频：超过体积上限的直接跳过（视频可能几百 MB，列出来点开就卡）
+        if (isMedia && stat.size > opts.maxMediaBytes) continue
         // 被隐藏的直接跳过（隐藏只影响列表展示，文件仍在磁盘上）
         if (hiddenSet.has(relPath)) continue
         matches.push({
@@ -1046,6 +1081,8 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
           size: stat.size,
           mtime: stat.mtimeMs,
           extension: ext,
+          // 音视频区分「视频 / 音频」，客户端据此选 <video> 还是 <audio>
+          ...(isMedia ? { mediaType: VIDEO_EXTS.has(ext) ? 'video' : 'audio' } : {}),
         })
       }
     }
@@ -1086,8 +1123,8 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
   const visible = matches.slice(offset, offset + opts.maxItems)
 
   await Promise.all(visible.map(async (item) => {
-    if (isFile) {
-      // 文件画廊不解析图片尺寸
+    if (isFile || isMedia) {
+      // 文件/音视频画廊不解析图片尺寸
       item.width = null
       item.height = null
       return
@@ -1118,6 +1155,8 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
         size: item.size,
         name: item.name,
         extension: item.extension,
+        // 音视频类型（video / audio），客户端据此选 <video> 还是 <audio>
+        ...(item.mediaType !== undefined ? { mediaType: item.mediaType } : {}),
       })
     }
   }
@@ -1274,6 +1313,20 @@ function contentTypeFor(ext) {
   if (ext === '.png') return 'image/png'
   if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg'
   if (ext === '.webp') return 'image/webp'
+  if (ext === '.gif') return 'image/gif'
+  if (ext === '.bmp') return 'image/bmp'
+  // 音视频（v0.10.1）：让浏览器 <video>/<audio> 能直接解码
+  if (ext === '.mp4' || ext === '.m4v') return 'video/mp4'
+  if (ext === '.webm') return 'video/webm'
+  if (ext === '.ogv') return 'video/ogg'
+  if (ext === '.mov') return 'video/quicktime'
+  if (ext === '.mkv') return 'video/x-matroska'
+  if (ext === '.mp3') return 'audio/mpeg'
+  if (ext === '.wav') return 'audio/wav'
+  if (ext === '.m4a' || ext === '.aac') return 'audio/mp4'
+  if (ext === '.flac') return 'audio/flac'
+  if (ext === '.ogg' || ext === '.oga') return 'audio/ogg'
+  if (ext === '.opus') return 'audio/opus'
   return 'application/octet-stream'
 }
 
@@ -1291,6 +1344,106 @@ function json(body, status) {
 export const inject = ['connection']
 
 export function apply(ctx, config) {
+  /**
+   * 音视频的 GET 直链（v0.10.1）。
+   * <video src> / <audio src> 需要一个浏览器能直接请求的 URL：
+   * POST 路由不行（媒体元素不会发 POST），所以这里单独注册一个 GET 路径。
+   * 支持 Range，浏览器才能拖进度条、边播边下。
+   */
+  ctx.effect(
+    () =>
+      ctx.connection.fetch.register({
+        path: MEDIA_ROUTE,
+        methods: ['GET'],
+        requestBody: 'none',
+        fetch: async (request) => {
+          const resolved = resolveOptions(config)
+          let relPath = ''
+          try {
+            relPath = new URL(request.url).searchParams.get('path') ?? ''
+          } catch {
+            relPath = ''
+          }
+          if (relPath === '') {
+            return json({ ok: false, error: { code: 'missing-path', message: '缺少 path 参数' } }, 400)
+          }
+          const found = await resolveReadable(resolved.roots, relPath, resolved)
+          if (found === null) {
+            return json({ ok: false, error: { code: 'not-readable', message: '文件不存在或不可读' } }, 404)
+          }
+          let stat
+          try {
+            stat = await fsp.stat(found.absolute)
+          } catch (error) {
+            return json({ ok: false, error: { code: 'read-failed', message: String(error?.message ?? error) } }, 500)
+          }
+          const totalSize = stat.size
+          const type = contentTypeFor(path.extname(found.absolute).toLowerCase())
+          const base = {
+            'content-type': type,
+            'accept-ranges': 'bytes',
+            'cache-control': 'no-store',
+          }
+
+          const rangeHeader = request.headers.get('range')
+          let start = 0
+          let end = totalSize - 1
+          let partial = false
+          if (typeof rangeHeader === 'string' && rangeHeader.startsWith('bytes=')) {
+            const spec = rangeHeader.slice(6).split(',')[0].trim()
+            const dash = spec.indexOf('-')
+            if (dash >= 0) {
+              const fromText = spec.slice(0, dash).trim()
+              const toText = spec.slice(dash + 1).trim()
+              if (fromText === '') {
+                const n = Number(toText)
+                if (Number.isFinite(n) && n > 0) {
+                  start = Math.max(0, totalSize - n)
+                  partial = true
+                }
+              } else {
+                const from = Number(fromText)
+                if (Number.isFinite(from) && from >= 0 && from < totalSize) {
+                  start = from
+                  if (toText !== '') {
+                    const to = Number(toText)
+                    if (Number.isFinite(to) && to >= start) end = Math.min(to, totalSize - 1)
+                  }
+                  partial = true
+                }
+              }
+            }
+          }
+
+          if (!partial) {
+            const stream = createReadStream(found.absolute)
+            return new Response(Readable.toWeb(stream), {
+              status: 200,
+              headers: { ...base, 'content-length': String(totalSize) },
+            })
+          }
+
+          const length = end - start + 1
+          if (length <= 0) {
+            return new Response(null, {
+              status: 416,
+              headers: { ...base, 'content-range': `bytes */${totalSize}` },
+            })
+          }
+          const stream = createReadStream(found.absolute, { start, end })
+          return new Response(Readable.toWeb(stream), {
+            status: 206,
+            headers: {
+              ...base,
+              'content-length': String(length),
+              'content-range': `bytes ${start}-${end}/${totalSize}`,
+            },
+          })
+        },
+      }),
+    [],
+  )
+
   ctx.effect(
     () =>
       ctx.connection.fetch.register({
@@ -1310,7 +1463,10 @@ export function apply(ctx, config) {
 
           if (op === 'list') {
             try {
-              const kind = body?.kind === 'file' ? 'file' : 'image'
+              // 三种画廊：图片 / 文件 / 音视频（v0.10.1）
+              const kind = body?.kind === 'file' ? 'file'
+                : body?.kind === 'media' ? 'media'
+                  : 'image'
               const scope = body?.scope === 'session' ? 'session' : 'global'
               const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
               return json(await scanGallery(config, kind, scope, sessionId, body?.page))
