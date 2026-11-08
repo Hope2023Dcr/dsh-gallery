@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Output Gallery",
-    "description": "Fixes DSH reporting produced files only after a task ends: watches your output folders live with auto-refreshing image thumbnails, native file preview, and in-panel video/audio playback with seeking and frame capture, so you can verify and intervene mid-task."
+    "description": "Fixes DSH reporting produced files only after a task ends: watches your output folders live with auto-refreshing image thumbnails, native file preview, and in-panel video/audio playback over HTTP Range (seeking works at any file size), plus one-click frame capture, so you can verify and intervene mid-task."
   }
 }
