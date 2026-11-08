@@ -16,7 +16,9 @@ S2 把 client 拆成分片后，产物行号会整体漂移，这些引用会全
 | **S0 工具链** | v0.11.2+ | `scripts/build.mjs` noop 版、`scripts/check.mjs`、`install.mjs` 白名单复制、`check.sh` 薄包装、契约测试 | **零字节变化** | ✅ 本次落地（待老板推送） |
 | **S1 Host 拆分** | v0.11.3 | `index.js` → `host/` 9 模块（+ session-index 搬入）；根级 `index.js` 34 行薄入口；`session-index.js` 留 re-export | 新增 `host/` 10 文件 | ✅ 已完成 |
 | **S2 Client 拆分** | v0.12.0 | CSS / 字典 / 组件 → `src/client/` 13 分片 + `styles.css`；`src/shared/protocol.js` 落地；构建器启用 | `client.js` 行为等价、行号全变 | ✅ 已完成 |
-| **S3 表态层** | v0.12.0 / 独立包 v0.1 | marks / decision / seam、原子写、`packages/decision/` 骨架 | +约 610 行 | ⬜ 未开始 |
+| **S3-a 反馈契约** | **v0.13.0 → v0.13.6** | 反馈契约 v1 + 反馈篮 + 决策草稿送 composer（人确认）+ seam v1 + 原子写 + marks 独立文件 | +约 700 行 | ✅ 已完成 |
+| S3-b 框选批注 | v0.14.0 | 图片框选（坐标契约）、A/B 对比、参数回灌 | — | ⬜ 待指令 |
+| S3-c 独立包 | `dsh-gallery-decision` v0.1 | L2 自动 steer / L3 cancel，先探针验 `inject:['agents']` | — | ⬜ 待指令 |
 
 **回滚**：产物始终是标准文件，回滚 = 切回上一 tag 后重新跑 `node install.mjs` 并重启 DSH。
 
@@ -96,6 +98,6 @@ S2 把 client 拆成分片后，产物行号会整体漂移，这些引用会全
 - `scripts/build.mjs` 的 S2 拼接分支**已启用并实测**：`npm run build` 会生成
   `client.js`（13 分片拼接 + `styles.css` 内联 + `protocol.js` 剥 export 注入）
   与 `host/protocol.js`；`--check` 已验证产物与源码逐字节一致。
-- `scripts/check.mjs` 的 **16 项已启用并全过**（13 分片顺序递增、分片存在、
-  shared 常量在 client 与 host 两侧值一致、无残留占位符）；
-  **仅 17（seam schema）/ 18（marks 原子写）待 S3 启用**。
+- `scripts/check.mjs` **18 项全部启用并全过（0 SKIP）**：
+  13 分片顺序递增、分片存在、shared 常量在 client 与 host 两侧值一致、无残留占位符、
+  seam schema 版本一致、marks 原子写（`tmp → rename`）+ 独立文件 + 两个 op 已注册。
