@@ -21,6 +21,9 @@ export const ROUTE = '/api/dsh-gallery'
 /** 音视频直链（GET）：给 <video>/<audio> 用，支持 Range。 */
 export const MEDIA_ROUTE = '/api/dsh-gallery/media'
 
+/** 媒体直链的分块阈值：小于它整块返回，大于它走 Range 分块（避免大视频读满内存）。 */
+const STREAM_THRESHOLD = 8 * 1024 * 1024
+
 /** DSH 主目录：优先环境变量，回退 ~/.dsh。 */
 const DSH_HOME = process.env.DSH_HOME ?? path.join(os.homedir(), '.dsh')
 
@@ -1293,9 +1296,21 @@ function buildGroups(summary, maxPerGroup = 120, currentSessionId = '') {
  * 多目录支持：第一个 root 找不到就逐个试其余 root。
  * @param roots - 扫描目录列表（或单个 root 字符串，兼容旧调用）。
  */
-async function resolveReadable(roots, relPath, opts) {
+/**
+ * 把「相对路径」解析成一个可读文件。
+ *
+ * @param roots - 允许的根目录。
+ * @param relPath - 相对 root 的路径（用 / 分隔）。
+ * @param opts - 配置。
+ * @param byteCap - 体积上限（字节）。**图片和媒体上限不同**：
+ *   图片用 maxImageBytes（默认 64MB），音视频用 maxMediaBytes（默认 200MB）。
+ *   不传时退回 maxImageBytes。以前这里固定用 maxImageBytes，
+ *   导致 127MB 的视频被判「不可读」→ 前端收到 404。
+ */
+async function resolveReadable(roots, relPath, opts, byteCap) {
   const list = Array.isArray(roots) ? roots : [roots]
   if (typeof relPath !== 'string' || relPath === '') return null
+  const cap = typeof byteCap === 'number' && byteCap > 0 ? byteCap : opts.maxImageBytes
   const normalized = relPath.replace(/\\/g, '/')
   if (normalized.split('/').some((segment) => segment === '..' || segment === '')) return null
   for (const root of list) {
@@ -1303,7 +1318,7 @@ async function resolveReadable(roots, relPath, opts) {
     if (!isInside(root, absolute)) continue
     try {
       const stat = await fsp.stat(absolute)
-      if (!stat.isFile() || stat.size <= 0 || stat.size > opts.maxImageBytes) continue
+      if (!stat.isFile() || stat.size <= 0 || stat.size > cap) continue
       return { absolute, stat, root }
     } catch {
       // 换下一个 root
@@ -1357,10 +1372,25 @@ export function apply(ctx, config) {
     () =>
       ctx.connection.fetch.register({
         path: MEDIA_ROUTE,
-        methods: ['GET'],
-        requestBody: 'none',
+        // 必须同时支持 HEAD（与官方 /api/file 一致）：浏览器加载媒体前会先发 HEAD 探测，
+        // 只给 GET 会让 <video>/<audio> 直接判定「无法解码」。
+        methods: ['GET', 'HEAD'],
+        requestBody: 'buffered',
         fetch: async (request) => {
+          // 媒体直链：GET / HEAD，**只用 200 + 流式**，不用 206。
+          //
+          // 实测结论（2026-11-08）：
+          //  - 小文件（1.1MB, 200 整块）能播；
+          //  - 大文件（127MB, 206 Range）报「浏览器无法解码」；
+          //  → 说明 DSH 的 exact fetch 层不透传 206 / content-range，或对 Range 响应有兼容问题。
+          //  所以统一返回 200 + Content-Length + 流式 body（内存占用恒定，不读满 127MB）。
           const resolved = resolveOptions(config)
+          const isHead = request.method === 'HEAD'
+          const baseHeaders = {
+            'cache-control': 'private, no-store',
+            'x-content-type-options': 'nosniff',
+            'accept-ranges': 'none',
+          }
           let relPath = ''
           try {
             relPath = new URL(request.url).searchParams.get('path') ?? ''
@@ -1368,80 +1398,36 @@ export function apply(ctx, config) {
             relPath = ''
           }
           if (relPath === '') {
-            return json({ ok: false, error: { code: 'missing-path', message: '缺少 path 参数' } }, 400)
+            return new Response(isHead ? null : 'missing path', { status: 400, headers: baseHeaders })
           }
-          const found = await resolveReadable(resolved.roots, relPath, resolved)
+          // 媒体用 maxMediaBytes（200MB），不是图片的 64MB —— 否则大视频会被判不可读
+          const found = await resolveReadable(resolved.roots, relPath, resolved, resolved.maxMediaBytes)
           if (found === null) {
-            return json({ ok: false, error: { code: 'not-readable', message: '文件不存在或不可读' } }, 404)
+            return new Response(isHead ? null : 'not found', { status: 404, headers: baseHeaders })
           }
           let stat
           try {
             stat = await fsp.stat(found.absolute)
           } catch (error) {
-            return json({ ok: false, error: { code: 'read-failed', message: String(error?.message ?? error) } }, 500)
+            return new Response(isHead ? null : String(error?.message ?? error), { status: 500, headers: baseHeaders })
           }
-          const totalSize = stat.size
           const type = contentTypeFor(path.extname(found.absolute).toLowerCase())
-          const base = {
+          const totalSize = stat.size
+          const headers = {
+            ...baseHeaders,
             'content-type': type,
-            'accept-ranges': 'bytes',
-            'cache-control': 'no-store',
+            'content-length': String(totalSize),
           }
-
-          const rangeHeader = request.headers.get('range')
-          let start = 0
-          let end = totalSize - 1
-          let partial = false
-          if (typeof rangeHeader === 'string' && rangeHeader.startsWith('bytes=')) {
-            const spec = rangeHeader.slice(6).split(',')[0].trim()
-            const dash = spec.indexOf('-')
-            if (dash >= 0) {
-              const fromText = spec.slice(0, dash).trim()
-              const toText = spec.slice(dash + 1).trim()
-              if (fromText === '') {
-                const n = Number(toText)
-                if (Number.isFinite(n) && n > 0) {
-                  start = Math.max(0, totalSize - n)
-                  partial = true
-                }
-              } else {
-                const from = Number(fromText)
-                if (Number.isFinite(from) && from >= 0 && from < totalSize) {
-                  start = from
-                  if (toText !== '') {
-                    const to = Number(toText)
-                    if (Number.isFinite(to) && to >= start) end = Math.min(to, totalSize - 1)
-                  }
-                  partial = true
-                }
-              }
-            }
+          if (isHead) {
+            return new Response(null, { status: 200, headers })
           }
-
-          if (!partial) {
+          // 流式返回：createReadStream → Readable.toWeb，内存占用与文件大小无关
+          try {
             const stream = createReadStream(found.absolute)
-            return new Response(Readable.toWeb(stream), {
-              status: 200,
-              headers: { ...base, 'content-length': String(totalSize) },
-            })
+            return new Response(Readable.toWeb(stream), { status: 200, headers })
+          } catch (error) {
+            return new Response(String(error?.message ?? error), { status: 500, headers: baseHeaders })
           }
-
-          const length = end - start + 1
-          if (length <= 0) {
-            return new Response(null, {
-              status: 416,
-              headers: { ...base, 'content-range': `bytes */${totalSize}` },
-            })
-          }
-          const stream = createReadStream(found.absolute, { start, end })
-          return new Response(Readable.toWeb(stream), {
-            status: 206,
-            headers: {
-              ...base,
-              'content-length': String(length),
-              'content-range': `bytes ${start}-${end}/${totalSize}`,
-            },
-          })
         },
       }),
     [],
@@ -1597,18 +1583,79 @@ export function apply(ctx, config) {
 
           // 在文件管理器中定位该文件（仅 Windows）
           if (op === 'reveal') {
-            const found = await resolveReadable(resolved.roots, body?.path, resolved)
-            if (found === null) return json({ ok: false, error: { code: 'not-readable', message: '文件不存在或不可读' } }, 404)
+            // reveal 要能定位大文件，所以用媒体上限（这里取两者较大值）
+            const capForReveal = Math.max(resolved.maxImageBytes, resolved.maxMediaBytes)
+            const found = await resolveReadable(resolved.roots, body?.path, resolved, capForReveal)
+            if (found === null) {
+              return json({ ok: false, error: { code: 'not-readable', message: '文件不存在或不可读' } }, 404)
+            }
+            // mode: 'select' 在文件夹里选中文件；'play' 尝试用默认程序打开（对媒体更直接）
+            const mode = body?.mode === 'play' ? 'play' : 'select'
             try {
               const { spawn } = await import('node:child_process')
+              let child
               if (process.platform === 'win32') {
-                spawn('explorer.exe', [`/select,${found.absolute}`], { detached: true, stdio: 'ignore' }).unref()
+                if (mode === 'play') {
+                  // cmd start：让 shell 按文件关联打开。空字符串是窗口标题占位，
+                  // 不占位的话中文路径会被当作窗口标题。
+                  child = spawn('cmd.exe', ['/c', 'start', '', found.absolute], {
+                    detached: true, stdio: 'ignore', windowsHide: true,
+                  })
+                } else {
+                  // explorer /select 在直接 spawn 时对含中文的路径会以退出码 1 失败（已实测）。
+                  // 改走 cmd /c start "" explorer.exe /select,"<path>"：让 cmd 负责引号与编码，
+                  // 这是 Windows 上打开并选中中文路径文件的稳定写法。
+                  child = spawn('cmd.exe', [
+                    '/c', 'start', '',
+                    'explorer.exe', `/select,"${found.absolute}"`,
+                  ], {
+                    detached: true, stdio: 'ignore', windowsHide: true,
+                  })
+                }
               } else {
-                spawn('xdg-open', [path.dirname(found.absolute)], { detached: true, stdio: 'ignore' }).unref()
+                child = spawn('xdg-open', [mode === 'play' ? found.absolute : path.dirname(found.absolute)], {
+                  detached: true, stdio: 'ignore',
+                })
               }
-              return json({ ok: true })
+              // 不要 unref 立即丢：先观察 800ms 内的错误与退出码，异常时报给前端
+              const outcome = await new Promise((resolve) => {
+                let settled = false
+                const done = (payload) => {
+                  if (settled) return
+                  settled = true
+                  resolve(payload)
+                }
+                child.on('error', (error) => done({
+                  ok: false, code: 'spawn-error', message: String(error?.message ?? error),
+                }))
+                child.on('exit', (code, signal) => {
+                  // explorer 成功时通常很快退出（它把活交给已有 explorer 进程）
+                  if (mode === 'play') {
+                    // cmd start 退出码 0 表示已交给关联程序
+                    done(code === 0 || code === null
+                      ? { ok: true, exitCode: code, signal }
+                      : { ok: false, code: 'exit-nonzero', message: `exit ${code}`, exitCode: code })
+                  } else {
+                    // 现在 select 也走 cmd start，退出码 0 表示命令已被接受
+                    done(code === 0 || code === null
+                      ? { ok: true, exitCode: code, signal }
+                      : { ok: false, code: 'select-exit-nonzero', message: `cmd start 退出码 ${code}`, exitCode: code })
+                  }
+                })
+                setTimeout(() => done({ ok: true, note: 'assumed-ok-after-800ms' }), 800)
+              })
+              if (child !== undefined && typeof child.unref === 'function' && outcome.ok) {
+                try { child.unref() } catch {}
+              }
+              if (!outcome.ok) {
+                return json({ ok: false, error: { code: outcome.code, message: outcome.message, mode }, detail: outcome }, 500)
+              }
+              return json({ ok: true, mode, detail: outcome })
             } catch (error) {
-              return json({ ok: false, error: { code: 'reveal-failed', message: String(error?.message ?? error) } }, 500)
+              return json({
+                ok: false,
+                error: { code: 'reveal-failed', message: String(error?.message ?? error), mode },
+              }, 500)
             }
           }
 
