@@ -61,11 +61,12 @@
 .dg-scopeBtn:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
 .dg-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dg-sub { color: var(--dsw-alias-label-secondary); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* ⚠️ 硬编码：宿主 --dsw-alias-* 变量为空字符串时不会启用 var() 的 fallback */
 .dg-btn {
   appearance: none;
-  border: 1px solid var(--dsw-alias-border-l1);
-  background: var(--dsw-alias-bg-layer-2);
-  color: var(--dsw-alias-label-primary);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: #2a2f38;
+  color: #e8eaed;
   border-radius: 6px;
   padding: 4px 10px;
   font-size: 12px;
@@ -73,9 +74,9 @@
   cursor: pointer;
   flex: 0 0 auto;
 }
-.dg-btn:hover:not(:disabled) { border-color: var(--dsw-alias-border-l2); }
-.dg-btn:disabled { opacity: .55; cursor: default; }
-.dg-btn:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
+.dg-btn:hover:not(:disabled) { background: #353b45; border-color: rgba(255, 255, 255, 0.32); }
+.dg-btn:disabled { opacity: 1; background: #3a4250; color: #c3cad6; cursor: default; }
+.dg-btn:focus-visible { outline: 2px solid #4a7cff; outline-offset: 1px; }
 .dg-btnIcon { min-width: 30px; padding: 4px 8px; font-size: 14px; line-height: 18px; }
 
 /* ===== 设置面板 ===== */
@@ -990,3 +991,114 @@
 
 .dg-open { white-space: nowrap; }
 .dg-openCompact { padding: 2px 6px; line-height: 16px; font-size: 12px; }
+
+/* ---------- 反馈篮（S3-a）---------- */
+/* ⚠️ 配色全部硬编码：宿主 --dsw-alias-* 变量「已定义但值为空」，
+   var(--x, fallback) 的 fallback 不会生效，整条声明会作废 → 继承父级深色。 */
+.dg-feedbackLayer {
+  /* 非模态：z-index 必须低于 .dg-ctxLayer(60)，否则右键菜单被盖住 */
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; align-items: flex-end; justify-content: flex-end;
+  padding: 16px;
+  /* 不再铺全屏黑幕；遮罩层本身不拦截点击，只有面板本体拦截 */
+  background: transparent;
+  pointer-events: none;
+}
+.dg-feedback {
+  /* 只有面板本体接收点击，其余区域穿透到底层卡片 */
+  pointer-events: auto;
+  width: min(420px, 46vw); max-height: 60vh;
+  display: flex; flex-direction: column;
+  background: #1b1e24; color: #e8eaed;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px; overflow: hidden;
+  /* 用阴影做层次，代替原来的黑幕 */
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
+}
+.dg-feedbackHead {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 14px; border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+  background: #22262e;
+}
+.dg-feedbackTitle { font-size: 14px; font-weight: 600; color: #f0f2f5; }
+.dg-feedbackTarget {
+  padding: 8px 14px; font-size: 12px;
+  background: rgba(74, 124, 255, 0.16); color: #a9c2ff;
+  border-bottom: 1px solid rgba(74, 124, 255, 0.26);
+}
+/* 警告条：高对比 + 图标，让"为什么不能生成"一眼可见 */
+.dg-feedbackWarn {
+  padding: 9px 14px; font-size: 12px; font-weight: 600;
+  background: #4a3618; color: #ffd08a;
+  border-bottom: 1px solid #7a5a20;
+}
+.dg-feedbackWarn::before { content: "⚠ "; }
+.dg-feedbackList {
+  list-style: none; margin: 0; padding: 8px 10px; overflow: auto; flex: 1;
+}
+.dg-feedbackItem {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 6px; font-size: 12px;
+  color: #e8eaed;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.dg-feedbackNo {
+  flex: 0 0 auto; width: 20px; height: 20px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: #4a7cff; color: #ffffff; font-size: 11px; font-weight: 600;
+}
+.dg-feedbackAction { flex: 0 0 auto; color: #8fb6ff; font-weight: 600; }
+.dg-feedbackName { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e8eaed; }
+.dg-feedbackDim { flex: 0 0 auto; color: #a9b1bd; font-size: 11px; }
+.dg-feedbackOps { flex: 0 0 auto; display: flex; gap: 4px; }
+
+/* 反馈篮作用域内的按钮：硬编码，不依赖宿主变量 */
+.dg-feedback .dg-btn {
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: #2a2f38;
+  color: #e8eaed;
+}
+.dg-feedback .dg-btn:hover:not(:disabled) { background: #353b45; border-color: rgba(255, 255, 255, 0.35); }
+.dg-feedback .dg-btn:disabled {
+  /* 不只靠 opacity：改为清晰可读的灰底浅字，让"禁用"能被看见 */
+  opacity: 1;
+  background: #3a4250;
+  color: #c3cad6;
+  border-color: rgba(255, 255, 255, 0.14);
+  cursor: default;
+}
+.dg-feedback .dg-primaryBtn {
+  background: #4a7cff; color: #ffffff; border-color: #4a7cff; font-weight: 600;
+}
+.dg-feedback .dg-primaryBtn:hover:not(:disabled) { background: #5b88ff; border-color: #5b88ff; }
+.dg-feedback .dg-primaryBtn:disabled {
+  opacity: 1;
+  background: #3a4250; color: #c3cad6; border-color: rgba(255, 255, 255, 0.14);
+}
+.dg-feedback .dg-btnSmall { padding: 3px 9px; font-size: 11px; }
+
+.dg-feedbackActions {
+  display: flex; justify-content: flex-end; gap: 8px;
+  padding: 10px 14px; border-top: 1px solid rgba(255, 255, 255, 0.10);
+  background: #22262e;
+}
+
+
+/* ---------- 反馈篮编辑弹窗（S3-a）---------- */
+.dg-feedbackEdit {
+  padding: 10px 14px; border-top: 1px solid var(--dsw-alias-border-l2, rgba(255,255,255,0.10));
+  background: rgba(255, 255, 255, 0.03);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.dg-feedbackEditHead { font-size: 12px; font-weight: 600; color: #e8eaed; }
+.dg-feedbackField { display: flex; flex-direction: column; gap: 4px; }
+.dg-feedbackLabel { font-size: 11px; color: #a9b1bd; }
+.dg-feedbackTextarea { resize: vertical; min-height: 44px; font: inherit; }
+.dg-feedbackEditActions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+
+/* 反馈篮独立入口按钮（S3-a） */
+.dg-basketToggle {
+  position: fixed; right: 16px; bottom: 16px; z-index: 45;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+.dg-basketToggle[data-gallery-basket-count="0"] { color: #a9b1bd; }
