@@ -2,6 +2,239 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.12.1] - 2026-11-08
+
+**主题：修「面板内视频拖不动进度条」+ 两个回归。**
+
+### 核心修复：面板内播放改用 blob URL
+
+**现象**：`<video>` 能播（readyState=4、duration 正常、自动播放），
+但 `seekable` 恒为 `[0,0]`，`currentTime` 设 3 后回 0 —— 进度条拖不动。
+4 个视频（6.07s / 212.74s / 5.03s / 8.07s，含 127MB）全部复现。
+
+**排查**：页面内 `fetch(v.src, {headers:{Range:'bytes=0-99'}})` 能拿到
+`206 + Content-Range: bytes 0-99/1196868 + Accept-Ranges: bytes`
+—— **Host 媒体路由完全正常**。
+
+**真根因在 DSH 桌面宿主**（`app.asar` 的 `/lib/main.js` L8243-8255）：
+
+```js
+const WITHHELD_RESPONSE_HEADERS = [
+  "set-cookie", "content-encoding",
+  "content-length",     // ← 关键
+  "transfer-encoding", ...
+];
+// forwardWebRequest() 转发 Host 响应时执行 outgoing.delete(name)
+```
+
+桌面宿主把 `content-length` 剥掉了。Chromium 收到**无总长度的流式响应**，
+无法建立可 seek 区间 → `seekable = [0,0]`；但流式解码正常，所以**能播不能拖**。
+
+**这是宿主代码，插件改不了。** 所以改用 blob：
+
+```
+POST /api/dsh-gallery {op:'raw'}  →  完整字节（走 /api 网关，不经 dsh-app 媒体管线）
+URL.createObjectURL(blob)         →  <video src="blob:...">
+```
+
+blob 是**完整数据在内存**，Chromium 知道确切大小 → `seekable = [0, duration]`。
+
+**实测结果**（真机 DOM 级验证）：
+- `tool_test_cut.mp4`（1.1MB）：`seekable = [0, 6.071977]`，`currentTime` 设 3.04 停在 3.04 ✅
+- `voice.mp3`：251ms 载入完成，`seekable = [0, 96.5]`，拖到 48.25 → 48.72 ✅
+- 截帧在 blob 下 canvas 未被 taint，正常 ✅
+
+### 两个回归（本轮发现并修复）
+
+**P0-1：114 张视频缩略图全部丢失**
+
+`src/client/06-media.js` 的 `makeFirstFrame()` 里 `video.src = url`，
+但重构时把 `url` 的定义删掉了 → 每次卡片进视口抛
+`unhandledrejection: ReferenceError: url is not defined`，缩略图全退化成 🎞 占位符。
+
+修法：补回 `const url = mediaUrlOf(item.relPath, item.mtime)`（缩略图只取首帧、
+不需要 seek，直链即可），并给 Promise 链补 `.catch()` 兜底。
+
+**P0-2：127MB 大文件 raw 返回 404**
+
+`host/http.js` 的 `raw` 分支调用 `resolveReadable(roots, path, opts)` **漏传第 4 个参数
+`byteCap`**，于是回退到 `maxImageBytes`（默认 64MB），127MB 文件被 `stat.size > cap`
+过滤掉 → 返回 null → 404。
+
+对照 `media` 分支传的是 `resolved.maxMediaBytes`（默认 200MB），所以直链能播、raw 不能。
+
+修法：raw 分支补传 `resolved.maxMediaBytes`。
+**实测：127MB 文件 raw 从 404 变成 `200 + 132881875 字节`。**
+
+**P0-3：failed 状态下底部仍显示「载入中」**
+
+底部 meta 文案只区分 ready / 非 ready，没处理 failed。
+改为三段：`已载入，可拖动进度条` / `载入失败` / `载入中`。
+
+### 关于大文件策略（保留「全部 blob」，不加大小分档）
+
+理由：
+1. 加分档会让大文件**重新失去面板内拖动**，等于回到本次要修的问题；
+2. 127MB 失败是 raw cap 的一行 bug，**不是 blob 策略的固有代价**；
+3. 实测 7.8MB 文件与 96.5 秒音频都是 250ms ~ 秒级完成，中文路径也正常。
+
+**先修 cap，再用实测数据谈分档**，不拍脑袋加分支。
+
+---
+
+## [0.12.0] - 2026-11-08
+
+**主题：S2 结构重构 —— Client 拆成 13 个分片 + 独立 CSS + 协议单一真源。**
+**零功能变化、零新增依赖，但新增一个零依赖构建步骤。**
+
+### 做了什么
+
+`client.js` 4213 行拆成 `src/client/` 下 13 个分片 + 1 个独立 CSS：
+
+| 分片 | 行数 | 职责 |
+|---|---|---|
+| `00-head.js` | 68 | 包裹头 + 常量 + isImageItem/isVideoItem |
+| `01-i18n.js` | 325 | 中英字典（152 个键 x 2 语言） |
+| `02-util.js` | 175 | 格式化 / 图片压缩 / 并发限流 |
+| `03-theme.js` | 6 | CSS 占位（构建时内联 styles.css） |
+| `04-paths.js` | 49 | 路由与路径助手 |
+| `05-ctxmenu.js` | 119 | ContextMenu + ConfirmDialog |
+| `06-media.js` | 362 | MediaCard + MediaPlayer（含截帧） |
+| `07-cards.js` | 193 | mediaUrlOf + FileCard + Card |
+| `08-viewer.js` | 592 | TEXT_EXTS + Viewer（看图/原图） |
+| `09-settings.js` | 255 | SettingsPanel |
+| `10-body.js` | 754 | GalleryBody（主容器） |
+| `11-chrome.js` | 208 | Pager + ScrollRail |
+| `12-entry.js` | 108 | 标题/入口按钮 + 导出 |
+| **`styles.css`** | **994 行** | 面板样式独立成真 `.css` 文件 |
+
+### 新增：`src/shared/protocol.js` —— 协议单一真源
+
+**这是 S2 最重要的一项。** 拆分前 `ROUTE` / `MEDIA_ROUTE` / 扩展名表在
+`client.js` 和 `index.js` 里**各存一份**，改路由要改两处、漏一处就打不通。
+
+现在由 `scripts/build.mjs` 同时做两件事：
+- 把 `src/shared/protocol.js` 注入 client bundle（**剥掉 `export` 关键字**，
+  因为 client 必须是单文件、无 ESM 语句）
+- 生成 `host/protocol.js` 供 Host 侧 `import`
+
+两边**不可能再漂移**，`check.mjs` 第 16 项专门盯这个。
+
+### 构建器
+
+`scripts/build.mjs` 从 S0 的 noop 版切到真拼接：
+
+```bash
+npm run build          # 生成 client.js + host/protocol.js
+npm run build -- --check   # 只读比对，产物与源码漂移 → 退出码 1
+```
+
+**零依赖**：只用 `node:fs` / `node:path`，不引入 esbuild / vite / rollup。
+只做字符串拼接 + 转义（CSS 里的反引号和 `${}` 会被转义，避免破坏模板字符串）。
+
+### 兼容性
+
+- 运行时产物仍是**单文件 client.js**（DSH 加载器硬约束）
+- 首行仍是 `window.__ModuleLoader__.load({`（GENERATED 注释放在 factory 内，不影响外层解析）
+- 功能等价性已验证：**186 个 CSS 选择器一个不缺、152 个字典键一个不缺、31 个函数一个不少**
+- `package.json` `files` 加 `host/*.js`；`install.mjs` `REQUIRED` 加 `host/protocol.js`
+- `.npmignore` 排除 `src/` 与 `scripts/`（源码不进 npm 包，产物才是运行时）
+
+### 验证
+
+- `./check.sh --install` **16 项全过**（含新启用的第 16 项：分片顺序 + shared 常量一致）
+- 真实加载：2 条路由（media + ops）、图片 5495、媒体 134 —— 与拆分前**完全一致**
+- 三处一致性：源码 / 已安装 / 开源仓库，`client.js` 与 `host/protocol.js` 哈希相同
+
+### 踩到的坑（S2 实测暴露 3 个）
+
+1. **GENERATED 注释放文件最外层有解析风险** —— 虽然前置注释理论上合法，
+   但 DSH 加载器只认 `window.__ModuleLoader__.load` 调用，放最外层等于赌它容忍。
+   **改放到 factory 内部，与原来结构一致，零风险。**
+
+2. **CSS 内联必须转义** —— `styles.css` 里若有反引号或 `${}`，直接塞进模板字符串会破坏语法。
+   构建器现在会转义 `\` / `` ` `` / `${`。
+
+3. **⚠️ `VIDEO_EXTS` 从 Set 变成数组，两处 `.has()` 没跟着改（真机崩溃）**
+
+   我为了把扩展名表收进 `src/shared/protocol.js` 单一真源，
+   把原来的 `const VIDEO_EXTS_CLIENT = new Set([...])` 改成了
+   `const VIDEO_EXTS = [...]`（数组）。
+
+   **但有两处还在用 `.has()`**：
+   - `client.js` 的 `10-body.js`：`VIDEO_EXTS_CLIENT.has(ext)` → 变量名已不存在 → **ReferenceError**
+   - `host/scan.js`：`VIDEO_EXTS.has(ext)` → 数组没有 `.has()` → **TypeError**
+
+   **后果**：点音视频栏时组件渲染抛错，整块面板消失（用户看到空白）；
+   Host 侧 `mediaType` 判定全部失效，视频会被当音频。
+
+   **教训**：把 `Set` 改成数组（或反向）是**破坏性变更**，
+   `node --check` 和模块加载测试都**抓不到**——只有真正渲染组件、真正调扫描才会炸。
+   今后改容器类型，必须同步 `grep` 全仓 `.has(` / `.includes(` 用法。
+
+
+
+1. **GENERATED 注释放文件最外层有解析风险** —— 虽然前置注释理论上合法，
+   但 DSH 加载器只认 `window.__ModuleLoader__.load` 调用，放最外层等于赌它容忍。
+   **改放到 factory 内部，与原来结构一致，零风险。**
+2. **CSS 内联必须转义** —— `styles.css` 里若有反引号或 `${}`，直接塞进模板字符串会破坏语法。
+   构建器现在会转义 `\` / `` ` `` / `${`。
+
+---
+
+## [0.11.3] - 2026-11-08
+
+**主题：S1 结构重构 —— Host 拆成 10 个模块。零功能变化、零构建步骤。**
+
+### 做了什么
+
+`index.js` 从 **1824 行** 减到 **34 行薄入口**，逻辑搬进 `host/`：
+
+| 模块 | 行数 | 职责 |
+|---|---|---|
+| `host/constants.js` | 149 | 常量与默认值（ROUTE / DEFAULTS / 工具集 / 扩展名） |
+| `host/fsutil.js` | 137 | 路径越界、读文件头、图片尺寸探测、参数归一化 |
+| `host/settings.js` | 226 | 设置读写、根目录探测与校验、配置解析 |
+| `host/session.js` | 193 | 会话日志读取（zstd 多帧拼接） |
+| `host/classify.js` | 71 | 资产分类（最终 / 输入 / 中间） |
+| `host/groups.js` | 93 | 按对话分组 |
+| `host/scan.js` | 532 | 提取资产、扫描目录、分页 |
+| `host/media.js` | 123 | HTTP Range、流式下发、MIME |
+| `host/http.js` | 338 | JSON 响应 + 两条路由注册 |
+| `host/session-index.js` | 188 | 会话索引（原根目录文件搬入，根级留 re-export） |
+
+### 为什么 Host 不用构建
+
+Host 是标准 Node ESM（`"type": "module"`），**原生支持相对 import**。
+把 9 个模块拼回单文件要剥离 `import`/`export`、处理命名冲突、丢 source map、
+Node 报错栈重新变成 `index.js:1234` —— **零收益、纯新增风险**。
+
+所以：**Client 因「单 bundle 约束」必须拼；Host 因「标准 ESM」不用拼。**
+
+### 兼容性
+
+- 公开导出保持不变：`inject` / `apply` / `ROUTE` / `MEDIA_ROUTE` /
+  `scanGallery` / `validateRootCandidate` / `writeSettingsFile` 全部照旧。
+- 根级 `session-index.js` 改为 re-export，外部 `import './session-index.js'` 仍可用。
+- `package.json` 的 `files` 加 `host/*.js`；`install.mjs` 的 `REQUIRED` 同步补 10 项。
+
+### 验证
+
+- `./check.sh --install` **15 项全过**（含临时 DSH_HOME 真实安装实测）
+- 冒烟测试 **26 项全过**：图片 5495 / 媒体 134 / 分组 27 组，与拆分前完全一致
+- 三处一致性：源码 / 已安装 / 开源仓库，`host/` 10 文件逐一哈希相同
+
+### 踩到的两个坑
+
+1. **静态语法检查抓不到缺失 import** —— `scan.js` 漏了 `buildSessionIndex` 的导入，
+   `node --check` 通过，但真实 `import` 加载后 `scanGallery` 直接报 `ReferenceError`。
+   **结论：拆分后必须跑真实加载测试，不能只看语法。**
+2. **同步脚本会把改动覆盖回去** —— 我把 `host/*.js` 只加到了 open-source 的 `package.json`，
+   随后同步脚本用源码目录的 `package.json` 覆盖了它，导致 `install --dry-run` 报「必需文件不在白名单」。
+   **结论：多目录同步时，配置文件要最后改、且三处一起改。**
+
+---
+
 ## [0.11.2] - 2026-11-08
 
 **主题：调整开头表述的力度（纯文档）。**
