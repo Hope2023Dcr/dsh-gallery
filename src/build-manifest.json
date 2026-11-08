@@ -1,0 +1,24 @@
+{
+  "clientOutput": "client.js",
+  "header": "",
+  "fragments": [
+    "src/client/00-head.js",
+    "src/client/01-i18n.js",
+    "src/client/02-util.js",
+    "src/client/03-theme.js",
+    "src/client/04-paths.js",
+    "src/client/05-ctxmenu.js",
+    "src/client/06-media.js",
+    "src/client/07-cards.js",
+    "src/client/08-viewer.js",
+    "src/client/09-settings.js",
+    "src/client/10-body.js",
+    "src/client/11-chrome.js",
+    "src/client/12-entry.js"
+  ],
+  "shared": "src/shared/protocol.js",
+  "protocolOutput": "host/protocol.js",
+  "sharedMarker": "/*__SHARED_PROTOCOL__*/",
+  "styleMarker": "/*__INLINE_STYLES__*/",
+  "styles": "src/client/styles.css"
+}
