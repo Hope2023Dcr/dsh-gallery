@@ -6,13 +6,17 @@ DSH 插件「产出画廊」—— 把 Agent 任务过程中散落在磁盘上�
 
 ## 当前版本
 
-**v0.12.1** — 2026-11-08
+**v0.13.6** — 2026-11-08
 
 - **v0.11.0**：音视频独立 `kind` + 首帧缩略图 + 面板内播放 + 一键截取当前帧；新增独立 HTTP Range 媒体路由。
 - v0.11.1 / v0.11.2：修 README 三处会坑到真实用户的问题；调整表述力度（纯文档）。
-- **v0.11.3（S1）**：Host 半部拆分 —— `index.js` 从 1824 行降到 **34 行薄入口**，逻辑搬进 `host/` 10 个模块（常量 / 文件工具 / 设置 / 会话日志 / 分类 / 分组 / 扫描 / 媒体 / 路由 + 会话索引）。**零构建**（Node 原生 ESM 多文件）。
-- **v0.12.0（S2）**：Client 半部拆分 —— `client.js` 4213 行拆成 `src/client/` 13 个分片 + 独立 `styles.css`（994 行）；新增 `src/shared/protocol.js` 作为 **Host 与 Client 的协议单一真源**；`scripts/build.mjs` 从 noop 切到真拼接（零依赖）。
-- **v0.12.1（本次）**：**面板内播放改用 blob，真正修好「视频进度条能拖」** —— 此前 0.11.x 对外宣传 Range 可拖，实际因 DSH 桌面宿主转发时剥掉 `Content-Length`，`<video>.seekable` 恒为 `[0,0]`，拖不动。同时修 3 个回归（缩略图 `url` 未定义、127MB 文件 raw 返回 404、失败态文案残留）。
+- **v0.11.3（S1）**：Host 半部拆分 —— `index.js` 从 1824 行降到 **34 行薄入口**，逻辑搬进 `host/` 模块。**零构建**（Node 原生 ESM 多文件）。
+- **v0.12.0（S2）**：Client 半部拆分 —— `client.js` 4213 行拆成 `src/client/` 13 个分片 + 独立 `styles.css`；新增 `src/shared/protocol.js` 作为 **Host 与 Client 的协议单一真源**；`scripts/build.mjs` 从 noop 切到真拼接（零依赖）。
+- **v0.12.1**：面板内播放改用 blob，真正修好「视频进度条能拖」（此前因 DSH 桌面宿主转发时剥掉 `Content-Length`，`<video>.seekable` 恒为 `[0,0]`）；同时修 3 个回归。
+- **v0.13.0（S3-a）**：**结构化反馈契约 v1 + 反馈篮**。右键给卡片打判定（通过 / 不要 / 定稿 / 单维重做 / 选择性重生成 / 设为参照）→ 攒进反馈篮（自动编号、可编辑理由 / 只改 / 锁死、可删清空）→ 「生成决策草稿」按 `Annotation N` 编号逐条列出，**只写进 composer 输入框、由人确认后手动发送**（零自动发送）。附 `seam v1`（`window.dshGallerySeam`）、设置写盘改 `tmp → rename` 原子写、`marks` 独立成 `dsh-gallery-marks.json`。
+- **v0.13.1–v0.13.4**：修反馈篮与草稿链路的 4 个真机问题 —— 编辑弹窗、seam 卡片属性、**Lexical 异步 flush 导致判据假阴性（草稿被写 4 份）**、**双事件导致 2 份**（改为只发 `beforeinput` 后收敛为 1 份）。
+- **v0.13.5**：反馈篮从**全屏模态遮罩**改为**右下角非模态浮层**（`z-index: 50` 低于右键菜单、`pointer-events: none` 让面板外可继续标记卡片）；配色改**硬编码高对比**（宿主 `--dsw-alias-*` 变量为空时 `var()` fallback 不生效，导致文字与背景同为深色）；新增「反馈篮 · N 条」**独立重开入口**；禁用原因写进按钮文案。
+- **v0.13.6（本次）**：修「**打开所在文件夹**」一律指向「文档」—— 旧实现 `/select,"<path>"` 的手写引号经 Node spawn + `cmd start` 两层转义后残留在路径里；同时 `windowsHide: true` 会抑制 explorer 窗口显示。改为直接交给 Node quoting。
 
 完整版本记录见 `CHANGELOG.md`。
 
@@ -22,7 +26,7 @@ DSH 插件「产出画廊」—— 把 Agent 任务过程中散落在磁盘上�
 |---|---|
 | `package.json` | 插件清单（含 `files` 发布白名单、`scripts` 的 build / check / test） |
 | `index.js` | **Host 半部入口，34 行薄入口**（只做 inject + 注册两条路由） |
-| **`host/*.js`** | **Host 逻辑本体，10 个模块**：`constants` / `fsutil` / `settings` / `session` / `classify` / `groups` / `scan` / `media` / `http` / `session-index`。源码即产物，**无需构建** |
+| **`host/*.js`** | **Host 逻辑本体，13 个 .js**：`constants` / `fsutil` / `settings` / `session` / `classify` / `groups` / `scan` / `media` / `http` / `session-index` / **`marks`（v0.13.0 标记存储）** / **`protocol.js`** / **`feedback-text.js`**（后两个由 `build.mjs` 生成）。手写模块源码即产物，**无需构建** |
 | **`host/protocol.js`** | 协议常量的 Host 侧副本，**由 `build.mjs` 从 `src/shared/protocol.js` 生成**（请勿手改） |
 | `client.js` | 浏览器半部，**已拼好的构建产物**（4213 行源码 → 13 分片 → 单文件；用户无需构建） |
 | `session-index.js` | 根级 **re-export**，实际实现在 `host/session-index.js`（保留是为了旧引用仍可用） |
