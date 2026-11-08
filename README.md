@@ -6,14 +6,12 @@
 >
 > 这个插件把产出目录变成右侧栏里的**实时画廊**：图片生成就可见、文件点开就预览、
 > 视频音频能在面板里直接播放并拖进度条，
- > **让你在任务进行中就能看到产出、当场校验，而不是结束后才发现做错了。**
+> **让你在任务进行中就能看到产出、当场校验，而不是结束后才发现做错了。**
 >
-> ⚠️ **能力边界**：目前能做的是**看见 + 判断 + 处置**
-> （隐藏 / 删除 / 定位 / 预览 / 截帧）；
-> **把「这张是定稿」的结论回传给主线任务，还没有做**（见路线图）。
-> 「实时看见」已经能用；「回传干预」是下一步。
+> 📌 **当前是 `0.x` 开发预览版**：核心能力（实时看见、当场校验、就地处置）已可用；
+> 「把结论回传给主线任务」还没做，列在[路线图](#路线图)里。
 
-[![Version](https://img.shields.io/badge/version-0.11.0-blue.svg)](#)
+[![Version](https://img.shields.io/badge/version-0.11.2-blue.svg)](#)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](#技术说明给想改代码的人)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#兼容性)
