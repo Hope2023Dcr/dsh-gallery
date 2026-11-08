@@ -1,8 +1,8 @@
 {
   "name": "dsh-gallery",
-  "version": "0.11.2",
+  "version": "0.12.1",
   "type": "module",
-  "description": "产出画廊：解决 DSH 只在任务结尾才列出产出、过程不可见的问题。实时监控产出目录，图片自动刷新、文件原生预览、音视频面板内直接播放（支持 HTTP Range，任意大小都能拖进度条），还能一键截取视频当前帧，任务进行中即可校验纠正。",
+  "description": "产出画廊：解决 DSH 只在任务结尾才列出产出、过程不可见的问题。实时监控产出目录，图片自动刷新、文件原生预览、音视频面板内直接播放（blob 播放，任意大小都能拖进度条），还能一键截取视频当前帧，任务进行中即可校验纠正。",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Hope2023Dcr/dsh-gallery.git"
@@ -21,6 +21,7 @@
     "index.js",
     "client.js",
     "session-index.js",
+    "host/*.js",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
@@ -65,5 +66,10 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "node scripts/check.mjs",
+    "test": "node --test tests/contract/install-whitelist.test.mjs"
   }
 }
