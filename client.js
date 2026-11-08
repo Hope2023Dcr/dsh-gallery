@@ -19,6 +19,8 @@ window.__ModuleLoader__.load({
     const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']
     /** 视频扩展名（客户端判断 mediaType 兜底用，与 Host 的 VIDEO_EXTS 保持一致）。 */
     const VIDEO_EXTS_CLIENT = new Set(['.mp4', '.webm', '.mov', '.m4v', '.mkv', '.avi', '.ogv'])
+    /** blob 播放的文件上限：超过就改用系统播放器（避免把 127MB 塞进浏览器内存）。 */
+    const BLOB_MAX_BYTES = 60 * 1024 * 1024
     /** 判断某条目是否是图片（大小写不敏感）。 */
     function isImageItem(it) {
       const ext = String(it?.extension ?? '').toLowerCase()
@@ -160,7 +162,22 @@ window.__ModuleLoader__.load({
       emptyMedia: '这段时间没有音视频产出',
       mediaPlay: '播放',
       mediaOpenExternal: '用系统播放器打开',
+      mediaOpenFolder: '打开所在文件夹',
+      mediaOpenFolderHint: '在资源管理器里选中该文件',
+      mediaOpenFailed: '打开失败：{message}',
+      mediaOpenOk: '已交给系统处理',
+      mediaBinaryHint: '这类文件浏览器无法直接解码，用上面的按钮外部打开。',
       mediaDuration: '时长',
+      mediaBlobLoading: '正在载入文件 {pct}%（载入后可拖动进度条）',
+      mediaBlobLoadingIndeterminate: '正在载入文件…（载入后可拖动进度条）',
+      mediaTooBigTitle: '文件较大，不载入面板',
+      mediaTooBigHint: '该文件 {size}，超过面板内播放上限。用系统播放器打开可立即拖动查看。',
+      mediaBlobReady: '已载入，可拖动进度条',
+      mediaGrabFrame: '截取当前帧',
+      mediaGrabFrameHint: '把当前播放位置的画面存成 PNG 图片',
+      mediaGrabFrameOk: '已保存：{name}',
+      mediaGrabFrameFailed: '截帧失败：{message}',
+      mediaGrabFrameNoVideo: '只有视频可以截帧',
       mediaNoPreview: '浏览器无法解码该格式',
       mediaLoadFailed: '加载失败',
       mediaThumbPending: '生成首帧中…',
@@ -308,7 +325,22 @@ window.__ModuleLoader__.load({
       emptyMedia: 'No audio or video produced in this period',
       mediaPlay: 'Play',
       mediaOpenExternal: 'Open in system player',
+      mediaOpenFolder: 'Open containing folder',
+      mediaOpenFolderHint: 'Show the file in the file manager',
+      mediaOpenFailed: 'Could not open: {message}',
+      mediaOpenOk: 'Handed to the system',
+      mediaBinaryHint: 'The browser cannot decode this format; use the buttons above to open it outside the panel.',
       mediaDuration: 'Duration',
+      mediaBlobLoading: 'Loading file {pct}% (seekable once loaded)',
+      mediaBlobLoadingIndeterminate: 'Loading file… (seekable once loaded)',
+      mediaTooBigTitle: 'File is too large for the panel',
+      mediaTooBigHint: 'This file is {size}, over the in-panel limit. Open it in the system player to seek right away.',
+      mediaBlobReady: 'Loaded — seeking available',
+      mediaGrabFrame: 'Save current frame',
+      mediaGrabFrameHint: 'Save the frame at the current play position as a PNG',
+      mediaGrabFrameOk: 'Saved: {name}',
+      mediaGrabFrameFailed: 'Frame grab failed: {message}',
+      mediaGrabFrameNoVideo: 'Only video can be grabbed',
       mediaNoPreview: 'The browser cannot decode this format',
       mediaLoadFailed: 'Load failed',
       mediaThumbPending: 'Making a first frame…',
@@ -1439,11 +1471,15 @@ window.__ModuleLoader__.load({
 .dg-mediaBar {
   display: flex; align-items: center; gap: 8px;
   padding: 8px 10px;
-  border-bottom: 1px solid var(--dsw-alias-border-default, rgba(255,255,255,0.08));
+  background: #1b1e24;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
 }
 .dg-mediaPTitle {
   flex: 1 1 auto; min-width: 0;
-  font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-size: 13px; font-weight: 600;
+  /* 强制高对比：不用 alias 变量（DSH 未定义时会 fallback 失效，显得很暗） */
+  color: #f0f2f5;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .dg-mediaStage {
   display: flex; align-items: center; justify-content: center;
@@ -1454,10 +1490,62 @@ window.__ModuleLoader__.load({
 .dg-mediaPanelAudio .dg-mediaStage { padding: 24px 16px; background: transparent; }
 .dg-mediaPanelAudio .dg-mediaStage audio { width: 100%; }
 .dg-mediaFoot {
-  padding: 6px 10px 10px;
-  font-size: 11px; color: var(--dsw-alias-label-secondary);
-  word-break: break-all;
+  padding: 8px 12px 10px;
+  font-size: 11px;
+  color: #a9b1bd;
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  background: #1b1e24;
+  border-top: 1px solid rgba(255,255,255,0.08);
 }
+.dg-mediaFootName {
+  color: #e8eaed;
+  font-weight: 600; font-size: 12px;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dg-mediaFootMeta { word-break: break-all; }
+/* 文件过大：引导用系统播放器 */
+.dg-mediaTooBig {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; padding: 28px 20px; text-align: center;
+}
+.dg-mediaTooBigIco { font-size: 40px; opacity: 0.7; }
+.dg-mediaTooBigTitle { font-size: 14px; font-weight: 600; color: #f0f2f5; }
+.dg-mediaTooBigHint { font-size: 12px; color: #a9b1bd; max-width: 380px; line-height: 1.6; }
+/* 动作按钮行（不用 dg-btn：媒体弹层里没有那套样式，会显示成灰按钮） */
+.dg-mediaActionRow { display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap; justify-content: center; }
+.dg-mediaActBtn {
+  appearance: none; border: 1px solid rgba(255,255,255,0.22);
+  background: #2a2f38; color: #e8eaed;
+  padding: 9px 20px; border-radius: 8px;
+  font-size: 13px; font-weight: 500; line-height: 1.2;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, transform 60ms ease;
+}
+.dg-mediaActBtn:hover { background: #353b45; border-color: rgba(255,255,255,0.35); }
+.dg-mediaActBtn:active { transform: translateY(1px); }
+.dg-mediaActBtn:focus-visible { outline: 2px solid #4a7cff; outline-offset: 2px; }
+.dg-mediaActPrimary {
+  background: #2f5bd4; border-color: #4a7cff; color: #ffffff; font-weight: 600;
+}
+.dg-mediaActPrimary:hover { background: #3a6ae8; border-color: #6b93ff; }
+/* blob 载入进度 */
+.dg-mediaLoading { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 30px 20px; width: 100%; }
+.dg-mediaLoadingText { font-size: 12px; color: #a9b1bd; }
+.dg-mediaProgressBar {
+  width: 70%; max-width: 320px; height: 6px; border-radius: 3px;
+  background: rgba(255,255,255,0.12); overflow: hidden;
+}
+.dg-mediaProgressFill { height: 100%; background: #4a7cff; transition: width 200ms ease; }
+/* 截取当前帧按钮 */
+.dg-mediaGrabBtn { white-space: nowrap; font-size: 12px; }
+/* 截帧结果提示 */
+.dg-mediaNotice {
+  padding: 6px 12px; font-size: 11px; text-align: center;
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+.dg-mediaNoticeOk { color: #6ee7a0; background: rgba(60, 200, 120, 0.10); }
+.dg-mediaNoticePending { color: #a9b1bd; background: rgba(255,255,255,0.05); }
+.dg-mediaNoticeFail { color: #ff8a8a; background: rgba(220, 60, 60, 0.12); }
 
 .dg-open { white-space: nowrap; }
 .dg-openCompact { padding: 2px 6px; line-height: 16px; font-size: 12px; }
@@ -1781,11 +1869,66 @@ window.__ModuleLoader__.load({
      * 面板内媒体播放器（弹层）。
      * 视频 <video>、音频 <audio>，都指向 MEDIA_ROUTE 的 GET 直链（支持 Range，可拖进度）。
      */
+    /**
+     * 面板内媒体播放器（v0.10.3 分档方案）。
+     *
+     * 背景：DSH 的 exact fetch 层不支持 HTTP 206 / content-range（已实证：官方 /api/file 也只返 200）。
+     * 没有 Range，`<video src=URL>` 就无法拖动进度条。
+     *
+     * 所以分两档：
+     *   ≤ BLOB_MAX_BYTES（60MB）：用 POST raw 把完整文件取成 Blob，再 createObjectURL。
+     *      blob 是完整数据在内存里，浏览器原生支持任意拖动，**不需要 Range**。
+     *   > BLOB_MAX_BYTES：文件太大，不塞进内存；提示改用系统播放器（走 reveal op）。
+     *
+     * 这样「能播 + 能拖」在常规大小的产出上都成立，超大文件也不至于把面板搞崩。
+     */
     function MediaPlayer({ item, t, onClose }) {
       const isVideo = item.mediaType === 'video'
+      const tooBig = typeof item.size === 'number' && item.size > BLOB_MAX_BYTES
+      // blob 状态：loading / ready / failed
+      const [blobState, setBlobState] = React.useState({ status: tooBig ? 'too-big' : 'loading' })
       const [failed, setFailed] = React.useState(false)
       const [dims, setDims] = React.useState(null)
-      const url = mediaUrlOf(item.relPath, item.mtime)
+      const blobUrlRef = React.useRef(null)
+      const videoRef = React.useRef(null)
+      // 截帧结果提示（成功/失败），2 秒后自动消失
+      const [grabNotice, setGrabNotice] = React.useState(null)
+
+      // 加载完整文件成 blob（≤ 60MB 才做）
+      React.useEffect(() => {
+        if (tooBig) return undefined
+        let alive = true
+        const controller = new AbortController()
+
+        fetchRaw(item.relPath, controller.signal, (loaded, total) => {
+          if (!alive || tooBig) return
+          const pct = total > 0 ? Math.round((loaded / total) * 100) : -1
+          setBlobState((cur) => (cur.status === 'loading' ? { status: 'loading', pct } : cur))
+        })
+          .then((blob) => {
+            if (!alive) return
+            const url = URL.createObjectURL(blob)
+            blobUrlRef.current = url
+            setBlobState({ status: 'ready', url, bytes: blob.size })
+          })
+          .catch((error) => {
+            if (!alive || controller.signal.aborted) return
+            setBlobState({ status: 'failed', message: String(error?.message ?? error) })
+          })
+
+        return () => {
+          alive = false
+          controller.abort()
+        }
+      }, [item.relPath, tooBig])
+
+      // 卸载时释放 blob URL（不释放会一直占内存）
+      React.useEffect(() => () => {
+        if (blobUrlRef.current !== null) {
+          URL.revokeObjectURL(blobUrlRef.current)
+          blobUrlRef.current = null
+        }
+      }, [])
 
       React.useEffect(() => {
         const onKey = (event) => {
@@ -1798,6 +1941,100 @@ window.__ModuleLoader__.load({
         return () => window.removeEventListener('keydown', onKey)
       }, [onClose])
 
+      // 「用系统播放器打开」
+      /**
+       * 外部打开（两个动作走不同 mode，Host 侧据此选不同命令）：
+       *   play   → cmd start，用文件关联的默认程序打开（媒体文件能直接播）
+       *   select → explorer /select，在资源管理器里选中该文件
+       *
+       * 关键：以前是 .catch(e => console.error(...)) 静默吞错，
+       * 用户只看到按钮有动画、什么都没发生。现在把失败原因显示出来。
+       */
+      const runReveal = React.useCallback((mode) => {
+        setGrabNotice({ kind: 'pending', text: mode === 'play' ? '正在打开…' : '正在定位…' })
+        void callHost('reveal', { path: item.relPath, mode }).then((resp) => {
+          if (resp !== null && resp.ok === false) {
+            const msg = resp.error?.message ?? 'unknown'
+            setGrabNotice({
+              kind: 'failed',
+              text: format(t('mediaOpenFailed'), { message: `${resp.error?.code ?? ''} ${msg}`.trim() }),
+            })
+            console.warn('dsh-gallery: reveal 失败', resp)
+            return
+          }
+          setGrabNotice({ kind: 'ok', text: t('mediaOpenOk') })
+        }).catch((error) => {
+          setGrabNotice({
+            kind: 'failed',
+            text: format(t('mediaOpenFailed'), { message: String(error?.message ?? error) }),
+          })
+          console.error('dsh-gallery: reveal 请求失败', error)
+        })
+      }, [item.relPath, t])
+
+      const openExternal = React.useCallback(() => runReveal('play'), [runReveal])
+      const openFolder = React.useCallback(() => runReveal('select'), [runReveal])
+
+      /**
+       * 截取当前帧存成 PNG。
+       * 只用 blob URL 时 canvas 才不会被 taint（同源），所以这里依赖 blob 方案。
+       * 文件名：原视频名 + 时间码，避免覆盖。
+       */
+      const grabFrame = React.useCallback(() => {
+        const v = videoRef.current
+        if (v === null) {
+          setGrabNotice({ kind: 'failed', text: format(t('mediaGrabFrameFailed'), { message: t('mediaGrabFrameNoVideo') }) })
+          return
+        }
+        try {
+          const w = v.videoWidth
+          const h = v.videoHeight
+          if (w === 0 || h === 0) throw new Error('video not ready')
+          const canvas = document.createElement('canvas')
+          canvas.width = w
+          canvas.height = h
+          const c2d = canvas.getContext('2d')
+          if (c2d === null) throw new Error('no 2d context')
+          c2d.drawImage(v, 0, 0, w, h)
+
+          // 时间码：00-12-34
+          const sec = Math.floor(v.currentTime || 0)
+          const hh = String(Math.floor(sec / 3600)).padStart(2, '0')
+          const mm = String(Math.floor((sec % 3600) / 60)).padStart(2, '0')
+          const ss = String(sec % 60).padStart(2, '0')
+          const base = (item.name ?? 'frame').replace(/\.[^.]+$/, '')
+          const fname = `${base}_${hh}-${mm}-${ss}.png`
+
+          canvas.toBlob((blob) => {
+            if (blob === null) {
+              setGrabNotice({ kind: 'failed', text: format(t('mediaGrabFrameFailed'), { message: 'toBlob returned null' }) })
+              return
+            }
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            a.download = fname
+            document.body.appendChild(a)
+            a.click()
+            document.body.removeChild(a)
+            // 下载触发后再释放，留 1 秒避免竞态
+            setTimeout(() => URL.revokeObjectURL(url), 1000)
+            setGrabNotice({ kind: 'ok', text: format(t('mediaGrabFrameOk'), { name: fname }) })
+          }, 'image/png')
+        } catch (error) {
+          setGrabNotice({ kind: 'failed', text: format(t('mediaGrabFrameFailed'), { message: String(error?.message ?? error) }) })
+        }
+      }, [item.name, t])
+
+      // 提示 2.5 秒后自动消失
+      React.useEffect(() => {
+        if (grabNotice === null) return undefined
+        const timer = setTimeout(() => setGrabNotice(null), 2500)
+        return () => clearTimeout(timer)
+      }, [grabNotice])
+
+      const ready = blobState.status === 'ready'
+
       return h('div', {
         className: 'dg-mediaLayer',
         key: 'mediaLayer',
@@ -1809,7 +2046,19 @@ window.__ModuleLoader__.load({
         onClick: (event) => event.stopPropagation(),
       }, [
         h('div', { className: 'dg-mediaBar', key: 'bar' }, [
-          h('span', { className: 'dg-mediaPTitle', key: 'title' }, item.name),
+          h('span', { className: 'dg-mediaPTitle', key: 'title', title: item.relPath }, item.name),
+          // 视频：截取当前帧（只在 blob 就绪、视频模式显示）
+          isVideo && ready
+            ? h('button', {
+                type: 'button',
+                className: 'dg-btn dg-mediaGrabBtn',
+                key: 'grab',
+                'data-gallery-grab-frame': item.relPath,
+                title: t('mediaGrabFrameHint'),
+                'aria-label': t('mediaGrabFrame'),
+                onClick: (event) => { event.stopPropagation(); grabFrame() },
+              }, ['📷 ', t('mediaGrabFrame')])
+            : null,
           h('button', {
             type: 'button', className: 'dg-btn', key: 'close',
             title: t('mediaCloseHint'), 'aria-label': t('mediaCloseHint'),
@@ -1819,33 +2068,104 @@ window.__ModuleLoader__.load({
         h('div', { className: 'dg-mediaStage', key: 'stage' }, (
           failed
             ? h('div', { className: 'dg-placeholder dg-error' }, t('mediaNoPreview'))
-            : isVideo
-              ? h('video', {
-                  src: url,
-                  controls: true,
-                  autoPlay: true,
-                  preload: 'metadata',
-                  key: 'v',
-                  'data-gallery-video': item.relPath,
-                  onError: () => setFailed(true),
-                  onLoadedMetadata: (event) => {
-                    const v = event.currentTarget
-                    if (v.videoWidth > 0) setDims({ w: v.videoWidth, h: v.videoHeight })
-                  },
-                })
-              : h('audio', {
-                  src: url,
-                  controls: true,
-                  autoPlay: true,
-                  preload: 'metadata',
-                  key: 'a',
-                  'data-gallery-audio': item.relPath,
-                  onError: () => setFailed(true),
-                })
+            : blobState.status === 'too-big'
+              ? h('div', { className: 'dg-mediaTooBig', key: 'big' }, [
+                  h('div', { className: 'dg-mediaTooBigIco', key: 'ico' }, isVideo ? '🎬' : '🎵'),
+                  h('div', { className: 'dg-mediaTooBigTitle', key: 't1' }, t('mediaTooBigTitle')),
+                  h('div', { className: 'dg-mediaTooBigHint', key: 't2' }, format(t('mediaTooBigHint'), { size: formatBytes(item.size) })),
+                  // 两个动作分开：一个播放、一个定位文件夹。样式独立定义，不用 dg-btn（弹层里没那套样式）
+                  h('div', { className: 'dg-mediaActionRow', key: 'actions' }, [
+                    h('button', {
+                      type: 'button',
+                      className: 'dg-mediaActBtn dg-mediaActPrimary',
+                      key: 'ext',
+                      'data-gallery-open-external': item.relPath,
+                      title: t('mediaOpenExternal'),
+                      onClick: (event) => { event.stopPropagation(); openExternal() },
+                    }, ['▶ ', t('mediaOpenExternal')]),
+                    h('button', {
+                      type: 'button',
+                      className: 'dg-mediaActBtn',
+                      key: 'folder',
+                      'data-gallery-open-folder': item.relPath,
+                      title: t('mediaOpenFolderHint'),
+                      onClick: (event) => { event.stopPropagation(); openFolder() },
+                    }, ['📂 ', t('mediaOpenFolder')]),
+                  ]),
+                ])
+              : blobState.status === 'loading'
+                ? h('div', { className: 'dg-mediaLoading', key: 'load' }, [
+                    h('div', { className: 'dg-mediaLoadingText', key: 't' },
+                      blobState.pct >= 0
+                        ? format(t('mediaBlobLoading'), { pct: blobState.pct })
+                        : t('mediaBlobLoadingIndeterminate')),
+                    h('div', { className: 'dg-mediaProgressBar', key: 'bar' },
+                      h('div', {
+                        className: 'dg-mediaProgressFill',
+                        key: 'fill',
+                        style: { width: `${blobState.pct >= 0 ? blobState.pct : 30}%` },
+                      })),
+                  ])
+                : blobState.status === 'failed'
+                  ? h('div', { className: 'dg-mediaTooBig', key: 'fail' }, [
+                      h('div', { className: 'dg-mediaTooBigIco', key: 'ico' }, '⚠'),
+                      h('div', { className: 'dg-mediaTooBigTitle', key: 't1' }, t('mediaLoadFailed')),
+                      h('div', { className: 'dg-mediaTooBigHint', key: 't2' }, blobState.message ?? ''),
+                      h('div', { className: 'dg-mediaActionRow', key: 'actions' }, [
+                        h('button', {
+                          type: 'button', className: 'dg-mediaActBtn dg-mediaActPrimary', key: 'ext',
+                          'data-gallery-open-external': item.relPath,
+                          onClick: (event) => { event.stopPropagation(); openExternal() },
+                        }, ['▶ ', t('mediaOpenExternal')]),
+                        h('button', {
+                          type: 'button', className: 'dg-mediaActBtn', key: 'folder',
+                          'data-gallery-open-folder': item.relPath,
+                          onClick: (event) => { event.stopPropagation(); openFolder() },
+                        }, ['📂 ', t('mediaOpenFolder')]),
+                      ]),
+                    ])
+                  : isVideo
+                    ? h('video', {
+                        ref: videoRef,
+                        src: blobState.url,
+                        controls: true,
+                        autoPlay: true,
+                        preload: 'auto',
+                        key: 'v',
+                        'data-gallery-video': item.relPath,
+                        onError: () => setFailed(true),
+                        onLoadedMetadata: (event) => {
+                          const v = event.currentTarget
+                          if (v.videoWidth > 0) setDims({ w: v.videoWidth, h: v.videoHeight })
+                        },
+                      })
+                    : h('audio', {
+                        src: blobState.url,
+                        controls: true,
+                        autoPlay: true,
+                        preload: 'auto',
+                        key: 'a',
+                        'data-gallery-audio': item.relPath,
+                        onError: () => setFailed(true),
+                      })
         )),
-        h('div', { className: 'dg-mediaFoot', key: 'foot' },
-          `${formatBytes(item.size)} · ${formatTime(item.mtime)}`
-          + (dims !== null ? ` · ${dims.w} × ${dims.h}` : '')),
+        // 底栏：文件名 + 大小 + 时间（+ 视频尺寸）
+        h('div', { className: 'dg-mediaFoot', key: 'foot' }, [
+          h('span', { className: 'dg-mediaFootName', key: 'name', title: item.relPath }, item.name),
+          h('span', { className: 'dg-mediaFootMeta', key: 'meta' },
+            `${formatBytes(item.size)} · ${formatTime(item.mtime)}`
+            + (dims !== null ? ` · ${dims.w} × ${dims.h}` : '')
+            + (ready ? ' · 可拖动进度条' : '')),
+        ]),
+        // 截帧结果提示（成功绿、失败红），2.5 秒自动消失
+        grabNotice === null
+          ? null
+          : h('div', {
+              className: 'dg-mediaNotice dg-mediaNotice'
+                + (grabNotice.kind === 'ok' ? 'Ok' : grabNotice.kind === 'pending' ? 'Pending' : 'Fail'),
+              key: 'notice',
+              'data-gallery-grab-notice': grabNotice.kind,
+            }, grabNotice.text),
       ]))
     }
 
