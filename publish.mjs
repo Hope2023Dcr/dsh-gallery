@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url'
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO = 'Hope2023Dcr/dsh-gallery'
 const REMOTE = `https://github.com/${REPO}.git`
+const VERSION = JSON.parse(fs.readFileSync(path.join(HERE, 'package.json'), 'utf8')).version
 
 const argv = process.argv.slice(2)
 const checkOnly = argv.includes('--check')
@@ -74,7 +75,7 @@ step(2, '必需文件检查')
 
 const REQUIRED = [
   'README.md', 'LICENSE', 'CHANGELOG.md', 'CONTRIBUTING.md',
-  '.gitignore', 'package.json', 'index.js', 'client.js',
+  '.gitignore', 'package.json', 'index.js', 'client.js', 'session-index.js',
   'cordis.patch.yml', 'icon.svg', 'locale/zh.json', 'locale/en.json', 'install.mjs',
 ]
 for (const f of REQUIRED) {
@@ -268,9 +269,9 @@ info(`git push -u origin ${branch}`)
 
 console.log('')
 console.log(`${C.bold}推送后去发 Release：${C.reset}`)
-info(`1. 打包：把 index.js client.js package.json cordis.patch.yml icon.svg locale/ install.mjs 打成一个 zip`)
+info(`1. 打包：按 package.json 的 files 白名单 + install.mjs 打成一个 zip（务必含 session-index.js）`)
 info(`2. 打开 https://github.com/${REPO}/releases/new`)
-info(`3. Tag 填 v0.4.0，标题填 "v0.4.0 — 可配置产出根目录"`)
+info(`3. Tag 填 v${VERSION}（取自 package.json，别再写死 v0.4.0）`)
 info(`4. 上传 zip`)
 info(`5. 把 RELEASE.md 的内容粘进发布说明`)
 
