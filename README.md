@@ -4,16 +4,17 @@
 > DSH 默认**只在任务结束时**才列出产出的文件名和路径 —— 中间生成的东西你看不见，
 > 出了偏差只能等它跑完再返工。
 >
-> 这个插件把产出目录变成右侧栏里的**实时画廊**：图生成就可见、文件点一下就打开，
+> 这个插件把产出目录变成右侧栏里的**实时画廊**：图片生成就可见、文件点开就预览、
+> 视频音频能在面板里直接播放并拖进度条，
 > **让你在任务进行中就能校验和干预，而不是结束后才知道做错了。**
 
-[![Version](https://img.shields.io/badge/version-0.7.2-blue.svg)](#)
+[![Version](https://img.shields.io/badge/version-0.10.6-blue.svg)](#)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](#技术说明给想改代码的人)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#兼容性)
 [![DSH plugin](https://img.shields.io/badge/DSH-plugin-blueviolet.svg)](#)
 
-**关键词**：DeepSeek Harness 插件 · DSH plugin · 产出画廊 · output gallery · 图片画廊 · image gallery · 文件预览 · file preview · 侧边栏面板 · sidebar panel · Agent 产出管理 · output artifacts
+**关键词**：DeepSeek Harness 插件 · DSH plugin · 产出画廊 · output gallery · 图片画廊 · image gallery · 文件预览 · file preview · **音视频画廊 · media gallery · 视频预览 · video preview** · 侧边栏面板 · sidebar panel · Agent 产出管理 · output artifacts
 
 ---
 
@@ -81,7 +82,25 @@
 | 点「⧉ 复制路径」 | 复制绝对路径，按钮变 `✓ 已复制` 反馈 1.6 秒 |
 | 点「📂」 | 在资源管理器里定位该文件 |
 
-### 右键菜单（图片 / 文件通用）
+### 音视频画廊
+
+列视频 / 音频，共 16 种扩展名（视频 7 种、音频 9 种），**独立第三栏**，不混进文件列表。
+
+| 操作 | 行为 |
+|---|---|
+| 点整张卡片 | 在面板内弹出播放器 |
+| 视频卡片 | 显示**首帧缩略图**（进入视口才抽帧，避免一次解码几十个视频） |
+| 播放器里拖进度条 | ✅ **可用** —— ≤ 60 MB 的文件会完整载入内存（blob），浏览器原生支持任意 seek |
+| 播放器里「📷 截取当前帧」 | 把当前画面存成 PNG，文件名带时间码（如 `片子_00-12-34.png`） |
+| 大文件（> 60 MB） | 不载入面板，显示「文件较大」+「▶ 用系统播放器打开」/「📂 打开所在文件夹」两个按钮 |
+
+> **为什么大文件不内嵌播放**：DSH 的 HTTP 通道不支持 `Range` 请求（官方 `/api/file` 也只返 200），
+> 没有 Range 就无法边下边播、拖进度条。所以 ≤ 60 MB 走 blob（完整数据在内存，能 seek），
+> 超过则引导用系统播放器 —— 那里原生支持拖动。
+>
+> 体积上限默认 200 MB，可用 `maxMediaBytes` 调整。
+
+### 右键菜单（图片 / 文件 / 音视频通用）
 
 在任意卡片上**右键**：
 
@@ -96,7 +115,7 @@
 
 ### 分页
 
-两个画廊都是**每页 60 条**，网格下方**常驻页码条**：
+三个画廊都是**每页 60 条**，网格下方**常驻页码条**：
 
 ```
 第 1–60 条 · 共 114 条   还有 54 张
