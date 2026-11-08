@@ -11,7 +11,7 @@
 > 📌 **当前是 `0.x` 开发预览版**：核心能力（实时看见、当场校验、就地处置）已可用；
 > 「把结论回传给主线任务」还没做，列在[路线图](#路线图)里。
 
-[![Version](https://img.shields.io/badge/version-0.12.1-blue.svg)](#)
+[![Version](https://img.shields.io/badge/version-0.13.6-blue.svg)](#)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](#技术说明给想改代码的人)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#兼容性)
@@ -93,8 +93,8 @@
 |---|---|
 | 点整张卡片 | 在面板内弹出播放器 |
 | 视频卡片 | 显示**首帧缩略图**（进入视口才抽帧，避免一次解码几十个视频） |
-| **拖进度条** | ✅ **任意大小的文件都能拖** —— 面板内播放走 blob（整包载入后交给浏览器，可任意 seek） |
-| **点开到可播** | ✅ 1.1 MB 视频与 96.5 秒音频约 250 ms；**127 MB 实测 502 ms** |
+| **拖进度条** | ✅ **实测 127 MB 可拖；GB 级未做大小分档** —— 面板内播放走 blob（整包载入后交给浏览器，可任意 seek） |
+| **点开到可播** | ✅ 1.1 MB 视频与 96.5 秒音频约 250 ms；**127 MB 实测 502 ms，可正常拖动**；GB 级未做大小分档 |
 | 播放器里「📷 截取当前帧」 | 把当前画面存成 PNG，文件名带时间码（如 `片子_00-12-34.png`） |
 | 浏览器解不了格式 | 显示提示 +「▶ 用系统播放器打开」/「📂 打开所在文件夹」两个按钮 |
 
@@ -217,10 +217,10 @@ github:Hope2023Dcr/dsh-gallery
 > 想锁定版本（推荐，避免仓库更新导致行为变化）：
 >
 > ```
-> git+https://github.com/Hope2023Dcr/dsh-gallery.git#297425930fc4b0b505901f7a03ccad3c1566bb9b
+> git+https://github.com/Hope2023Dcr/dsh-gallery.git#__COMMIT_SHA__
 > ```
 
-> 上面那个 commit 对应 **v0.12.1**（含 S1/S2 结构重构、blob 播放可拖进度条）。
+> 上面那个 commit 对应 **v0.13.6**（含 S3-a 反馈契约、blob 播放可拖、reveal 修复）。
 > **更推荐直接用 npm**（`npm i dsh-gallery`）—— 版本号跟着 `latest` 走，不用每次手工核对哈希。
 
 > ⚠️ 这种方式需要**能访问 GitHub**。DSH 的「国内镜像」只代理 npm 包，不代替 GitHub 下载。
@@ -403,6 +403,46 @@ config:
 
 ---
 
+### 对外接口（seam v1）
+
+插件在 `window.dshGallerySeam` 暴露一个窄接口，供独立包 / 扩展使用：
+
+```js
+window.dshGallerySeam = {
+  version: 1,
+  getSelection(),        // → { relPath, source: 'viewer'|'context-menu'|'focus' } | null
+  subscribe(fn),         // → 退订函数；选中项变化时回调
+  getMarks(),            // → Promise<{ [relPath]: mark }>
+  setMark(relPath, mark),// → Promise<boolean>
+  getFeedbackDraft(),    // → 最近一次生成的草稿文本
+}
+```
+
+**卡片 DOM 兜底**：所有卡片（图片 / 文件 / 音视频）都挂
+`data-gallery-relpath="<relPath>"`，独立包可直接按属性定位，不依赖 React 内部状态。
+
+**这个 seam 不含发送能力** —— 发送永远由用户在 composer 里手动确认。
+
+## 反馈篮（v0.13.0 起）
+
+标记产出 → 攒成一条结构化反馈 → 写进输入框草稿 → **由你确认后手动发送**。
+
+| 动作 | 用途 |
+|---|---|
+| 通过 / 不要这张 / 定为最终版 | 判定 |
+| 单维重做 | 只改某一维（色调 / 材质…），其余锁死 |
+| 选择性重生成 | 只重做选中的这几张 |
+| 设为参照 | 作为同批的参照 |
+
+**设计约束**（有意为之）：
+
+- **零自动发送**：只写 composer 草稿，发送永远由人点。
+- **零 inject**：不声明 `conversation.input` / `sessions` / `agents` ——
+  实测声明它们会让插件在 web boot 阶段 pending、宿主判定启动失败。
+  草稿写入走纯 DOM 多路径，全部失败才落剪贴板（并明确提示「未写入输入框」）。
+- **历史会话禁用提交**：条目归属会话与当前会话不同时，提交按钮禁用。
+- **契约不是自由文本**：导出 JSON 与渲染文本同一 shape，带 `Annotation N` 编号。
+
 ## 路线图
 
 **下面这些还没做**（诚实标注，不画大饼）：
@@ -410,7 +450,10 @@ config:
 | 计划 | 状态 |
 |---|---|
 | 版本历史（同一文件跨 turn 的修改点，只存 size/mtime） | ❌ 未实现 |
-| 交付物手动 pin（除 `present` 之外的标记方式） | ❌ 未实现 |
+| 交付物手动 pin（除 `present` 之外的标记方式） | ❌ 未实现（**v0.13.6 的反馈篮只打判定、不改主线状态**） |
+| 按标记筛选 / 批量处置 | ❌ 未实现 |
+| 图片框选批注 / A/B 对比 / 参数回灌（S3-b） | ❌ 未实现 |
+| 自动 steer / cancel 独立包（S3-c） | ❌ 未实现 |
 | 跨扫描目录合并视图（目前按目录分组） | ❌ 未实现 |
 | 文件内容变更 diff 预览 | ❌ 未实现 |
 
