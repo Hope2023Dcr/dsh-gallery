@@ -319,8 +319,102 @@ if (WITH_INSTALL) {
     }
   }
 }
-skip('17 seam schema 版本一致', 'S3 表态层后启用')
-skip('18 marks 原子写（tmp → rename）', 'S3 表态层后启用')
+// ---------- 17 seam schema 版本一致（S3-a 已启用） ----------
+{
+  const problems = []
+  // 17a：client 产物里要有 seam 安装 + version: 1
+  const clientPath = path.join(ROOT, 'client.js')
+  if (!fs.existsSync(clientPath)) {
+    bad('17 seam schema 版本一致', 'client.js 不存在')
+  } else {
+    const clientTxt = fs.readFileSync(clientPath, 'utf8')
+    if (!clientTxt.includes('dshGallerySeam')) problems.push('client.js 缺 window.dshGallerySeam')
+    if (!clientTxt.includes('installSeam')) problems.push('client.js 缺 installSeam()')
+    // seam 对象里必须有 version: 1
+    if (!/version\s*:\s*1/.test(clientTxt)) problems.push('seam 缺 version: 1')
+
+    // 17b：shared 契约的 SCHEMA 必须与 seam version 一致（都是 1）
+    const sharedPath = path.join(ROOT, 'src', 'shared', 'feedback-text.js')
+    let sharedTxt = ''
+    if (!fs.existsSync(sharedPath)) {
+      problems.push('缺 src/shared/feedback-text.js')
+    } else {
+      sharedTxt = fs.readFileSync(sharedPath, 'utf8')
+      const m = sharedTxt.match(/export const SCHEMA = (\d+)/)
+      if (!m) problems.push('feedback-text.js 缺 SCHEMA 常量')
+      else if (m[1] !== '1') problems.push(`SCHEMA 应为 1，实际 ${m[1]}`)
+    }
+
+    // 17c：Host 产物 feedback-text.js 必须由 build 生成且含 SCHEMA
+    const hostFt = path.join(ROOT, 'host', 'feedback-text.js')
+    if (!fs.existsSync(hostFt)) problems.push('缺 host/feedback-text.js（构建产物）')
+    else if (!fs.readFileSync(hostFt, 'utf8').includes('SCHEMA')) {
+      problems.push('host/feedback-text.js 缺 SCHEMA')
+    }
+
+    // 17d：契约里的 action 枚举与 Host marks 的 MARK_ACTIONS 一致
+    const marksPath = path.join(ROOT, 'host', 'marks.js')
+    if (!fs.existsSync(marksPath)) problems.push('缺 host/marks.js')
+    else {
+      const marksTxt = fs.readFileSync(marksPath, 'utf8')
+      const sharedActions = (() => {
+        if (sharedTxt === '') return []
+        const mm = sharedTxt.match(/export const ACTIONS = \[([\s\S]*?)\]/)
+        if (!mm) return []
+        return [...mm[1].matchAll(/'([^']+)'/g)].map((x) => x[1])
+      })()
+      const hostActions = (() => {
+        const mm = marksTxt.match(/export const MARK_ACTIONS = \[([\s\S]*?)\]/)
+        if (!mm) return []
+        return [...mm[1].matchAll(/'([^']+)'/g)].map((x) => x[1])
+      })()
+      for (const a of sharedActions) {
+        if (!hostActions.includes(a)) problems.push(`marks.js 缺 action: ${a}`)
+      }
+    }
+  }
+
+  if (problems.length > 0) bad('17 seam schema 版本一致', problems.slice(0, 3).join('；'))
+  else ok('17 seam schema 版本一致', 'seam version=1，SCHEMA=1，action 枚举双端一致')
+}
+// ---------- 18 marks 原子写（S3-a 已启用） ----------
+{
+  const problems = []
+  const marksPath = path.join(ROOT, 'host', 'marks.js')
+  if (!fs.existsSync(marksPath)) {
+    bad('18 marks 原子写（tmp → rename）', '缺 host/marks.js')
+  } else {
+    const txt = fs.readFileSync(marksPath, 'utf8')
+    // 18a：必须是 tmp → rename 模式
+    if (!/writeMarks/.test(txt)) problems.push('缺 writeMarks')
+    if (!/tmp-/.test(txt) && !/.tmp/.test(txt)) problems.push('写盘未用 tmp 文件')
+    if (!/\.rename|rename\(/.test(txt)) problems.push('写盘未用 rename 原子替换')
+    // 18b：marks 必须是独立文件（不能写回 settings 同一文件）
+    if (!/dsh-gallery-marks\.json/.test(txt)) problems.push('marks 未使用独立文件 dsh-gallery-marks.json')
+    // 18c：settings.js 的写盘也要原子
+    const settingsPath = path.join(ROOT, 'host', 'settings.js')
+    if (!fs.existsSync(settingsPath)) problems.push('缺 host/settings.js')
+    else {
+      const st = fs.readFileSync(settingsPath, 'utf8')
+      const wf = st.match(/export async function writeSettingsFile[\s\S]*?\n}/)
+      if (!wf) problems.push('settings.js 缺 writeSettingsFile')
+      else {
+        if (!/\.tmp/.test(wf[0]) && !/tmp-/.test(wf[0])) problems.push('writeSettingsFile 未用 tmp')
+        if (!/rename/.test(wf[0])) problems.push('writeSettingsFile 未用 rename')
+      }
+    }
+    // 18d：两个 op 都已注册
+    const httpPath = path.join(ROOT, 'host', 'http.js')
+    if (fs.existsSync(httpPath)) {
+      const ht = fs.readFileSync(httpPath, 'utf8')
+      if (!ht.includes("op === 'marks'")) problems.push('http.js 缺 marks op')
+      if (!ht.includes("op === 'getMarks'")) problems.push('http.js 缺 getMarks op')
+    } else problems.push('缺 host/http.js')
+  }
+
+  if (problems.length > 0) bad('18 marks 原子写（tmp → rename）', problems.slice(0, 3).join('；'))
+  else ok('18 marks 原子写（tmp → rename）', 'marks 独立文件 + tmp→rename；settings 同样原子；marks/getMarks 两个 op 已注册')
+}
 
 // ---------- 汇总 ----------
 console.log('')
