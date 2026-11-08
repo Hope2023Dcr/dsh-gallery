@@ -2,6 +2,471 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.13.6] - 2026-11-08
+
+**主题：修「打开所在文件夹」一律指向「文档」（图片/文件/音视频三类全中）。**
+
+### 现象
+
+右键「打开所在文件夹」→ 资源管理器一律打开「文档」，
+既不显示文件所在目录，也没有选中当前文件。老板连点 4 次留下 4 个标题为「文档」的窗口。
+
+### 根因（argv 实证 + 真机对照）
+
+旧实现（S1 时为了修中文路径而引入）：
+
+```js
+spawn('cmd.exe', ['/c','start','','explorer.exe', `/select,"${abs}"`])
+```
+
+**手写的双引号**经 Node spawn 的自动 quoting + `cmd start` 两层转义后
+**残留在路径里** —— 用 receiver 记录最终 argv，收到的是：
+
+```
+/select,"G:\...\x.png"      ← 引号成了字面字符
+/select,G:\...\x.png        ← 干净形式（不经 cmd、不手工加引号）
+```
+
+explorer 解析 `/select,"..."` 失败 → 回退打开默认位置「文档」。
+与文件名/类型/是否含空格**无关**，所以图片、文件、音视频三类全部命中。
+
+**决定性对照实验**（真机，看窗口标题）：
+
+| 写法 | 「文档」窗口数 |
+|---|---|
+| 基线 | 4 |
+| A 旧写法（cmd start + 手写引号） | **4 → 5（+1）** ← 复现 bug |
+| B 新写法（直接 spawn，无引号） | **5 → 5（0）** ← 修复有效 |
+
+### 次生问题（掩盖了故障）
+
+旧代码只看 `cmd start` 退出码 0 就返回 `ok:true`。
+而 **explorer 参数无效时 cmd 照样退出 0** —— 这是**假成功**，前端不报错，所以一直没被发现。
+
+### 修法
+
+1. **Windows select**：`spawn('explorer.exe', [`/select,${abs}`])`，
+   **不再手工加引号、不经 cmd 中转**，交给 Node 自己处理空格与中文 quoting（argv 实测干净）。
+2. **Windows play**：直接 `spawn(abs, [], { detached })` 用文件关联，同样不经 cmd。
+3. **macOS**：`open -R <file>`（才能真正在 Finder 里选中文件，不是只打开目录）。
+   **Linux**：`xdg-open <dirname>`（无通用「选中文件」协议）。
+4. **返回体带 `absolute` / `basename` / `dirname` / `via` / `command` / `platform`** 便于排查。
+5. **不再把退出码当「已定位到文件」的证据** —— 语义改为「命令已发出」，
+   退出码只作附加信息回报。真正的验证靠真机看窗口。
+6. **定位文件不再受大小限制**：reveal 传 `Number.MAX_SAFE_INTEGER` 给 `resolveReadable`，
+   只校验存在 + isFile + 路径越界。之前用 `max(image, media)` 做 cap，
+   **大音视频会被判 404「文件不存在或不可读」**。
+
+### ⚠️ 二次修：`windowsHide: true` 会让 explorer 窗口不显示
+
+改完 spawn 后做「清空所有 explorer 窗口 → 执行 → 看是否新开」的决定性验收，
+发现**新写法根本没开窗**（窗口 0 → 0）。变量隔离测试定位到真凶：
+
+| 配置 | 窗口 | 标题 |
+|---|---|---|
+| `detached:true, stdio:ignore, windowsHide:true` | **0 → 0** ❌ 不开窗 | — |
+| `detached:true, stdio:ignore, windowsHide:false` | 0 → 1 ✅ | `2026-11-03-产出画廊插件` |
+| `detached:true, stdio:ignore`（不设） | 0 → 1 ✅ | `2026-11-03-产出画廊插件` |
+
+**`windowsHide: true` 会抑制 explorer 的窗口显示。**
+reveal 的目的就是让用户看见窗口，隐藏它等于没做 —— 已全部去掉。
+
+（这个坑是「改对了一半」：argv 干净了，但窗口被藏起来了，
+如果没做「清空后看是否真开窗」的对照，会误判为已修好。）
+
+### 最终真机验收（三类资产，清空窗口后逐个测）
+
+| 资产 | 文件 | 窗口标题 |
+|---|---|---|
+| 文件（中文路径） | `dsh-gallery-结构方案裁定.md` | **`2026-11-03-产出画廊插件`** ✅ |
+| 图片（空格+中文） | `cover-1x1-dark.png` | **`img`** ✅ |
+| 音视频 | `tool_test_cut.mp4` | **`验收`** ✅ |
+
+三个都是**目标目录名，没有一个是「文档」**。
+
+### 探测结论：为什么没用 Electron shell.showItemInFolder
+
+实证 `dsh-desktop-host/lib/index.js` L243-245：
+
+```js
+args: ["--expose-internals", process.argv[5]],
+ELECTRON_RUN_AS_NODE: "1",
+```
+
+host 是 **`ELECTRON_RUN_AS_NODE=1` 的纯 Node 进程**，`require('electron')` 拿不到 `shell`。
+（`shell.openExternal` 只在 Electron 主进程 `lib/main.js` 里用。）
+→ 官方 API 不可用，走 spawn 路线。
+
+### 验证
+
+- 真机对照实验：「文档」窗口数 A +1 / B 0（如上表）
+- 三条发布检查：`build --check` 逐字节一致 / `npm test` 5/5 / `check.sh --install` 18 PASS 0 SKIP
+- v0.13.5 的 UI 修复（非模态 z-index 50 / 硬编码配色 / 独立入口 / 禁用原因文案）**未回退**
+
+### 教训
+
+**「命令发出去了」不等于「用户看到结果了」。**
+旧代码拿退出码当成功证据，而 cmd/explorer 对无效参数也返回 0 —— 
+假成功让这个 bug 活了整整 5 个版本（从 S1 到 v0.13.5）。
+凡涉及「外部程序副作用」的操作，**验收必须看外部程序的可见结果**（窗口标题/文件选中），
+不能只看自己的返回码。
+
+---
+## [0.13.5] - 2026-11-08
+
+**主题：修反馈篮模态遮罩与低对比配色 + 独立入口。**
+
+老板手动复核在步骤 2 就被挡住，后续全部无法验证。这是实现缺陷，不是操作问题。
+
+### P0-1：遮罩改非模态（「无法添加第二张」的根因）
+
+`.dg-feedbackLayer` 原来是 `z-index: 9999` + `inset: 0` + 55% 黑幕，
+**全屏拦截所有点击** —— 面板一开，底下所有卡片都点不到，
+`document.elementFromPoint(卡片中心)` 返回 `.dg-feedbackWarn`。
+
+改为非模态浮层：
+- `z-index` **9999 → 50**（必须低于 `.dg-ctxLayer` 的 60，否则右键菜单被盖住）
+- `background: transparent`（去掉黑幕）、`pointer-events: none`（全屏层不拦截）
+- 布局改 **右下角浮层**（`align-items/justify-content: flex-end` + `padding: 16px`）
+- `.dg-feedback` 加 `pointer-events: auto`（只有面板本体拦截）+ `box-shadow` 代替黑幕做层次
+- 尺寸收窄 `width: min(420px, 46vw)` / `max-height: 60vh`
+- `aria-modal: true` → **false**（已非模态）
+
+结果：面板外的区域点击穿透到底层卡片 → 可以继续右键标记第 2、3 张。
+
+### P0-2：配色不再依赖宿主变量
+
+**关键 CSS 陷阱**（真机实测）：宿主 `--dsw-alias-*` 变量**已定义但值为空字符串**，
+而 `var(--x, fallback)` 在变量「已定义但为空」时**不会启用 fallback** → 整条声明作废 →
+继承父级深色（实测 `color: rgb(15,17,21)`，与背景 `rgb(27,30,36)` 同为深色，几乎看不见）。
+
+所以「给现有 `var()` 补 fallback」**是无效修复**，必须硬编码。已全部改为：
+- 面板 `background: #1b1e24; color: #e8eaed; border: 1px solid rgba(255,255,255,.14)`
+- 标题 `#f0f2f5`、条目/文件名 `#e8eaed`、次要文字 `#a9b1bd`
+- `.dg-primaryBtn` 实色高对比：`#4a7cff` + `#ffffff`，hover `#5b88ff`
+- **禁用态不再靠 opacity**：`opacity: 1` + `background: #3a4250` + `color: #c3cad6`（仍清晰可读）
+- 顺手把 `.dg-btn` 基础样式（含 4 个空变量）一并改硬编码 —— 影响**全插件按钮**，
+  不只是反馈篮（其它面板同样受益）
+
+### P0-3：禁用原因看得见 + 独立入口
+
+- `foreignItems > 0` 时，**按钮文案直接改成「含其他会话条目，无法生成」**，不再只靠悬停 title
+- 空篮子时显示「还没有标记」
+- 警告条改高对比（`#4a3618` 底 + `#ffd08a` 字 + `⚠` 图标）
+- **新增独立入口**：右下角常驻「反馈篮 · N 条」toggle 按钮（`data-gallery-open-basket`），
+  关闭后能直接重开，不必再标记一张卡
+
+### 验证（离线 CSS/hit-test 复核）
+
+- 27 项 CSS 断言全过：反馈篮内**零 `var(--dsw-alias-*)`**、z-index 层级正确、
+  关键规则值（#1b1e24 / #e8eaed / #4a7cff / opacity:1）全部到位
+- hit-test 推断：全屏层 `pointer-events: none` → 穿透；面板 `auto` → 拦截；
+  `ctxLayer(60) > feedbackLayer(50)` → 右键菜单在反馈篮之上
+- 三条发布检查：`build --check` 逐字节一致 / `npm test` 5/5 / `check.sh --install` 18 PASS 0 SKIP
+
+### 未改动（硬约束）
+
+运行时逻辑全部保持 v0.13.4：草稿写入 composer 的三条 DOM 路径、异步判据、幂等、
+marks 原子写、seam v1、历史会话禁用判定 —— **一行未动**。
+
+---
+## [0.13.4] - 2026-11-08
+
+**主题：修最后一处 —— 草稿从 2 份降到 1 份。**
+
+### 根因：路径 1 内部的双事件（不是路径重复）
+
+v0.13.3 的异步判据 + 短路已生效（真机 event 计数：`beforeinput=1, input=1, paste=0, execCommand=0`），
+但草稿仍是 **2 份**（770 字 ≈ 385×2）。
+
+**微探针钉死**：
+- 单独 dispatch `beforeinput` → 等 160ms → state 6 字 ✅
+- 随后单独 dispatch `input`（同样 data）→ 等 160ms → state **仍 6 字**（第二个被忽略）
+
+→ **`beforeinput` 与 `input` 在同一同步块连发、中间没有 flush 时，
+Lexical 在 flush 前把两次都排进更新队列，各插入一份。**
+微探针中间等了 160ms，state 已 flush，所以第二个事件被忽略。
+
+上一版 4 份 = 三条路径各插 + 双事件；这一版 2 份 = 单条路径的双事件。
+
+### 修法
+
+**路径 1 只 dispatch `beforeinput`，删掉紧随的 `input` 事件。**
+
+真机实证：只发一次 beforeinput（完整 385 字草稿）+ 等 300ms
+→ `draftLen=385`、`stateLen=385`、`"Annotation 1"` 恰好 2 次、`singleCopy=true`。
+
+路径 2（paste）/ 路径 3（execCommand）/ 短路 / 幂等 / 异步判据全部保留。
+
+### 两处加固
+
+1. **幂等改用 `headProbe`（前 24 字）**，不再全串匹配
+   —— 全串匹配在「草稿后跟了用户自己打的字」时会失效。
+2. **`late-flush` 判据改严格**：必须「state 长度 ≈ `text.length`（±8）
+   **且** 草稿头出现**恰 1 次**」。之前 `includes(probe)` 会让半份写入也通过（静默污染）。
+   头出现 > 1 次时直接报 `duplicate-write-N` 失败。
+
+### 验证：对照实验
+
+离线模拟「同步块双事件被排队各插一份」的 Lexical 行为：
+
+| 场景 | state | 出现次数 |
+|---|---|---|
+| A) 只发 `beforeinput`（修复后） | 28 字 / 草稿 28 字 | **1 次** ✅ |
+| B) 加回 `input`（反向对照） | 56 字 / 草稿 28 字 | **2 次** ← 精确复现真机 bug |
+
+对照成立 → 证明模拟真实复现了问题，且修复确实消除了重复。
+
+### ⚠️ 验收计数口径（别按错的期望值误判成重复）
+
+**单份草稿里 `Annotation N` 的正确出现次数**：
+
+| 标记 | 单份正确次数 | 2 份时（bug） |
+|---|---|---|
+| `Annotation 1` | **2 次** | 4 次 |
+| `Annotation 2` | **2 次** | 4 次 |
+| `Annotation 3` | **1 次** | 2 次 |
+
+**为什么 ann1 / ann2 是 2 次**：草稿开头那句说明
+「请按 `Annotation 1：`、`Annotation 2：` … 逐条回应」
+**本身就含 `Annotation 1` 和 `Annotation 2` 各一次**，再加上条目本身那次 = 2 次。
+而 `Annotation 3` 只在条目里出现 = 1 次。
+
+真机实测（v0.13.4）：全文 385 字 / `singleCopy=true` /
+`ann1=2, ann2=2, ann3=1` —— **这是正确结果，不是重复**。
+
+### 教训
+
+**同一同步块内连发多个「插入」类事件，会被调度器合并/重复处理。**
+写完一个事件后必须 `await` flush 再发下一个，或者干脆只发一个。
+这类 bug 的特征是「判据显示成功，但结果是多份」——静默的数据污染，比失败更危险。
+
+---
+
+## [0.13.2] - 2026-11-08
+
+**主题：改走「零 inject 纯 DOM」的 B 路线 —— A 方案（inject conversation.input）会导致 DSH 启动失败。**
+
+### A 方案的致命问题（已废弃）
+
+v0.13.1 在 `inject` 里加了 `'conversation.input'` + `'sessions'`。真机重启后：
+
+```
+Error: web boot: 1 entry did not activate
+  dsh-gallery: pending (waiting for service: conversation.input)
+    at app.asar/lib/main.js:12437:15
+```
+
+**页面永久停在「HARNESS Loading plugins…」，随后主进程退出、CDP 断开。**
+
+原因：`conversation.input` 在 web boot 阶段**根本没就绪**，Cordis 插件一直 pending，
+宿主判定启动失败。**声明式 inject 这条路在本机 0.2.1-rc.5 上不可用。**
+
+同时源码实证（L19270 / L19278）：`renderSlot("conversation.input.left", {})` 和
+`.right` 的 props **只传 `{}`**，不透传 `input` 对象 ——
+所以即使不崩，零 inject 也拿不到这个服务。
+
+### B 路线：零 inject 三路径纯 DOM
+
+`inject` 回到 `['slots', 'locale', 'sidebarRightTabs', 'sidebarRight']`，
+草稿写入改为三条 DOM 路径按序尝试：
+
+| 顺序 | 路径 | 依据 |
+|---|---|---|
+| 1 | `beforeinput` + `input` 事件 | Lexical 注册了 `["beforeinput", ...]`（L6592） |
+| 2 | 模拟 `paste`（`ClipboardEvent` + `DataTransfer`） | Lexical 注册了 `["paste", Pn]`（L6587），paste 有完整命令处理（L10559） |
+| 3 | `document.execCommand('insertText')` | 已知**只改 DOM 不同步 Lexical state**，仅作最后兜底 |
+
+**成功判据不是 `innerText`**（那会假通过），而是
+`editor.getEditorState()` 内部 state 的真实文本增长 ——
+editor 实例从 `el.__lexicalEditor` 取（Lexical 官方在 editable 元素上挂的，L11286）。
+
+三条都失败才落剪贴板，notice 明确「未写入输入框」（`kind:'failed'`）。
+
+**已实证不可用的路径**：
+- `document.execCommand('insertText')` —— 只改 DOM，`selectAll+delete` 清不掉，说明 state 仍空（阿枢实测）
+- `editor.update()` 构造节点 —— Lexical 已被压缩混淆，`$getRoot` / `$createParagraphNode` 标识符不存在
+- CDP `Input.insertText` —— 是外部调试器通道，插件 bundle 内用不了
+
+### 同时
+
+- 清理 `src/src/` 冗余 23 个文件（`cp -r` 套娃造成，白名单不发布）
+- 修正 `_s3a_fix_verify.txt` 里「7 个 src 分片 FAIL」与「35 文件 MATCH」的自报矛盾 ——
+  FAIL 来自旧副本，清理后重核
+
+### v0.13.2 后续修复：草稿被判据假阴性写成 4 份
+
+**真机暴露的第二个坑**：`Lexical` 的 state 更新是**异步 flush**。
+dispatch 事件后**立刻**读 `getEditorState()` 永远读到旧 state →
+三条路径全部被同步判据判成"失败" → 后续路径依次再插一次 →
+**草稿被写入 4 份**（真机实测 1524 字 ≈ 381×4，一发送就会发出 4 份重复内容）。
+
+修法（7 项）：
+1. **判据改异步**：每条路径 dispatch 后 `await` 一个宏任务（80ms）再读 state
+2. **短路**：任一路径成功立即 `return`，不再继续后续路径
+3. **删掉 `el.innerText.length > 0` 的兜底** —— 它是重复写入的直接推手，
+   而且会把 DOM-only 误报成 composer 成功
+4. **幂等**：写入前先等 flush 读当前 state，若已含目标文本直接返回 `already-present`
+5. **via/detail 如实回报**真正生效那条（不再报 `execCommand-dom-only`）
+6. 同步修 `_probe/dg-lexical-probe.js` 的判据（v4 加等待 + 每路径 reset + 新增 `testIdempotent()`）
+7. 本文档补上「需等待异步 flush」
+
+**验证**（离线模拟异步 flush）：
+- `beforeinput+input` 判 ok=true、after=23（同步判据下会误判 false）
+- 幂等测试：连续写 3 次 → 第 2/3 次跳过 → 最终出现 **1 次**
+
+**教训**：**测 DOM/编辑器写入时，「写入后立刻读状态」这个判据本身是错的。**
+组件可能用异步调度（React/Lexical/自研 scheduler 都常见），
+必须 await 一个宏任务再读，否则会把成功判成失败并触发重复写入。
+
+### 教训
+
+**声明式 inject 不是「声明了就能用」**：服务未就绪时插件会 pending，
+而宿主把 pending 当启动失败。**对 boot 阶段可能未就绪的服务，零 inject + 运行时探测更安全。**
+
+---
+
+## [0.13.1] - 2026-11-08
+
+**主题：修 S3-a 真机验收发现的 3 个问题（主链路 composer 写不进 + 编辑死按钮 + seam 契约偏差）。**
+
+### P0-1：草稿没进 composer，静默退到剪贴板
+
+**现象**：真机点「生成决策草稿」后 composer `innerText` 长度 0，
+反馈篮 notice 是「草稿已复制到剪贴板（输入框通道不可用）」；剪贴板确有内容。
+**不是抛错进 catch，而是条件判断直接不成立** —— 零 console.warn。
+
+**根因**（app.asar 实证）：
+- `13-entry.js` 的 `inject` 只有 `slots / locale / sidebarRightTabs / sidebarRight`，
+  **没有 `conversation.input`** → `ctx.get('conversation.input')` 返回 undefined
+- 即便拿到，`for(actx)` 还要求 retained Session scope（L15797 会抛错）
+
+**我之前的错误**：注释写着「官方通道已实证」，但那只读了 `actions.setDraft` 的定义，
+没验证「插件能否拿到这个服务」。
+
+**修法**：
+- `inject` 加 `'conversation.input'` + `'sessions'`（都是公开 UI 服务，`agents` 仍不注入）
+- 优先 `inputService.shell(sessionId).setDraft(text)` —— L15891 按 sessionId 直取 resident shell
+- 退化 `inputService.for(ctx.sessions.scope(sessionId)).setDraft(text)` —— L17270 官方用法
+- 两条都失败才落剪贴板，且 **notice 标明 kind='failed'**，明确写「未写入输入框」
+
+### P0-2：反馈篮「编辑」是死按钮
+
+**现象**：点击 `[data-gallery-feedback-edit]` 前后 DOM 零变化 ——
+`onEdit` 只 `setEditingItem(it)`，全 src/client 没有任何消费方。
+
+**后果**：`reason` / `changeOnly` / `keep` 用户填不了 →
+草稿里「只改 X」「其余锁死」永远为空 →
+**调研结论 4（生成图改稿最关键的一条）完全没落地**。
+
+**修法**：在 `FeedbackBasket` 内实现编辑弹窗，三个字段：
+- 理由（textarea）
+- 只改（input，逗号/中文逗号/顿号/分号分隔 → 数组）
+- 锁死（input，同上）
+
+保存回调 `onEditSave(relPath, patch)` → `updateMark` 更新本地 state + 落盘 marks。
+空数组不写进契约，避免草稿出现空的「只改：」。
+
+### P0-3：seam 契约偏差 —— 卡片缺 data-gallery-relpath
+
+**派单要求**卡片挂 `data-gallery-relpath` 兜底，实际只有 `data-gallery-card` / `data-gallery-file`，
+`getSelection()` 只在查看器打开时读 `[data-gallery-viewer] [data-gallery-src-relpath]`。
+→ 独立包 S3-c 拿不到「右键选中的卡片」。
+
+**修法**：
+- 三类卡片（`Card` / `FileCard` / `MediaCard`）全部补 `data-gallery-relpath`
+- `getSelection()` 改多来源：查看器 → 最近右键卡片（`lastContextRelPath`）→ 焦点卡片
+- 返回对象带 `source` 字段标明来源（`viewer` / `context-menu` / `focus`）
+
+### 同时清理
+
+- `dsh-gallery/src/src/`、已安装副本的 `src/src/`（18 + 54 个冗余文件，`cp -r` 套娃造成）
+- 同步脚本改为**只覆盖文件不删目录**，避免再次套娃
+
+### 教训
+
+**「读到了 API 定义」≠「插件能拿到这个服务」。**
+我之前只读了 `actions.setDraft` 的实现就断言「官方通道已实证」，
+实际漏掉了 `inject` 声明和服务获取链路。真机一测就露。
+
+**验收必须走完整链路**：inject → ctx.get → 调用 → 副作用可见（composer 里真有文本）。
+
+---
+
+## [0.13.0] - 2026-11-08
+
+**主题：S3-a —— 结构化反馈契约 + 反馈篮 + 决策草稿送 composer（人确认）。**
+
+调研结论见工作区报告《dsh-gallery-S3调研与线路.md》：需求不止「标记」，共 11 类；
+本次做其中 5 类纯文本可表达、高频、零私有 API 的（判定 / 单维重做 / 选择性重生成 / 批量合并 / 流程控制）。
+
+### 前置（不可跳）
+
+- **原子写**：`dsh-gallery.json` 写盘改 `tmp → rename`，不再有半截文件。
+- **marks 独立成文件** `dsh-gallery-marks.json`：主插件有两个写者（设置 + 标记），
+  放同一文件会互相覆盖（A 读 → B 读 → A 写 → B 写，A 的改动被 B 的旧快照冲掉）。
+  拆开后各管一份，配合原子写不会丢写。
+
+### 反馈契约 v1（`src/shared/feedback-text.js`，双端复用）
+
+```js
+{ schema: 1, source: 'dsh-gallery', sessionId, status: 'draft|sent',
+  items: [ { relPath, category, action, reason?, changeOnly[]?, keep[]?,
+             preserve[]?, region?, params? } ], createdAt }
+```
+
+`action` 首版 6 个：`approve` / `reject` / `finalize` / `redo-one-dim` /
+`regenerate-selected` / `set-reference`。
+
+**渲染规则（调研结论 4）**：每条必须同时写「只改 X（changeOnly）」与「其余锁死（keep）」，
+生成类工作流实证这样远好于「再改改」；逐条用 `Annotation N：` 编号，便于模型逐条回应
+（参考 `dsh-quote-annotate-pro` 的契约）。末尾统一收口：「除明确要改的部分外，其余全部保持原样，不要整张重做」。
+
+### UI
+
+- 卡片右键 → **6 个标记动作** → 进**反馈篮**（自动编号、可删、可清空）。
+- 「生成决策草稿」→ **写进 composer 草稿**，**由人确认后手动发送**。
+- 连点合并成一条（一次生成只产出一条消息，不逐条发）。
+- **历史会话卡片禁用提交**（条目归属会话 ≠ 当前会话时按钮 disabled）。
+- 全局视图显式标「将发往会话：XXX」。
+
+### 「送 composer」用的是哪条通道（实测结论）
+
+**官方通道**（已读 `app.asar` 的 `dsh-client-ui-conversation/lib/client.js` L14951-14966 实证）：
+
+```js
+ctx.get('conversation.input').for(ctx).setDraft(text)
+```
+
+`setDraft` 只替换草稿文本、**不会发送**，正好满足「人确认闸门」。
+`for(actx)` 要求 actx 有 session 绑定，拿不到时会抛错。
+
+**兜底通道**：捕获异常后退化为「复制到剪贴板 + 提示用户粘贴」
+（`dsh-quote-annotate-pro` 的零 inject 做法）。两条通道都不碰 `submit()`。
+
+### seam v1
+
+`window.dshGallerySeam = { version: 1, getSelection(), subscribe(fn), getMarks(), setMark(), getFeedbackDraft() }`
+—— 窄接口，**不含发送能力**。卡片挂 `data-gallery-*` 属性作 DOM 兜底。
+
+### Host 新增两个 op
+
+- `getMarks` → 读 `dsh-gallery-marks.json`
+- `marks` → 设 / 清一条（校验 action 在 `MARK_ACTIONS` 内，非法返回 400）
+
+### 并发缺陷（自测中发现并修复）
+
+首次自测 10 次并发 `setMark` 报 `EPERM`：tmp 名只用 `pid`，同进程并发写者共用同一 tmp 文件。
+修法：tmp 名加 `pid + 时间戳36进制 + 随机串`，并加**进程内写队列**把「读-改-写」串起来。
+修复后 10 次并发写 JSON 合法、条数正确（2 原有 + 10 新增一条不漏）、tmp 零残留。
+
+### check.mjs
+
+第 **17（seam schema 版本一致）**、**18（marks 原子写）** 从 SKIP 转为 PASS：
+18 项全过、0 SKIP。
+
+---
+
 ## [0.12.1] - 2026-11-08
 
 **主题：修「面板内视频拖不动进度条」+ 两个回归。**
