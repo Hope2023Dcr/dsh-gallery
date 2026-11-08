@@ -58,7 +58,11 @@
     "media-gallery",
     "video-preview",
     "audio-preview",
-    "range-seek"
+    "range-seek",
+    "feedback",
+    "decision-draft",
+    "human-in-the-loop",
+    "annotation"
   ],
   "publishConfig": {
     "access": "public",
