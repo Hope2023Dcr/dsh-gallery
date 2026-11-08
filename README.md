@@ -6,7 +6,12 @@
 >
 > 这个插件把产出目录变成右侧栏里的**实时画廊**：图片生成就可见、文件点开就预览、
 > 视频音频能在面板里直接播放并拖进度条，
-> **让你在任务进行中就能校验和干预，而不是结束后才知道做错了。**
+ > **让你在任务进行中就能看到产出、当场校验，而不是结束后才发现做错了。**
+>
+> ⚠️ **能力边界**：目前能做的是**看见 + 判断 + 处置**
+> （隐藏 / 删除 / 定位 / 预览 / 截帧）；
+> **把「这张是定稿」的结论回传给主线任务，还没有做**（见路线图）。
+> 「实时看见」已经能用；「回传干预」是下一步。
 
 [![Version](https://img.shields.io/badge/version-0.11.0-blue.svg)](#)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -203,8 +208,11 @@ github:Hope2023Dcr/dsh-gallery
 > 想锁定版本（推荐，避免仓库更新导致行为变化）：
 >
 > ```
-> git+https://github.com/Hope2023Dcr/dsh-gallery.git#03c05fb324aeca02cbf0b4bafff9542b013f212b
+> git+https://github.com/Hope2023Dcr/dsh-gallery.git#a0dfb00b12a4972a0cc4ca50888f451cec0e3c5f
 > ```
+
+> 上面那个 commit 对应 **v0.11.0**（含音视频画廊、HTTP Range 播放、三栏分类）。
+> **更推荐直接用 npm**（`npm i dsh-gallery`）—— 版本号跟着 `latest` 走，不用每次手工核对哈希。
 
 > ⚠️ 这种方式需要**能访问 GitHub**。DSH 的「国内镜像」只代理 npm 包，不代替 GitHub 下载。
 
@@ -346,9 +354,25 @@ config:
 | **不执行任何文件** | 不运行脚本、不打开可执行文件、不解压压缩包。唯一的 `spawn` 是调起资源管理器定位（`explorer.exe /select`） |
 | **删除操作** | 三层保护：前端二次确认 → API 强制 `confirm: true` → 路径越界校验（`isInside(root)`） |
 | **路径穿越防护** | 所有文件操作都经 `isInside(root, absolute)` 校验，只允许在扫描目录内 |
-| **HTTP 路由** | 单一 `POST /api/dsh-gallery`，`op` 区分动作；不暴露任意文件读取接口 |
+| **HTTP 路由** | `POST /api/dsh-gallery`（走 DSH `/api` 网关，需认证）负责列表与操作；另有**一条独立 `GET/HEAD` 媒体路由**专供 `<video>`/`<audio>`（详见下方「媒体路由的安全边界」） |
 
 **删文件是唯一不可逆操作**，所以做了三层保护；隐藏只是从列表移除，文件不动。
+
+#### 媒体路由的安全边界
+
+音视频播放需要浏览器能直接 `GET` 一个 URL（`<video src>` 无法发 POST），
+所以 **v0.11.0 新增了一条独立的媒体路由**。它**不属于 `/api` 网关、不经过 DSH 的网关认证**，
+因此该路由自己做了三道防护：
+
+| 防护 | 做法 | 不做的后果 |
+|---|---|---|
+| **① 只读** | 只接受 `GET` / `HEAD`，其余 405 | 可被当作写入跳板 |
+| **② 跨站拒绝** | `Sec-Fetch-Site: cross-site` 或 `Origin` 与 `Host` 不匹配 → 403 | 任意网页都能盗读本机产出 |
+| **③ 路径白名单** | 解析后必须落在扫描的 `roots` 内（`isInside`），`..` 无法越界 | 能读磁盘任意文件 |
+| 附带 | `X-Content-Type-Options: nosniff` | 浏览器可能把内容当 HTML 执行 |
+
+> 这三道是**必需的**，因为路由绕过了网关认证。若在代码里看到这条路由却没有校验，
+> 那是缺陷不是设计。
 
 ---
 
