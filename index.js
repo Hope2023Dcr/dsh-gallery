@@ -1242,6 +1242,9 @@ function buildGroups(summary, maxPerGroup = 120, currentSessionId = '') {
       height: item.height ?? null,
       size: item.size ?? 0,
       name: item.name ?? item.relPath.split('/').pop(),
+      // 客户端卡片要靠这两个字段判断渲染类型（v0.10.1）
+      extension: item.extension ?? ('.' + item.relPath.split('/').pop().split('.').pop().toLowerCase()),
+      ...(item.mediaType !== undefined ? { mediaType: item.mediaType } : {}),
     })
     if (item.sessionId === null && item.mtime > g.createdAt) g.createdAt = item.mtime
   }
