@@ -8,7 +8,7 @@
 > 视频音频能在面板里直接播放并拖进度条，
 > **让你在任务进行中就能校验和干预，而不是结束后才知道做错了。**
 
-[![Version](https://img.shields.io/badge/version-0.10.6-blue.svg)](#)
+[![Version](https://img.shields.io/badge/version-0.11.0-blue.svg)](#)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](#技术说明给想改代码的人)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#兼容性)
@@ -90,13 +90,15 @@
 |---|---|
 | 点整张卡片 | 在面板内弹出播放器 |
 | 视频卡片 | 显示**首帧缩略图**（进入视口才抽帧，避免一次解码几十个视频） |
-| 播放器里拖进度条 | ✅ **可用** —— ≤ 60 MB 的文件会完整载入内存（blob），浏览器原生支持任意 seek |
+| **拖进度条** | ✅ **任意大小的文件都能拖** —— 宿主用 HTTP Range（206）分片下发 |
+| **边下边播** | ✅ 不预先载入整个文件，点开几乎立即开始 |
 | 播放器里「📷 截取当前帧」 | 把当前画面存成 PNG，文件名带时间码（如 `片子_00-12-34.png`） |
-| 大文件（> 60 MB） | 不载入面板，显示「文件较大」+「▶ 用系统播放器打开」/「📂 打开所在文件夹」两个按钮 |
+| 浏览器解不了格式 | 显示提示 +「▶ 用系统播放器打开」/「📂 打开所在文件夹」两个按钮 |
 
-> **为什么大文件不内嵌播放**：DSH 的 HTTP 通道不支持 `Range` 请求（官方 `/api/file` 也只返 200），
-> 没有 Range 就无法边下边播、拖进度条。所以 ≤ 60 MB 走 blob（完整数据在内存，能 seek），
-> 超过则引导用系统播放器 —— 那里原生支持拖动。
+> **技术说明**：媒体路由用 `ctx.webServer.register` 注册（Node 原生 `req`/`res`），
+> 支持 `Range: bytes=...` 的常规区间、开放区间、后缀区间，以及 416 不可满足。
+> 这样浏览器才能边下边播、任意 seek，**127 MB 的视频也能在面板里直接拖动查看**，
+> 内存占用与文件大小无关（流式下发）。
 >
 > 体积上限默认 200 MB，可用 `maxMediaBytes` 调整。
 
