@@ -1327,6 +1327,74 @@ async function resolveReadable(roots, relPath, opts, byteCap) {
   return null
 }
 
+/**
+ * 解析 `Range: bytes=...` 头。
+ * 支持：常规 (0-99)、开放 (100-)、后缀 (-50)、不可满足 (416)。
+ * 多区间取第一个（HTTP 规范允许）。
+ */
+function parseMediaRange(raw, size) {
+  if (raw === undefined) return null
+  const m = /^bytes=(.+)$/i.exec(String(raw).trim())
+  if (!m) return null
+  const spec = m[1].split(',')[0].trim()
+  if (spec === '') return null
+  if (spec.startsWith('-')) {
+    const suffix = Number(spec.slice(1))
+    if (!Number.isFinite(suffix) || suffix <= 0) return null
+    if (suffix >= size) return { start: 0, end: size - 1 }
+    return { start: size - suffix, end: size - 1 }
+  }
+  const dash = spec.indexOf('-')
+  if (dash === -1) return null
+  const startText = spec.slice(0, dash)
+  const endText = spec.slice(dash + 1)
+  const start = startText === '' ? 0 : Number(startText)
+  const end = endText === '' ? size - 1 : Number(endText)
+  if (!Number.isInteger(start) || start < 0 || !Number.isInteger(end)) return null
+  if (start >= size) return { unsatisfiable: true }
+  return { start, end: Math.min(end, size - 1) }
+}
+
+/**
+ * 用 Node 原生 res 输出一个媒体文件，支持 HTTP Range。
+ * 这是 206 能工作的关键：req/res 直写，不经过 DSH 的 fetch 网关。
+ */
+function serveMedia(req, res, filePath, size, type) {
+  const headers = {
+    'content-type': type,
+    'accept-ranges': 'bytes',
+    'cache-control': 'no-cache',
+    'x-content-type-options': 'nosniff',
+  }
+  const range = parseMediaRange(req.headers.range, size)
+
+  if (range !== null && range.unsatisfiable === true) {
+    res.writeHead(416, { ...headers, 'content-range': `bytes */${size}` })
+    res.end()
+    return
+  }
+
+  if (range !== null) {
+    const { start, end } = range
+    res.writeHead(206, {
+      ...headers,
+      'content-range': `bytes ${start}-${end}/${size}`,
+      'content-length': String(end - start + 1),
+    })
+    if (req.method === 'HEAD') { res.end(); return }
+    const stream = createReadStream(filePath, { start, end })
+    stream.on('error', () => res.destroy())
+    stream.pipe(res)
+    return
+  }
+
+  res.writeHead(200, { ...headers, 'content-length': String(size) })
+  if (req.method === 'HEAD') { res.end(); return }
+  const stream = createReadStream(filePath)
+  stream.on('error', () => res.destroy())
+  stream.pipe(res)
+}
+
 function contentTypeFor(ext) {
   if (ext === '.png') return 'image/png'
   if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg'
@@ -1359,7 +1427,7 @@ function json(body, status) {
 /**
  * Host 插件入口。仅依赖 connection（exact Fetch 路由）；缺失时插件不激活而不是抛错。
  */
-export const inject = ['connection']
+export const inject = ['connection', 'webServer']
 
 export function apply(ctx, config) {
   /**
@@ -1368,69 +1436,87 @@ export function apply(ctx, config) {
    * POST 路由不行（媒体元素不会发 POST），所以这里单独注册一个 GET 路径。
    * 支持 Range，浏览器才能拖进度条、边播边下。
    */
+  /**
+   * 媒体直链（v0.11.0）：用 ctx.webServer.register 注册 Node 原生路由。
+   *
+   * 为什么从 connection.fetch 换成 webServer？
+   *   - fetch 那套是 Web Fetch API（Request/Response），DSH 的网关层不透传 206，
+   *     <video src> 拿不到 Range，进度条拖不动（实测确认）。
+   *   - webServer 给的是 Node 原生 (req, res)，可以 res.writeHead(206) + createReadStream，
+   *     真正的分片流式下发。探针已实证：HEAD 200 / Range 206 / 中段 206 / 后缀 206 全部通过。
+   *
+   * 安全（三道防护，缺一不可）：
+   *   1. 路径必须落在扫描 roots 白名单内（isInside）—— 否则能读任意文件
+   *   2. 跨站请求拒绝（sec-fetch-site / origin）
+   *   3. 只允许 GET / HEAD
+   */
   ctx.effect(
-    () =>
-      ctx.connection.fetch.register({
-        path: MEDIA_ROUTE,
-        // 必须同时支持 HEAD（与官方 /api/file 一致）：浏览器加载媒体前会先发 HEAD 探测，
-        // 只给 GET 会让 <video>/<audio> 直接判定「无法解码」。
-        methods: ['GET', 'HEAD'],
-        requestBody: 'buffered',
-        fetch: async (request) => {
-          // 媒体直链：GET / HEAD，**只用 200 + 流式**，不用 206。
-          //
-          // 实测结论（2026-11-08）：
-          //  - 小文件（1.1MB, 200 整块）能播；
-          //  - 大文件（127MB, 206 Range）报「浏览器无法解码」；
-          //  → 说明 DSH 的 exact fetch 层不透传 206 / content-range，或对 Range 响应有兼容问题。
-          //  所以统一返回 200 + Content-Length + 流式 body（内存占用恒定，不读满 127MB）。
-          const resolved = resolveOptions(config)
-          const isHead = request.method === 'HEAD'
-          const baseHeaders = {
-            'cache-control': 'private, no-store',
-            'x-content-type-options': 'nosniff',
-            'accept-ranges': 'none',
+    () => ctx.webServer.register({
+      kind: 'prefix',
+      path: MEDIA_ROUTE,
+      handler: async (req, res) => {
+        // ---- 防护 3：只读 ----
+        if (req.method !== 'GET' && req.method !== 'HEAD') {
+          res.writeHead(405, { 'content-type': 'text/plain; charset=utf-8' })
+          res.end('method not allowed')
+          return
+        }
+        // ---- 防护 2：拒绝跨站 ----
+        const site = req.headers['sec-fetch-site']
+        if (typeof site === 'string' && site === 'cross-site') {
+          res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' })
+          res.end('cross-site request refused')
+          return
+        }
+        const origin = req.headers.origin
+        if (typeof origin === 'string' && origin !== '') {
+          let originHost = ''
+          try { originHost = new URL(origin).host } catch { originHost = '' }
+          const host = req.headers.host
+          if (originHost !== '' && typeof host === 'string' && originHost !== host) {
+            res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('origin mismatch')
+            return
           }
-          let relPath = ''
-          try {
-            relPath = new URL(request.url).searchParams.get('path') ?? ''
-          } catch {
-            relPath = ''
-          }
+        }
+
+        try {
+          const url = new URL(req.url ?? '/', 'http://dsh.internal')
+          const relPath = url.searchParams.get('path') ?? ''
           if (relPath === '') {
-            return new Response(isHead ? null : 'missing path', { status: 400, headers: baseHeaders })
+            res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('missing path')
+            return
           }
-          // 媒体用 maxMediaBytes（200MB），不是图片的 64MB —— 否则大视频会被判不可读
+          const resolved = resolveOptions(config)
+          // ---- 防护 1：路径白名单 ----
           const found = await resolveReadable(resolved.roots, relPath, resolved, resolved.maxMediaBytes)
           if (found === null) {
-            return new Response(isHead ? null : 'not found', { status: 404, headers: baseHeaders })
+            res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('not found')
+            return
           }
           let stat
           try {
             stat = await fsp.stat(found.absolute)
           } catch (error) {
-            return new Response(isHead ? null : String(error?.message ?? error), { status: 500, headers: baseHeaders })
+            res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end(String(error?.message ?? error))
+            return
           }
           const type = contentTypeFor(path.extname(found.absolute).toLowerCase())
-          const totalSize = stat.size
-          const headers = {
-            ...baseHeaders,
-            'content-type': type,
-            'content-length': String(totalSize),
+          serveMedia(req, res, found.absolute, stat.size, type)
+        } catch (error) {
+          if (!res.headersSent) {
+            res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end(String(error?.message ?? error))
+          } else {
+            res.destroy()
           }
-          if (isHead) {
-            return new Response(null, { status: 200, headers })
-          }
-          // 流式返回：createReadStream → Readable.toWeb，内存占用与文件大小无关
-          try {
-            const stream = createReadStream(found.absolute)
-            return new Response(Readable.toWeb(stream), { status: 200, headers })
-          } catch (error) {
-            return new Response(String(error?.message ?? error), { status: 500, headers: baseHeaders })
-          }
-        },
-      }),
-    [],
+        }
+      },
+    }),
+    'dsh-gallery: media range route',
   )
 
   ctx.effect(
