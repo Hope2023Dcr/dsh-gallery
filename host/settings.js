@@ -178,7 +178,9 @@ export async function writeSettingsFile(settingsFile, patch) {
   const current = readSettingsFile(settingsFile)
   const next = { ...current, ...patch }
   await fsp.mkdir(path.dirname(settingsFile), { recursive: true })
-  await fsp.writeFile(settingsFile, JSON.stringify(next, null, 2), 'utf8')
+  const tmp = settingsFile + '.tmp-' + String(process.pid)
+  await fsp.writeFile(tmp, JSON.stringify(next, null, 2))
+  await fsp.rename(tmp, settingsFile)
   return next
 }
 
