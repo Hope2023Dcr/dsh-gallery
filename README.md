@@ -11,7 +11,7 @@
 > 📌 **当前是 `0.x` 开发预览版**：核心能力（实时看见、当场校验、就地处置）已可用；
 > 「把结论回传给主线任务」还没做，列在[路线图](#路线图)里。
 
-[![Version](https://img.shields.io/badge/version-0.11.2-blue.svg)](#)
+[![Version](https://img.shields.io/badge/version-0.12.1-blue.svg)](#)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](#技术说明给想改代码的人)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#兼容性)
@@ -93,15 +93,26 @@
 |---|---|
 | 点整张卡片 | 在面板内弹出播放器 |
 | 视频卡片 | 显示**首帧缩略图**（进入视口才抽帧，避免一次解码几十个视频） |
-| **拖进度条** | ✅ **任意大小的文件都能拖** —— 宿主用 HTTP Range（206）分片下发 |
-| **边下边播** | ✅ 不预先载入整个文件，点开几乎立即开始 |
+| **拖进度条** | ✅ **任意大小的文件都能拖** —— 面板内播放走 blob（整包载入后交给浏览器，可任意 seek） |
+| **点开到可播** | ✅ 1.1 MB 视频与 96.5 秒音频约 250 ms；**127 MB 实测 502 ms** |
 | 播放器里「📷 截取当前帧」 | 把当前画面存成 PNG，文件名带时间码（如 `片子_00-12-34.png`） |
 | 浏览器解不了格式 | 显示提示 +「▶ 用系统播放器打开」/「📂 打开所在文件夹」两个按钮 |
 
-> **技术说明**：媒体路由用 `ctx.webServer.register` 注册（Node 原生 `req`/`res`），
-> 支持 `Range: bytes=...` 的常规区间、开放区间、后缀区间，以及 416 不可满足。
-> 这样浏览器才能边下边播、任意 seek，**127 MB 的视频也能在面板里直接拖动查看**，
-> 内存占用与文件大小无关（流式下发）。
+> **技术说明：媒体走双通道**
+>
+> 1. **独立 Range 路由**（`ctx.webServer.register`，Node 原生 `req`/`res`）：
+>    支持 `Range: bytes=...` 的常规区间、开放区间、后缀区间，以及 416 不可满足。
+>    用于**视频首帧缩略图抽取**、直链读取与其他需要分段读取的场景。
+> 2. **面板内播放走 `/api` 网关的 `raw` + blob**：`POST {op:'raw'}` 取完整字节，
+>    `URL.createObjectURL(blob)` 交给 `<video>` / `<audio>`。
+>
+> **为什么播放要单独走 blob**：DSH 桌面宿主在转发 Host 响应时会**剥掉
+> `Content-Length`**（见 `app.asar` 的 `lib/main.js`，`WITHHELD_RESPONSE_HEADERS`），
+> Chromium 因此拿不到文件总长度，`<video>.seekable` 恒为 `[0,0]` ——
+> 能播但进度条拖不动。blob 是完整数据在内存，Chromium 知道确切大小，`seekable` 覆盖全长。
+>
+> **代价**：播放时**整包载入内存**（等于文件大小）。实测 127 MB 用时 502 ms；
+> GB 级文件暂未做大小分档，仍会走 blob。
 >
 > 体积上限默认 200 MB，可用 `maxMediaBytes` 调整。
 
@@ -206,10 +217,10 @@ github:Hope2023Dcr/dsh-gallery
 > 想锁定版本（推荐，避免仓库更新导致行为变化）：
 >
 > ```
-> git+https://github.com/Hope2023Dcr/dsh-gallery.git#a0dfb00b12a4972a0cc4ca50888f451cec0e3c5f
+> git+https://github.com/Hope2023Dcr/dsh-gallery.git#__COMMIT_SHA__
 > ```
 
-> 上面那个 commit 对应 **v0.11.0**（含音视频画廊、HTTP Range 播放、三栏分类）。
+> 上面那个 commit 对应 **v0.12.1**（含 S1/S2 结构重构、blob 播放可拖进度条）。
 > **更推荐直接用 npm**（`npm i dsh-gallery`）—— 版本号跟着 `latest` 走，不用每次手工核对哈希。
 
 > ⚠️ 这种方式需要**能访问 GitHub**。DSH 的「国内镜像」只代理 npm 包，不代替 GitHub 下载。
@@ -352,7 +363,7 @@ config:
 | **不执行任何文件** | 不运行脚本、不打开可执行文件、不解压压缩包。唯一的 `spawn` 是调起资源管理器定位（`explorer.exe /select`） |
 | **删除操作** | 三层保护：前端二次确认 → API 强制 `confirm: true` → 路径越界校验（`isInside(root)`） |
 | **路径穿越防护** | 所有文件操作都经 `isInside(root, absolute)` 校验，只允许在扫描目录内 |
-| **HTTP 路由** | `POST /api/dsh-gallery`（走 DSH `/api` 网关，需认证）负责列表与操作；另有**一条独立 `GET/HEAD` 媒体路由**专供 `<video>`/`<audio>`（详见下方「媒体路由的安全边界」） |
+| **HTTP 路由** | `POST /api/dsh-gallery`（走 DSH `/api` 网关，需认证）负责列表与操作；另有**一条独立 `GET/HEAD` 媒体路由**用于缩略图抽取与分段读取（详见下方「媒体路由的安全边界」）。**面板内播放的整包读取也走 `/api` 网关的 `raw` 分支**，不经 `dsh-app://` 媒体管线 |
 
 **删文件是唯一不可逆操作**，所以做了三层保护；隐藏只是从列表移除，文件不动。
 
@@ -425,6 +436,28 @@ DSH 生态里有几类「产出管理」插件，容易混淆。**本插件的�
 两者**互补而非重复**：想看过程用这个，想归档历史用那个。
 
 ---
+
+## 开发：改源码后必须构建
+
+`client.js` 是**构建产物**，改源码后不构建，改动不会生效：
+
+```bash
+npm run build      # 生成 client.js（并同步生成 host/protocol.js）
+npm run build -- --check   # 只读比对，产物与源码有漂移会报错
+```
+
+源码在 `src/`：
+
+| 路径 | 内容 |
+|---|---|
+| `src/client/0X-*.js` | 13 个分片（主容器、组件、工具） |
+| `src/client/styles.css` | 面板样式（构建时内联进 client） |
+| `src/shared/protocol.js` | **协议单一真源**：ROUTE / MEDIA_ROUTE / 扩展名表 |
+| `src/build-manifest.json` | 分片顺序与产物配置 |
+
+> **为什么必须构建**：DSH 加载器要求 `client.js` 是**单文件、单个
+> `__ModuleLoader__.load`、无 ESM import/export** —— 源码可以分模块，但产物必须合并。
+> Host 侧不同：Node 原生支持多文件，所以 `host/` 是源码即产物，零构建。
 
 ## 技术说明（给想改代码的人）
 
