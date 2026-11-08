@@ -19,6 +19,14 @@ import {
 } from './settings.js'
 import { scanGallery } from './scan.js'
 import { resolveReadable, serveMedia, contentTypeFor } from './media.js'
+import { MARK_ACTIONS, readMarks, writeMarks, setMark } from './marks.js'
+
+/** reveal 相关的排查日志（失败/异常时便于定位，不影响功能）。 */
+function LOG_RESOLVE(label, detail) {
+  if (process.env.DSH_GALLERY_DEBUG === '1') {
+    try { console.info('dsh-gallery ' + label, JSON.stringify(detail)) } catch { /* 忽略 */ }
+  }
+}
 
 /** 统一 JSON 响应。 */
 function json(body, status) {
@@ -479,156 +487,170 @@ export function registerOpsRoute(ctx, config) {
 
           // 在文件管理器中定位该文件（仅 Windows）
 
+          // ---- 标记（S3-a）----
+          if (op === 'getMarks') {
+            const settingsFile = resolveOptions(config).settingsFile
+            const stored = await readMarks(settingsFile)
+            return json({ ok: true, marks: stored.marks })
+          }
+
+          if (op === 'marks') {
+            const relPath = String(body?.path ?? '')
+            if (relPath === '') {
+              return json({ ok: false, error: { code: 'bad-request', message: '缺少 path' } }, 400)
+            }
+            // mark 为 null 表示清除；否则校验 action 合法性
+            const mark = body?.mark
+            if (mark !== null && mark !== undefined) {
+              if (typeof mark !== 'object' || !MARK_ACTIONS.includes(mark.action)) {
+                return json({ ok: false, error: { code: 'bad-request', message: 'action 不合法' } }, 400)
+              }
+            }
+            try {
+              const settingsFile = resolveOptions(config).settingsFile
+              const next = await setMark(settingsFile, relPath, mark === undefined ? null : mark)
+              return json({ ok: true, marks: next })
+            } catch (error) {
+              return json({ ok: false, error: { code: 'marks-write-failed', message: String(error?.message ?? error) } }, 500)
+            }
+          }
+
           if (op === 'reveal') {
+            /**
+             * 在资源管理器里定位 / 用系统程序打开。
+             *
+             * ⚠️ 历史坑（v0.13.5 及以前，「打开所在文件夹」一律打开「文档」）：
+             *   旧实现 spawn('cmd.exe', ['/c','start','','explorer.exe', `/select,"${abs}"`])
+             *   手写的双引号经 Node spawn 的自动 quoting + cmd start 两层转义后
+             *   **残留在路径里**，explorer 实际收到 `/select,"G:\...png"` —— 引号成了字面字符，
+             *   解析失败 → 回退打开默认位置「文档」。与文件名/类型/空格无关，三类资产全中。
+             *
+             * 修法：**不再手工加引号、不经 cmd 中转**，直接 spawn 目标程序，
+             *   让 Node 自己处理空格与中文的 quoting（实测 argv 干净）。
+             *
+             * 另：不再用退出码当「已定位到」的证据 ——
+             *   explorer 参数无效时 cmd 照样退出 0，那是**假成功**。
+             *   现在语义是「命令已发出」，返回体带 absolute / via / platform 供排查。
+             */
+            LOG_RESOLVE('reveal: 开始', { path: body?.path, mode: body?.mode })
 
-            // reveal 要能定位大文件，所以用媒体上限（这里取两者较大值）
-
-            const capForReveal = Math.max(resolved.maxImageBytes, resolved.maxMediaBytes)
-
-            const found = await resolveReadable(resolved.roots, body?.path, resolved, capForReveal)
-
+            // 定位文件不该受大小限制 —— 只校验存在 + 是否文件 + 路径越界。
+            // 传 Infinity 让 resolveReadable 的 size 检查失效（它只跳过 size > cap 的项）。
+            const found = await resolveReadable(resolved.roots, body?.path, resolved, Number.MAX_SAFE_INTEGER)
             if (found === null) {
-
               return json({ ok: false, error: { code: 'not-readable', message: '文件不存在或不可读' } }, 404)
-
             }
 
-            // mode: 'select' 在文件夹里选中文件；'play' 尝试用默认程序打开（对媒体更直接）
-
+            // mode: 'select' 在文件夹里选中文件；'play' 用默认程序打开（对媒体更直接）
             const mode = body?.mode === 'play' ? 'play' : 'select'
+            const absolute = found.absolute
 
             try {
-
               const { spawn } = await import('node:child_process')
-
               let child
+              let via
+              let command
 
               if (process.platform === 'win32') {
-
                 if (mode === 'play') {
-
-                  // cmd start：让 shell 按文件关联打开。空字符串是窗口标题占位，
-
-                  // 不占位的话中文路径会被当作窗口标题。
-
-                  child = spawn('cmd.exe', ['/c', 'start', '', found.absolute], {
-
-                    detached: true, stdio: 'ignore', windowsHide: true,
-
+                  // 直接 spawn 文件本身，由 shell 按文件关联打开 —— 不经 cmd start。
+                  // detached:true 让宿主不等待；shell 会交给关联程序。
+                  via = 'win32-file-association'
+                  command = absolute
+                  // 同样不要 windowsHide（否则播放器窗口也可能不显示）
+                  child = spawn(absolute, [], {
+                    detached: true, stdio: 'ignore',
                   })
-
                 } else {
-
-                  // explorer /select 在直接 spawn 时对含中文的路径会以退出码 1 失败（已实测）。
-
-                  // 改走 cmd /c start "" explorer.exe /select,"<path>"：让 cmd 负责引号与编码，
-
-                  // 这是 Windows 上打开并选中中文路径文件的稳定写法。
-
-                  child = spawn('cmd.exe', [
-
-                    '/c', 'start', '',
-
-                    'explorer.exe', `/select,"${found.absolute}"`,
-
-                  ], {
-
-                    detached: true, stdio: 'ignore', windowsHide: true,
-
+                  // explorer /select：**路径不加引号**，交给 Node 的 spawn 自动 quoting。
+                  // argv 实测为 `/select,G:\DSH产出\...\x.png`（干净，无字面引号）。
+                  via = 'win32-explorer-select'
+                  command = `explorer.exe /select,${absolute}`
+                  // ⚠️ **不要加 windowsHide**：实测它会抑制 explorer 的窗口显示
+                  // （变量隔离：windowsHide:true → 窗口 0→0 不开；false/不设 → 0→1 正常）。
+                  // reveal 的目的就是让用户看见窗口，隐藏它等于没做。
+                  child = spawn('explorer.exe', [`/select,${absolute}`], {
+                    detached: true, stdio: 'ignore',
                   })
-
                 }
-
+              } else if (process.platform === 'darwin') {
+                if (mode === 'play') {
+                  via = 'darwin-open'
+                  command = `open ${absolute}`
+                  child = spawn('open', [absolute], { detached: true, stdio: 'ignore' })
+                } else {
+                  // macOS 用 -R 才能真正在 Finder 里选中文件（xdg/open 目录做不到选中）
+                  via = 'darwin-open-reveal'
+                  command = `open -R ${absolute}`
+                  child = spawn('open', ['-R', absolute], { detached: true, stdio: 'ignore' })
+                }
               } else {
-
-                child = spawn('xdg-open', [mode === 'play' ? found.absolute : path.dirname(found.absolute)], {
-
-                  detached: true, stdio: 'ignore',
-
-                })
-
+                // Linux: 没有通用的「选中文件」协议，只能打开所在目录
+                via = mode === 'play' ? 'linux-xdg-open-file' : 'linux-xdg-open-dir'
+                const target = mode === 'play' ? absolute : path.dirname(absolute)
+                command = `xdg-open ${target}`
+                child = spawn('xdg-open', [target], { detached: true, stdio: 'ignore' })
               }
 
-              // 不要 unref 立即丢：先观察 800ms 内的错误与退出码，异常时报给前端
-
+              // 观察 800ms 内的 spawn 错误；**不拿退出码当成功证据**
               const outcome = await new Promise((resolve) => {
-
                 let settled = false
-
                 const done = (payload) => {
-
                   if (settled) return
-
                   settled = true
-
                   resolve(payload)
-
                 }
-
                 child.on('error', (error) => done({
-
-                  ok: false, code: 'spawn-error', message: String(error?.message ?? error),
-
+                  ok: false,
+                  code: 'spawn-error',
+                  message: String(error?.message ?? error),
                 }))
-
                 child.on('exit', (code, signal) => {
-
-                  // explorer 成功时通常很快退出（它把活交给已有 explorer 进程）
-
-                  if (mode === 'play') {
-
-                    // cmd start 退出码 0 表示已交给关联程序
-
-                    done(code === 0 || code === null
-
-                      ? { ok: true, exitCode: code, signal }
-
-                      : { ok: false, code: 'exit-nonzero', message: `exit ${code}`, exitCode: code })
-
-                  } else {
-
-                    // 现在 select 也走 cmd start，退出码 0 表示命令已被接受
-
-                    done(code === 0 || code === null
-
-                      ? { ok: true, exitCode: code, signal }
-
-                      : { ok: false, code: 'select-exit-nonzero', message: `cmd start 退出码 ${code}`, exitCode: code })
-
-                  }
-
+                  // 退出码只作为附加信息回报；explorer/cmd/open 都会把活交出去后立即退出，
+                  // 退出码并不能证明「已定位到文件」。真正的验证由真机做（看窗口）。
+                  done({ ok: true, exitCode: code, signal })
                 })
-
-                setTimeout(() => done({ ok: true, note: 'assumed-ok-after-800ms' }), 800)
-
+                setTimeout(() => done({ ok: true, note: 'assumed-dispatched-after-800ms' }), 800)
               })
 
-              if (child !== undefined && typeof child.unref === 'function' && outcome.ok) {
-
-                try { child.unref() } catch {}
-
+              if (child !== undefined && typeof child.unref === 'function') {
+                try { child.unref() } catch { /* 忽略 */ }
               }
 
               if (!outcome.ok) {
-
-                return json({ ok: false, error: { code: outcome.code, message: outcome.message, mode }, detail: outcome }, 500)
-
+                return json({
+                  ok: false,
+                  error: {
+                    code: outcome.code ?? 'reveal-failed',
+                    message: outcome.message ?? '命令未发出',
+                    mode, via, command, absolute,
+                  },
+                }, 500)
               }
 
-              return json({ ok: true, mode, detail: outcome })
-
-            } catch (error) {
-
+              // 成功语义 = 命令已发出；把 absolute / via / command 一并返回便于排查
               return json({
-
+                ok: true,
+                mode,
+                via,
+                platform: process.platform,
+                absolute,
+                basename: path.basename(absolute),
+                dirname: path.dirname(absolute),
+                command,
+                detail: outcome,
+              })
+            } catch (error) {
+              return json({
                 ok: false,
-
-                error: { code: 'reveal-failed', message: String(error?.message ?? error), mode },
-
+                error: {
+                  code: 'reveal-failed',
+                  message: String(error?.message ?? error),
+                  mode,
+                },
+                absolute,
               }, 500)
-
             }
-
           }
 
 
