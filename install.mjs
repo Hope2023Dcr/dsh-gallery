@@ -33,6 +33,7 @@ export const REQUIRED = [
   'host/http.js', 'host/constants.js', 'host/settings.js', 'host/scan.js',
   'host/session.js', 'host/classify.js', 'host/groups.js', 'host/media.js',
   'host/fsutil.js', 'host/session-index.js', 'host/protocol.js',
+  'host/marks.js', 'host/feedback-text.js',
 ]
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
