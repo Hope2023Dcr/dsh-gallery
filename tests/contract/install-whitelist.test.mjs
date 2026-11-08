@@ -45,8 +45,12 @@ test('通配目录按预期展开，且不会把开发目录装进去', () => {
   assert.ok(!plan.missing.includes('host/*.js'))
   const hostFiles = plan.files.filter((f) => f.startsWith('host/'))
   // S2 后 host/ 有 11 个 .js：10 个手写模块 + 1 个 protocol.js（由 build.mjs 从 src/shared 生成）
-  assert.equal(hostFiles.length, 11, 'host/ 应展开为 11 个 .js 文件（10 模块 + protocol.js 生成物）')
+  // S3-a 后 host/ 有 13 个 .js：9 个手写模块 + marks.js（S3-a 新增）
+  // + protocol.js / feedback-text.js（两个构建产物）
+  assert.equal(hostFiles.length, 13, 'host/ 应展开为 13 个 .js 文件')
   assert.ok(hostFiles.includes('host/protocol.js'), 'host/protocol.js 必须在白名单里')
+  assert.ok(hostFiles.includes('host/marks.js'), 'host/marks.js（S3-a 标记存储）必须在白名单里')
+  assert.ok(hostFiles.includes('host/feedback-text.js'), 'host/feedback-text.js（S3-a 构建产物）必须在白名单里')
   assert.ok(hostFiles.includes('host/http.js'), 'host/http.js 必须在白名单里')
   assert.ok(hostFiles.includes('host/scan.js'))
   assert.ok(!plan.optionalMissing.includes('host/*.js'), 'host/ 已存在，不应算 optionalMissing')
