@@ -17,6 +17,8 @@ window.__ModuleLoader__.load({
     const VIEW_SIZE = 1600
     /** 可内联解码的图片扩展名（缩略图/查看器/原图模式共用一份定义）。 */
     const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']
+    /** 视频扩展名（客户端判断 mediaType 兜底用，与 Host 的 VIDEO_EXTS 保持一致）。 */
+    const VIDEO_EXTS_CLIENT = new Set(['.mp4', '.webm', '.mov', '.m4v', '.mkv', '.avi', '.ogv'])
     /** 判断某条目是否是图片（大小写不敏感）。 */
     function isImageItem(it) {
       const ext = String(it?.extension ?? '').toLowerCase()
@@ -3307,6 +3309,22 @@ ${absPath}
               ...item,
               name: item.name ?? item.relPath.split('/').pop(),
               extension: item.extension ?? ('.' + (item.relPath.split('.').pop() || '')),
+            }
+            // 音视频分组视图：必须走 MediaCard，否则会被当成图片卡片渲染（v0.10.1）
+            if (kind === 'media') {
+              return h(MediaCard, {
+                key: `${groupKey}:${item.relPath}`,
+                item: {
+                  ...enriched,
+                  // 分组摘要里可能没有 mediaType，按扩展名兜底推断
+                  mediaType: enriched.mediaType
+                    ?? (VIDEO_EXTS_CLIENT.has(enriched.extension) ? 'video' : 'audio'),
+                },
+                t,
+                absPath: buildAbsPath(data.root, item.relPath),
+                onPlay: (target) => setMediaPlaying(target),
+                onContextMenu: openContextMenu,
+              })
             }
             if (kind === 'file') {
               return h(FileCard, {
