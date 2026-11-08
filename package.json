@@ -1,8 +1,8 @@
 {
   "name": "dsh-gallery",
-  "version": "0.10.7",
+  "version": "0.11.0",
   "type": "module",
-  "description": "产出画廊：解决 DSH 只在任务结尾才列出产出、过程不可见的问题。实时监控产出目录，图片自动刷新、文件原生预览、音视频面板内播放（可拖进度条、可截帧），任务进行中即可校验纠正。",
+  "description": "产出画廊：解决 DSH 只在任务结尾才列出产出、过程不可见的问题。实时监控产出目录，图片自动刷新、文件原生预览、音视频面板内直接播放（支持 HTTP Range，任意大小都能拖进度条），还能一键截取视频当前帧，任务进行中即可校验纠正。",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Hope2023Dcr/dsh-gallery.git"
@@ -56,7 +56,8 @@
     "agent-tools",
     "media-gallery",
     "video-preview",
-    "audio-preview"
+    "audio-preview",
+    "range-seek"
   ],
   "publishConfig": {
     "access": "public",
