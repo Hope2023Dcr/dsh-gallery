@@ -217,7 +217,7 @@ github:Hope2023Dcr/dsh-gallery
 > 想锁定版本（推荐，避免仓库更新导致行为变化）：
 >
 > ```
-> git+https://github.com/Hope2023Dcr/dsh-gallery.git#__COMMIT_SHA__
+> git+https://github.com/Hope2023Dcr/dsh-gallery.git#297425930fc4b0b505901f7a03ccad3c1566bb9b
 > ```
 
 > 上面那个 commit 对应 **v0.12.1**（含 S1/S2 结构重构、blob 播放可拖进度条）。
