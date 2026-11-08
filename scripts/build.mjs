@@ -66,6 +66,18 @@ function buildFromManifest () {
   const shared = m.shared ? read(path.join(ROOT, m.shared)) : ''
   const styles = m.styles ? read(path.join(ROOT, m.styles)) : ''
 
+  // 多 shared 支持（S3-a）：sharedText 与 protocol 各自有注入占位与 Host 产物
+  const sharedList = Array.isArray(m.sharedList) ? m.sharedList : []
+  const loadedShared = sharedList.map((entry) => {
+    const src = read(path.join(ROOT, entry.source))
+    return {
+      ...entry,
+      source: src,
+      // 注入 client 时必须剥 export（client 不允许顶层 ESM 语句）
+      injectable: src.replace(/^export\s+/gm, ''),
+    }
+  })
+
   // shared/protocol.js 是 ESM，注入 client 时必须去掉 export 关键字，
   // 否则会违反「client.js 无顶层 import/export」的加载器约束。
   const injectable = shared.replace(/^export\s+/gm, '')
@@ -89,6 +101,10 @@ function buildFromManifest () {
       const escaped = styles.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$\{/g, '\\${')
       text = text.replace(styleMarker, escaped)
     }
+    for (const entry of loadedShared) {
+      const mk = entry.marker || `/*__${String(entry.name || 'SHARED').toUpperCase()}__*/`
+      if (text.includes(mk)) text = text.replace(mk, entry.injectable)
+    }
     parts.push(text)
   }
 
@@ -97,6 +113,14 @@ function buildFromManifest () {
     outputs.push({
       file: m.protocolOutput,
       content: '// GENERATED from ' + m.shared + ' — 请勿手改\n' + shared,
+    })
+  }
+  // 多 shared 的 Host 产物（S3-a 起）
+  for (const entry of loadedShared) {
+    if (entry.hostOutput === undefined) continue
+    outputs.push({
+      file: entry.hostOutput,
+      content: '// GENERATED from ' + entry.source_path + ' — 请勿手改\n' + entry.source,
     })
   }
 
