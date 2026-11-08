@@ -188,6 +188,43 @@ const AUDIO_EXTS = ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.oga', '.o
       mediaOpenExternal: '用系统播放器打开',
       mediaBlobSeekHint: '载入完成后可拖动进度条（宿主转发时丢了 Content-Length，直链无法 seek）',
       mediaOpenFolder: '打开所在文件夹',
+      ctxMarkSection: '标记（进反馈篮）',
+      ctxMarkApprove: '通过',
+      ctxMarkReject: '不要这张',
+      ctxMarkFinalize: '定为最终版',
+      ctxMarkRedo: '单维重做',
+      ctxMarkRegen: '选择性重生成',
+      ctxMarkReference: '设为参照',
+      feedbackTargetCurrent: '当前对话',
+      feedbackBasketTitle: '反馈篮',
+      feedbackBlockedForeign: '含其他会话条目，无法生成',
+      feedbackBlockedEmpty: '还没有标记',
+      feedbackBasketToggle: '反馈篮',
+      feedbackBasketToggleN: '反馈篮 · {n} 条',
+      feedbackBasketToggleHint: '打开/关闭反馈篮，可在此生成决策草稿',
+      feedbackBasketTitleN: '反馈篮 · {n} 条',
+      feedbackBasketEmpty: '还没有标记任何条目。在卡片上右键选择动作即可加入。',
+      feedbackTargetSession: '将发往会话：{title}',
+      feedbackForeignWarn: '有 {n} 条来自其他会话，不能一起提交（请先切到那个会话）。',
+      feedbackForeignWarnShort: '含其他会话的条目，已禁用提交',
+      feedbackEdit: '编辑',
+      feedbackEditTitle: '编辑：{name}',
+      feedbackReasonLabel: '理由（可选）',
+      feedbackChangeOnlyLabel: '只改（逗号分隔，可选）',
+      feedbackKeepLabel: '锁死不动（逗号分隔，可选）',
+      feedbackEditSave: '保存',
+      feedbackClear: '清空',
+      feedbackGenerateDraft: '生成决策草稿',
+      feedbackGenerating: '正在生成…',
+      feedbackGenerateHint: '生成草稿并写入输入框，由你确认后手动发送',
+      feedbackDraftReady: '草稿已写入输入框（未发送）。确认无误请自行发送。',
+      feedbackDraftInClipboard: '草稿已复制到剪贴板（输入框通道不可用），请手动粘贴。',
+      feedbackDraftFailed: '生成草稿失败',
+      feedbackChangeOnly: '只改',
+      feedbackReasonPlaceholder: '为什么（可选）',
+      feedbackChangePlaceholder: '只改哪些（逗号分隔，可选）',
+      feedbackKeepPlaceholder: '哪些锁死（逗号分隔，可选）',
+      feedbackMarked: '已标记',
       mediaOpenFolderHint: '在资源管理器里选中该文件',
       mediaOpenFailed: '打开失败：{message}',
       mediaOpenOk: '已交给系统处理',
@@ -352,6 +389,43 @@ const AUDIO_EXTS = ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.oga', '.o
       mediaOpenExternal: 'Open in system player',
       mediaBlobSeekHint: 'Seeking works once loaded (the desktop shell drops Content-Length, so a direct link cannot seek)',
       mediaOpenFolder: 'Open containing folder',
+      ctxMarkSection: 'Mark (to feedback basket)',
+      ctxMarkApprove: 'Approve',
+      ctxMarkReject: 'Reject',
+      ctxMarkFinalize: 'Finalize',
+      ctxMarkRedo: 'Redo one dimension',
+      ctxMarkRegen: 'Regenerate selection',
+      ctxMarkReference: 'Set as reference',
+      feedbackTargetCurrent: 'current conversation',
+      feedbackBasketTitle: 'Feedback basket',
+      feedbackBlockedForeign: 'Contains other-session items',
+      feedbackBlockedEmpty: 'Nothing marked yet',
+      feedbackBasketToggle: 'Feedback basket',
+      feedbackBasketToggleN: 'Basket · {n}',
+      feedbackBasketToggleHint: 'Toggle the feedback basket to generate a draft',
+      feedbackBasketTitleN: 'Feedback basket · {n} item(s)',
+      feedbackBasketEmpty: 'Nothing marked yet. Right-click a card and pick an action.',
+      feedbackTargetSession: 'Will be sent to session: {title}',
+      feedbackForeignWarn: '{n} item(s) belong to another session and cannot be sent together.',
+      feedbackForeignWarnShort: 'Contains items from another session — submit disabled',
+      feedbackEdit: 'Edit',
+      feedbackEditTitle: 'Edit: {name}',
+      feedbackReasonLabel: 'Reason (optional)',
+      feedbackChangeOnlyLabel: 'Only change (comma separated, optional)',
+      feedbackKeepLabel: 'Keep locked (comma separated, optional)',
+      feedbackEditSave: 'Save',
+      feedbackClear: 'Clear',
+      feedbackGenerateDraft: 'Generate decision draft',
+      feedbackGenerating: 'Generating…',
+      feedbackGenerateHint: 'Writes the draft into the composer; you confirm and send it yourself',
+      feedbackDraftReady: 'Draft written into the composer (not sent). Review it and send when ready.',
+      feedbackDraftInClipboard: 'Draft copied to clipboard (composer channel unavailable) — paste it manually.',
+      feedbackDraftFailed: 'Could not generate the draft',
+      feedbackChangeOnly: 'changeOnly',
+      feedbackReasonPlaceholder: 'Why (optional)',
+      feedbackChangePlaceholder: 'Only change (comma separated, optional)',
+      feedbackKeepPlaceholder: 'Keep locked (comma separated, optional)',
+      feedbackMarked: 'marked',
       mediaOpenFolderHint: 'Show the file in the file manager',
       mediaOpenFailed: 'Could not open: {message}',
       mediaOpenOk: 'Handed to the system',
@@ -649,11 +723,12 @@ const AUDIO_EXTS = ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.oga', '.o
 .dg-scopeBtn:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
 .dg-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dg-sub { color: var(--dsw-alias-label-secondary); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* ⚠️ 硬编码：宿主 --dsw-alias-* 变量为空字符串时不会启用 var() 的 fallback */
 .dg-btn {
   appearance: none;
-  border: 1px solid var(--dsw-alias-border-l1);
-  background: var(--dsw-alias-bg-layer-2);
-  color: var(--dsw-alias-label-primary);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: #2a2f38;
+  color: #e8eaed;
   border-radius: 6px;
   padding: 4px 10px;
   font-size: 12px;
@@ -661,9 +736,9 @@ const AUDIO_EXTS = ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.oga', '.o
   cursor: pointer;
   flex: 0 0 auto;
 }
-.dg-btn:hover:not(:disabled) { border-color: var(--dsw-alias-border-l2); }
-.dg-btn:disabled { opacity: .55; cursor: default; }
-.dg-btn:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
+.dg-btn:hover:not(:disabled) { background: #353b45; border-color: rgba(255, 255, 255, 0.32); }
+.dg-btn:disabled { opacity: 1; background: #3a4250; color: #c3cad6; cursor: default; }
+.dg-btn:focus-visible { outline: 2px solid #4a7cff; outline-offset: 1px; }
 .dg-btnIcon { min-width: 30px; padding: 4px 8px; font-size: 14px; line-height: 18px; }
 
 /* ===== 设置面板 ===== */
@@ -1578,6 +1653,117 @@ const AUDIO_EXTS = ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.oga', '.o
 
 .dg-open { white-space: nowrap; }
 .dg-openCompact { padding: 2px 6px; line-height: 16px; font-size: 12px; }
+
+/* ---------- 反馈篮（S3-a）---------- */
+/* ⚠️ 配色全部硬编码：宿主 --dsw-alias-* 变量「已定义但值为空」，
+   var(--x, fallback) 的 fallback 不会生效，整条声明会作废 → 继承父级深色。 */
+.dg-feedbackLayer {
+  /* 非模态：z-index 必须低于 .dg-ctxLayer(60)，否则右键菜单被盖住 */
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; align-items: flex-end; justify-content: flex-end;
+  padding: 16px;
+  /* 不再铺全屏黑幕；遮罩层本身不拦截点击，只有面板本体拦截 */
+  background: transparent;
+  pointer-events: none;
+}
+.dg-feedback {
+  /* 只有面板本体接收点击，其余区域穿透到底层卡片 */
+  pointer-events: auto;
+  width: min(420px, 46vw); max-height: 60vh;
+  display: flex; flex-direction: column;
+  background: #1b1e24; color: #e8eaed;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px; overflow: hidden;
+  /* 用阴影做层次，代替原来的黑幕 */
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
+}
+.dg-feedbackHead {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 14px; border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+  background: #22262e;
+}
+.dg-feedbackTitle { font-size: 14px; font-weight: 600; color: #f0f2f5; }
+.dg-feedbackTarget {
+  padding: 8px 14px; font-size: 12px;
+  background: rgba(74, 124, 255, 0.16); color: #a9c2ff;
+  border-bottom: 1px solid rgba(74, 124, 255, 0.26);
+}
+/* 警告条：高对比 + 图标，让"为什么不能生成"一眼可见 */
+.dg-feedbackWarn {
+  padding: 9px 14px; font-size: 12px; font-weight: 600;
+  background: #4a3618; color: #ffd08a;
+  border-bottom: 1px solid #7a5a20;
+}
+.dg-feedbackWarn::before { content: "⚠ "; }
+.dg-feedbackList {
+  list-style: none; margin: 0; padding: 8px 10px; overflow: auto; flex: 1;
+}
+.dg-feedbackItem {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 6px; font-size: 12px;
+  color: #e8eaed;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.dg-feedbackNo {
+  flex: 0 0 auto; width: 20px; height: 20px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: #4a7cff; color: #ffffff; font-size: 11px; font-weight: 600;
+}
+.dg-feedbackAction { flex: 0 0 auto; color: #8fb6ff; font-weight: 600; }
+.dg-feedbackName { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e8eaed; }
+.dg-feedbackDim { flex: 0 0 auto; color: #a9b1bd; font-size: 11px; }
+.dg-feedbackOps { flex: 0 0 auto; display: flex; gap: 4px; }
+
+/* 反馈篮作用域内的按钮：硬编码，不依赖宿主变量 */
+.dg-feedback .dg-btn {
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: #2a2f38;
+  color: #e8eaed;
+}
+.dg-feedback .dg-btn:hover:not(:disabled) { background: #353b45; border-color: rgba(255, 255, 255, 0.35); }
+.dg-feedback .dg-btn:disabled {
+  /* 不只靠 opacity：改为清晰可读的灰底浅字，让"禁用"能被看见 */
+  opacity: 1;
+  background: #3a4250;
+  color: #c3cad6;
+  border-color: rgba(255, 255, 255, 0.14);
+  cursor: default;
+}
+.dg-feedback .dg-primaryBtn {
+  background: #4a7cff; color: #ffffff; border-color: #4a7cff; font-weight: 600;
+}
+.dg-feedback .dg-primaryBtn:hover:not(:disabled) { background: #5b88ff; border-color: #5b88ff; }
+.dg-feedback .dg-primaryBtn:disabled {
+  opacity: 1;
+  background: #3a4250; color: #c3cad6; border-color: rgba(255, 255, 255, 0.14);
+}
+.dg-feedback .dg-btnSmall { padding: 3px 9px; font-size: 11px; }
+
+.dg-feedbackActions {
+  display: flex; justify-content: flex-end; gap: 8px;
+  padding: 10px 14px; border-top: 1px solid rgba(255, 255, 255, 0.10);
+  background: #22262e;
+}
+
+
+/* ---------- 反馈篮编辑弹窗（S3-a）---------- */
+.dg-feedbackEdit {
+  padding: 10px 14px; border-top: 1px solid var(--dsw-alias-border-l2, rgba(255,255,255,0.10));
+  background: rgba(255, 255, 255, 0.03);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.dg-feedbackEditHead { font-size: 12px; font-weight: 600; color: #e8eaed; }
+.dg-feedbackField { display: flex; flex-direction: column; gap: 4px; }
+.dg-feedbackLabel { font-size: 11px; color: #a9b1bd; }
+.dg-feedbackTextarea { resize: vertical; min-height: 44px; font: inherit; }
+.dg-feedbackEditActions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+
+/* 反馈篮独立入口按钮（S3-a） */
+.dg-basketToggle {
+  position: fixed; right: 16px; bottom: 16px; z-index: 45;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+.dg-basketToggle[data-gallery-basket-count="0"] { color: #a9b1bd; }
 `
 
 
@@ -1651,6 +1837,715 @@ const AUDIO_EXTS = ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.oga', '.o
      * 删除需要二次确认（走 ConfirmDialog）。
      */
 
+/**
+ * 反馈契约 v1 —— 纯函数，Host 与 Client 双端复用。
+ *
+ * 由 scripts/build.mjs 沿用 protocol.js 的做法：
+ *  · 剥掉 export 注入 client bundle
+ *  · 生成 host/feedback-text.js 供 Host 侧 import
+ *
+ * 设计原则（调研结论，见 docs/migration.md 与调研报告）：
+ *  1. 反馈是**契约**不是自由文本：带锚点（relPath）、动作类型、理由、目标会话。
+ *  2. **攒批 + 一次发送**：多条标记合成一条消息，不逐条发。
+ *  3. **人确认闸门**：本模块只负责「产出草稿文本」，发送由用户在 composer 里点。
+ *  4. **显式 changeOnly / keep**：生成类工作流实证「只改 X、其余锁死」远好于「再改改」。
+ *  5. 逐条用 `Annotation N：` 编号，便于模型逐条回应（参考 dsh-quote-annotate-pro 契约）。
+ */
+
+/** 首版 6 个动作。值即契约里的 action 字符串，不要随意改（已写进 marks 文件）。 */
+const ACTIONS = [
+  'approve',
+  'reject',
+  'finalize',
+  'redo-one-dim',
+  'regenerate-selected',
+  'set-reference',
+]
+
+/** 动作 → 中文动词（生成草稿正文用）。 */
+const ACTION_LABELS_ZH = {
+  approve: '通过',
+  reject: '不要这张',
+  finalize: '定为最终版',
+  'redo-one-dim': '单维重做',
+  'regenerate-selected': '选择性重生成',
+  'set-reference': '设为参照',
+}
+
+/** 动作 → 英文动词。 */
+const ACTION_LABELS_EN = {
+  approve: 'approve',
+  reject: 'reject',
+  finalize: 'finalize',
+  'redo-one-dim': 'redo one dimension',
+  'regenerate-selected': 'regenerate',
+  'set-reference': 'set as reference',
+}
+
+/** 契约版本。检查项会核对。 */
+const SCHEMA = 1
+
+/** 来源标识。 */
+const SOURCE = 'dsh-gallery'
+
+/** 常用「只改」维度候选（给 UI 做快捷输入，不是强制枚举）。 */
+const CHANGE_CANDIDATES = [
+  '色调', '亮度', '材质', '构图', '透视', '比例', '文字', '光线', '风格', '细节',
+]
+
+/** 常用的「锁死」项候选。 */
+const KEEP_CANDIDATES = [
+  '构图', '人物位置', '主体比例', '透视角度', '文字内容', '整体风格', '配色基调',
+]
+
+/**
+ * 构造一条反馈项。
+ * @param item - { relPath, category, action, reason?, changeOnly?, keep?, preserve?, region?, params? }
+ * @returns 规范化后的 feedback item
+ */
+function makeItem(item) {
+  const out = {
+    relPath: String(item?.relPath ?? ''),
+    category: String(item?.category ?? 'unknown'),
+    action: ACTIONS.includes(item?.action) ? item.action : 'approve',
+  }
+  if (typeof item?.reason === 'string' && item.reason.trim() !== '') out.reason = item.reason.trim()
+  if (Array.isArray(item?.changeOnly) && item.changeOnly.length > 0) {
+    out.changeOnly = item.changeOnly.map((x) => String(x)).filter((x) => x !== '')
+  }
+  if (Array.isArray(item?.keep) && item.keep.length > 0) {
+    out.keep = item.keep.map((x) => String(x)).filter((x) => x !== '')
+  }
+  if (Array.isArray(item?.preserve) && item.preserve.length > 0) {
+    out.preserve = item.preserve.map((x) => String(x)).filter((x) => x !== '')
+  }
+  if (item?.region !== undefined && item.region !== null) out.region = item.region
+  if (item?.params !== undefined && item.params !== null) out.params = item.params
+  return out
+}
+
+/**
+ * 构造一份反馈草稿（契约对象）。
+ * @param args - { sessionId, items, status? }
+ */
+function makeFeedback(args) {
+  return {
+    schema: SCHEMA,
+    source: SOURCE,
+    sessionId: String(args?.sessionId ?? ''),
+    status: args?.status === 'sent' ? 'sent' : 'draft',
+    items: (Array.isArray(args?.items) ? args.items : []).map(makeItem),
+    createdAt: typeof args?.createdAt === 'number' ? args.createdAt : Date.now(),
+  }
+}
+
+/** 文件名取路径末段。 */
+function baseName(relPath) {
+  const s = String(relPath ?? '')
+  const i = s.lastIndexOf('/')
+  return i >= 0 ? s.slice(i + 1) : s
+}
+
+/**
+ * 把契约渲染成**人类与模型都能读的草稿正文**。
+ *
+ * 关键要求（调研结论 4）：每条必须同时写「只改 X」与「其余锁死」，
+ * 否则模型容易把整张重画。
+ *
+ * @param feedback - makeFeedback() 的产物
+ * @param options - { locale?: 'zh'|'en', targetSessionTitle?: string }
+ * @returns 纯文本（可直接 setDraft 进 composer）
+ */
+function renderFeedbackText(feedback, options) {
+  const locale = options?.locale === 'en' ? 'en' : 'zh'
+  const labels = locale === 'en' ? ACTION_LABELS_EN : ACTION_LABELS_ZH
+  const items = Array.isArray(feedback?.items) ? feedback.items : []
+
+  if (items.length === 0) {
+    return locale === 'en'
+      ? '(No items in the feedback basket.)'
+      : '（反馈篮里还没有条目。）'
+  }
+
+  const lines = []
+  if (locale === 'en') {
+    lines.push(`[Feedback from dsh-gallery · ${items.length} item(s)]`)
+    lines.push('')
+    lines.push('Reply item by item using the `Annotation N:` prefix, so each decision maps to one annotation.')
+    lines.push('')
+  } else {
+    lines.push(`【产出画廊反馈 · 共 ${items.length} 条】`)
+    lines.push('')
+    lines.push('请按 `Annotation 1：`、`Annotation 2：` … 逐条回应，让每条决定都对应到一个批注。')
+    lines.push('')
+  }
+
+  items.forEach((item, idx) => {
+    const n = idx + 1
+    const name = baseName(item.relPath)
+    const verb = labels[item.action] ?? item.action
+    lines.push(`Annotation ${n}：${verb} —— ${name}`)
+    lines.push(`${locale === 'en' ? 'Path' : '路径'}：${item.relPath}`)
+    if (item.reason !== undefined) {
+      lines.push(`${locale === 'en' ? 'Reason' : '理由'}：${item.reason}`)
+    }
+    if (Array.isArray(item.changeOnly) && item.changeOnly.length > 0) {
+      lines.push(locale === 'en'
+        ? `changeOnly: ${item.changeOnly.join(' / ')}`
+        : `只改：${item.changeOnly.join(' / ')}`)
+    }
+    if (Array.isArray(item.keep) && item.keep.length > 0) {
+      lines.push(locale === 'en'
+        ? `keep locked: ${item.keep.join(' / ')}`
+        : `锁死（其余不动）：${item.keep.join(' / ')}`)
+    }
+    if (Array.isArray(item.preserve) && item.preserve.length > 0) {
+      lines.push(locale === 'en'
+        ? `preserve: ${item.preserve.join(' / ')}`
+        : `保留：${item.preserve.join(' / ')}`)
+    }
+    if (item.region !== undefined && item.region !== null) {
+      lines.push(`${locale === 'en' ? 'Region' : '区域'}：${JSON.stringify(item.region)}`)
+    }
+    if (item.params !== undefined && item.params !== null) {
+      lines.push(`${locale === 'en' ? 'Params' : '参数'}：${JSON.stringify(item.params)}`)
+    }
+    lines.push('')
+  })
+
+  // 收口指令：把「锁死」原则再强调一次（防模型整张重画）
+  if (locale === 'en') {
+    lines.push('Unless an annotation says otherwise, keep everything else unchanged — do not regenerate wholesale.')
+  } else {
+    lines.push('除上述明确要改的部分外，其余全部保持原样，不要整张重做。')
+  }
+
+  return lines.join('\n')
+}
+
+/**
+ * 把契约序列化成 JSON（导出 / 落盘 / 审计用，与渲染同一个 shape）。
+ */
+function serializeFeedback(feedback) {
+  return JSON.stringify(feedback, null, 2)
+}
+
+
+    /**
+     * 反馈篮状态与草稿生成（S3-a）。
+     *
+     * 设计要点（严格按调研结论与老板指令）：
+     *  1. **零 inject**：不依赖 conversation.input 服务也能工作 ——
+     *     优先用 ctx.get('conversation.input') 的官方 setDraft；
+     *     拿不到时退化为「把草稿文本塞进剪贴板 + 提示用户粘贴」，绝不自动发送。
+     *  2. **人确认闸门**：只写 composer 草稿，**永不调用 submit()**。
+     *  3. **攒批合并**：连点防抖，多条标记合成一条消息。
+     *  4. **显式目标会话**：全局视图下必须标明这份反馈发给哪个会话。
+     *  5. **历史会话禁用**：卡片归属会话不是当前会话时，提交按钮禁用。
+     */
+
+    /** 最近一次生成的草稿文本（供 seam.getFeedbackDraft() 读）。 */
+    const draftRef = { current: '' }
+
+    /** 反馈篮内部使用的动作定义（与 shared 的 ACTIONS 对齐，这里只放 UI 需要的）。 */
+    const FEEDBACK_ACTIONS_UI = [
+      { id: 'approve', labelZh: '通过', labelEn: 'Approve', icon: '✓' },
+      { id: 'reject', labelZh: '不要这张', labelEn: 'Reject', icon: '✕' },
+      { id: 'finalize', labelZh: '定为最终版', labelEn: 'Finalize', icon: '★' },
+      { id: 'redo-one-dim', labelZh: '单维重做', labelEn: 'Redo one dim', icon: '↻' },
+      { id: 'regenerate-selected', labelZh: '选择性重生成', labelEn: 'Regenerate', icon: '⟳' },
+      { id: 'set-reference', labelZh: '设为参照', labelEn: 'Set reference', icon: '◎' },
+    ]
+
+    /**
+     * 把草稿写进 composer —— **优先官方通道，拿不到就退化为剪贴板**。
+     *
+     * 官方通道（已实证）：ctx.get('conversation.input').for(ctx).setDraft(text)
+     *   · setDraft 只替换草稿文本，不会发送 —— 满足「人确认闸门」。
+     *   · 若 actx 没有 session 绑定会抛错，此时退化为剪贴板。
+     *
+     * @returns { ok: boolean, via: 'composer' | 'clipboard' | 'failed', reason?: string }
+     */
+    /**
+     * 把草稿写进 composer —— **零 inject 的纯 DOM 路径**。
+     *
+     * 为什么不用官方 conversation.input 服务（A 方案已废弃）：
+     *   实测在 inject 里声明 `conversation.input` 会让 Cordis 插件在 web boot
+     *   阶段一直 pending（"waiting for service: conversation.input"），宿主判定
+     *   启动失败、页面永久停在 "Loading plugins…"、主进程退出。
+     *   且源码 L19270/19278 实证：slot props 只传 `{}`，不透传 input，
+     *   所以零 inject 根本拿不到这个服务。
+     *
+     * 实现三条纯 DOM 路径，按序尝试，用 **Lexical 内部 state** 判断成功：
+     *   1) beforeinput + input 事件（Lexical 的 onBeforeInput 入口）
+     *   2) 模拟 paste（ClipboardEvent + DataTransfer，Lexical 有完整 paste 处理）
+     *   3) execCommand('insertText')  ← 已知只改 DOM 不同步 state，仅最后兜底
+     *
+     * 判据不是 innerText（那会假的通过），而是 editor.getEditorState() 里真实文本增长。
+     * 绝不调用 submit() / 任何发送动作。
+     *
+     * @returns { ok, via, detail?, reason? }
+     */
+    /**
+     * 把草稿写进 composer —— **零 inject 的纯 DOM 路径**。
+     *
+     * 为什么不用官方 conversation.input 服务（A 方案已废弃）：
+     *   实测在 inject 里声明 `conversation.input` 会让 Cordis 插件在 web boot
+     *   阶段一直 pending（"waiting for service: conversation.input"），宿主判定
+     *   启动失败、页面永久停在 "Loading plugins…"、主进程退出。
+     *   且源码 L19270/19278 实证：slot props 只传 `{}`，不透传 input，
+     *   所以零 inject 根本拿不到这个服务。
+     *
+     * ⚠️ **关键：Lexical 的 state 更新是异步 flush。**
+     *   dispatch 事件后**立即**读 getEditorState() 永远读到旧 state ——
+     *   这会把"其实成功"的路径判成失败（假阴性），进而让后续路径重复插入，
+     *   最终草稿被写进 4 份（真机实测：1524 字 ≈ 381×4）。
+     *
+     *   所以每条路径 dispatch 后必须 **await 一个宏任务再读 state**，
+     *   并且**一旦成功立即 return 短路**，不再尝试后续路径。
+     *
+     * 三条路径（按序，成功即停）：
+     *   1) beforeinput + input 事件（Lexical 的 onBeforeInput 入口，L6592）
+     *   2) 模拟 paste（ClipboardEvent + DataTransfer，Lexical 有完整 paste 处理，L6587/L10559）
+     *   3) execCommand('insertText') —— 仅最后兜底
+     *
+     * 判据始终是 **Lexical 内部 state 的真实文本**（不是 innerText），且必须等 flush。
+     * 绝不调用 submit() / 任何发送动作。
+     *
+     * @returns { ok, via, detail?, reason? }
+     */
+    async function writeDraftToComposer(text, sessionId) {
+      const COMPOSER_SEL = '[data-composer-input][data-lexical-editor="true"]'
+      const FALLBACK_SEL = '[data-lexical-editor="true"]'
+      /** 等 Lexical flush 的宏任务时间。80ms 是实测稳妥值（60 起，留余量）。 */
+      const FLUSH_WAIT_MS = 80
+
+      const waitFlush = () => new Promise((resolve) => setTimeout(resolve, FLUSH_WAIT_MS))
+
+      const findComposer = () => document.querySelector(COMPOSER_SEL)
+        ?? document.querySelector(FALLBACK_SEL)
+        ?? document.querySelector('[contenteditable="true"]')
+
+      /** 从 DOM 拿 Lexical editor 实例（Lexical 官方在 editable 元素上挂）。 */
+      const editorOf = (el) => (el === null ? null : (el.__lexicalEditor ?? el._lexicalEditor ?? null))
+
+      /** 读编辑器**内部 state** 的真实文本。 */
+      const stateText = (ed) => {
+        if (ed === null) return { ok: false, size: -1, text: '', why: 'no-editor' }
+        try {
+          const st = ed.getEditorState()
+          let out = ''
+          st.read(() => {
+            const root = st._nodeMap.get('root')
+            if (root === undefined) return
+            const walk = (n) => {
+              if (n === null || n === undefined) return ''
+              if (typeof n.getTextContent === 'function') {
+                const t = n.getTextContent()
+                if (t !== '') return t
+              }
+              const kids = typeof n.getChildren === 'function' ? n.getChildren() : []
+              return kids.map(walk).join('')
+            }
+            out = walk(root)
+          })
+          return { ok: true, size: out.length, text: out }
+        } catch (error) {
+          return { ok: false, size: -1, text: '', why: String(error?.message ?? error) }
+        }
+      }
+
+      const el = findComposer()
+      if (el === null) {
+        // composer 不在此刻的 DOM 里（还没渲染/不在会话页）→ 只能落剪贴板
+        const copied = await copyText(text)
+        draftRef.current = text
+        return copied
+          ? { ok: false, via: 'clipboard', reason: 'composer-not-found' }
+          : { ok: false, via: 'failed', reason: 'composer-not-found-copy-failed' }
+      }
+
+      const ed = editorOf(el)
+
+      // ---- 幂等：写入前先等一次 flush，确认当前 state，避免重复插入 ----
+      await waitFlush()
+      const before = stateText(ed)
+
+      // 用草稿头（前 24 字）判断，而不是全串匹配 ——
+      // 全串匹配在「草稿后面跟了用户自己打的字」时会失效（state 里包含但不再是完整 text）。
+      const headProbe = text.trim().slice(0, Math.min(24, text.trim().length))
+      if (before.ok && headProbe !== '' && before.text.includes(headProbe)) {
+        draftRef.current = text
+        return { ok: true, via: 'composer', detail: 'already-present' }
+      }
+
+      try { el.focus() } catch { /* 忽略 */ }
+
+      /** 统一判定：等 flush → 读 state → 看是否比 before 长且含目标片段。 */
+      const verify = async (probeFragment) => {
+        await waitFlush()
+        const after = stateText(ed)
+        if (!after.ok) return { ok: false, size: -1 }
+        // 双重判据：长度增长 + 含目标片段（防止别的操作同时改 state 造成误判）
+        const grew = after.size > before.size
+        const contains = probeFragment === undefined
+          ? true
+          : after.text.includes(probeFragment)
+        return { ok: grew && contains, size: after.size }
+      }
+
+      // 用于确认"确实插入了本次文本"的探针片段（取前 24 字，足够区分）
+      const probe = text.trim().slice(0, Math.min(24, text.trim().length))
+
+      // ---- 路径 1：**只发 beforeinput**（不跟 input）----
+      // ⚠️ 真机实证：beforeinput 与 input 在同一同步块连发时，Lexical 在 flush 前
+      // 把两次都排进更新队列 → **各插入一份 → 草稿变 2 份**（770 字 ≈ 385×2）。
+      // 微探针：单独 beforeinput → 等 160ms → state 6 字；
+      //         再单独 input → 等 160ms → state 仍 6 字（第二个被忽略）。
+      // 即：只要中间等 flush 就不会双插；最可靠是根本不发 input。
+      // 实证：只发一次 beforeinput（完整 385 字草稿）+ 等 300ms
+      //      → draftLen=385、stateLen=385、"Annotation 1" 恰 2 次、singleCopy=true。
+      try {
+        el.dispatchEvent(new InputEvent('beforeinput', {
+          inputType: 'insertText', data: text, bubbles: true, cancelable: true, composed: true,
+        }))
+        const v1 = await verify(probe)
+        if (v1.ok) {
+          draftRef.current = text
+          return { ok: true, via: 'composer', detail: 'beforeinput' }
+        }
+      } catch (error) {
+        console.warn('dsh-gallery: beforeinput 路径失败', error)
+      }
+
+      // 路径 1 失败后，重新取 before（可能 state 已被上面的动作部分改动）
+      await waitFlush()
+      const before2 = stateText(ed)
+
+      // ---- 路径 2：模拟 paste（成功即短路）----
+      try {
+        const dt = new DataTransfer()
+        dt.setData('text/plain', text)
+        dt.setData('text/html', '<p>' + text
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/\n/g, '<br>') + '</p>')
+        const ev = new ClipboardEvent('paste', { bubbles: true, cancelable: true })
+        try { Object.defineProperty(ev, 'clipboardData', { value: dt, configurable: true }) } catch { /* 忽略 */ }
+        el.dispatchEvent(ev)
+        await waitFlush()
+        const after2 = stateText(ed)
+        if (after2.ok && after2.size > before2.size && after2.text.includes(probe)) {
+          draftRef.current = text
+          return { ok: true, via: 'composer', detail: 'paste' }
+        }
+      } catch (error) {
+        console.warn('dsh-gallery: paste 路径失败', error)
+      }
+
+      // ---- 路径 3：execCommand（仅最后兜底，同样等 flush 后判）----
+      await waitFlush()
+      const before3 = stateText(ed)
+      try {
+        document.execCommand('insertText', false, text)
+        await waitFlush()
+        const after3 = stateText(ed)
+        if (after3.ok && after3.size > before3.size && after3.text.includes(probe)) {
+          draftRef.current = text
+          return { ok: true, via: 'composer', detail: 'execCommand' }
+        }
+      } catch (error) {
+        console.warn('dsh-gallery: execCommand 路径失败', error)
+      }
+
+      // ---- 全部路径都没让 state 增长 ----
+      // 最后复查一次：只有「长度接近 + 草稿头出现恰 1 次」才算成功。
+      // 不能用 includes(probe) 就判 —— 半份写入也会通过（那是静默的数据污染）。
+      await waitFlush()
+      const finalState = stateText(ed)
+      if (finalState.ok) {
+        const headCount = headProbe === ''
+          ? 0
+          : (finalState.text.split(headProbe).length - 1)
+        const lengthClose = Math.abs(finalState.text.length - text.length) <= 8
+        if (headCount === 1 && lengthClose) {
+          draftRef.current = text
+          return { ok: true, via: 'composer', detail: 'late-flush' }
+        }
+        if (headCount > 1) {
+          // 出现多次 = 重复写入，这是数据污染，必须如实报失败
+          console.warn('dsh-gallery: 检测到草稿重复写入 ' + headCount + ' 份')
+          return { ok: false, via: 'failed', reason: 'duplicate-write-' + headCount }
+        }
+      }
+
+      // 真失败 → 剪贴板，notice 明确「未写入输入框」
+      const copied = await copyText(text)
+      draftRef.current = text
+      return copied
+        ? { ok: false, via: 'clipboard', reason: 'all-dom-paths-failed' }
+        : { ok: false, via: 'failed', reason: 'all-dom-paths-failed-copy-failed' }
+    }
+
+    /**
+     * 反馈篮：一个受控组件，管理条目列表 + 生成草稿。
+     *
+     * @param t - 文案
+     * @param items - 已标记条目（由 GalleryBody 传入，含 relPath / category / mark）
+     * @param currentSessionId - 当前会话 id（用于判断「历史会话卡片禁止提交」）
+     * @param targetSessionTitle - 目标会话标题（全局视图展示用）
+     * @param onClose - 关闭
+     * @param onRemove - 删除某条
+     * @param onEdit - 编辑某条
+     * @param onClear - 清空
+     * @param onSubmitDraft - 生成草稿后的回调（用于提示）
+     */
+    function FeedbackBasket({ t, items, currentSessionId, targetSessionTitle,
+                              onClose, onRemove, onEdit, onClear, onEditSave }) {
+      // 语言判断：用 t 探测一个已知键 —— 命中中文就按 zh 渲染，否则 en。
+      // （不引入 detectLocale，插件没有这个工具函数）
+      const [locale] = React.useState(() => {
+        try {
+          const probe = t('feedbackBasketTitle')
+          return (typeof probe === 'string' && /[\u4e00-\u9fa5]/.test(probe)) ? 'zh' : 'en'
+        } catch { return 'zh' }
+      })
+      const [busy, setBusy] = React.useState(false)
+      const [notice, setNotice] = React.useState(null)
+      // 编辑弹窗：正在编辑的条目 + 三个字段的草稿值
+      const [editing, setEditing] = React.useState(null)
+      const [editReason, setEditReason] = React.useState('')
+      const [editChangeOnly, setEditChangeOnly] = React.useState('')
+      const [editKeep, setEditKeep] = React.useState('')
+
+      /** 打开编辑弹窗，把该条已有值填进去。 */
+      const beginEdit = React.useCallback((it) => {
+        setEditing(it)
+        setEditReason(typeof it.mark?.reason === 'string' ? it.mark.reason : '')
+        setEditChangeOnly(Array.isArray(it.mark?.changeOnly) ? it.mark.changeOnly.join('，') : '')
+        setEditKeep(Array.isArray(it.mark?.keep) ? it.mark.keep.join('，') : '')
+      }, [])
+
+      /** 保存编辑：逗号/中文逗号分隔 → 数组。 */
+      const commitEdit = React.useCallback(() => {
+        if (editing === null) return
+        const splitList = (text) => String(text ?? '')
+          .split(/[,，、;；]/)
+          .map((x) => x.trim())
+          .filter((x) => x !== '')
+        const patch = {
+          reason: editReason.trim() === '' ? undefined : editReason.trim(),
+          changeOnly: splitList(editChangeOnly),
+          keep: splitList(editKeep),
+        }
+        // 空数组不写进契约（避免草稿里出现空的「只改：」）
+        if (patch.changeOnly.length === 0) delete patch.changeOnly
+        if (patch.keep.length === 0) delete patch.keep
+        if (typeof onEditSave === 'function') onEditSave(editing.relPath, patch)
+        setEditing(null)
+      }, [editing, editReason, editChangeOnly, editKeep, onEditSave])
+
+      // 历史会话判定：条目归属会话与当前会话不同 → 禁止提交
+      const foreignItems = items.filter((it) => it.sessionId !== undefined
+        && it.sessionId !== '' && currentSessionId !== '' && it.sessionId !== currentSessionId)
+      const canSubmit = items.length > 0 && foreignItems.length === 0 && busy === false
+
+      /** 生成草稿并写进 composer（不发送）。 */
+      const generateDraft = React.useCallback(async () => {
+        if (!canSubmit) return
+        setBusy(true)
+        setNotice(null)
+        try {
+          const feedback = makeFeedback({
+            sessionId: currentSessionId,
+            items: items.map((it) => ({
+              relPath: it.relPath,
+              category: it.category ?? 'unknown',
+              action: it.mark?.action ?? 'approve',
+              reason: it.mark?.reason,
+              changeOnly: it.mark?.changeOnly,
+              keep: it.mark?.keep,
+              preserve: it.mark?.preserve,
+            })),
+          })
+          const text = renderFeedbackText(feedback, { locale, targetSessionTitle })
+          const result = await writeDraftToComposer(text, currentSessionId)
+          if (result.ok) {
+            setNotice({
+              kind: result.via === 'composer' ? 'ok' : 'failed',
+              text: result.via === 'composer'
+                ? t('feedbackDraftReady')
+                : t('feedbackDraftInClipboard'),
+            })
+          } else {
+            setNotice({ kind: 'failed', text: t('feedbackDraftFailed') })
+          }
+        } catch (error) {
+          setNotice({ kind: 'failed', text: `${t('feedbackDraftFailed')}：${String(error?.message ?? error)}` })
+        } finally {
+          setBusy(false)
+        }
+      }, [canSubmit, items, currentSessionId, locale, targetSessionTitle, t])
+
+      return h('div', { className: 'dg-feedbackLayer', key: 'feedbackLayer' }, [
+        h('div', {
+          className: 'dg-feedback',
+          key: 'panel',
+          role: 'dialog',
+          'aria-modal': false,
+          'aria-label': t('feedbackBasketTitle'),
+          'data-gallery-feedback-panel': true,
+        }, [
+          h('div', { className: 'dg-feedbackHead', key: 'head' }, [
+            h('span', { className: 'dg-feedbackTitle', key: 'title' },
+              format(t('feedbackBasketTitleN'), { n: items.length }),
+            ),
+            h('button', {
+              type: 'button', className: 'dg-btn', key: 'close',
+              'aria-label': t('close'), onClick: onClose,
+            }, '✕'),
+          ]),
+
+          // 目标会话提示（全局视图必须显式标）
+          targetSessionTitle !== ''
+            ? h('div', { className: 'dg-feedbackTarget', key: 'target', 'data-gallery-feedback-target': targetSessionTitle },
+                format(t('feedbackTargetSession'), { title: targetSessionTitle }))
+            : null,
+
+          // 历史会话条目警告
+          foreignItems.length > 0
+            ? h('div', { className: 'dg-feedbackWarn', key: 'foreign', 'data-gallery-feedback-foreign': foreignItems.length },
+                format(t('feedbackForeignWarn'), { n: foreignItems.length }))
+            : null,
+
+          items.length === 0
+            ? h('p', { className: 'dg-status', key: 'empty' }, t('feedbackBasketEmpty'))
+            : h('ul', { className: 'dg-feedbackList', key: 'list' },
+                items.map((it, idx) => {
+                  const actionDef = FEEDBACK_ACTIONS_UI.find((a) => a.id === it.mark?.action)
+                  const label = actionDef === undefined
+                    ? (it.mark?.action ?? '')
+                    : (locale === 'en' ? actionDef.labelEn : actionDef.labelZh)
+                  return h('li', {
+                    className: 'dg-feedbackItem',
+                    key: it.relPath,
+                    'data-gallery-feedback-item': it.relPath,
+                    'data-gallery-feedback-no': idx + 1,
+                  }, [
+                    h('span', { className: 'dg-feedbackNo', key: 'n' }, String(idx + 1)),
+                    h('span', { className: 'dg-feedbackAction', key: 'a' }, label),
+                    h('span', { className: 'dg-feedbackName', key: 'name', title: it.relPath },
+                      it.relPath.split('/').pop() ?? it.relPath),
+                    (it.mark?.changeOnly !== undefined && it.mark.changeOnly.length > 0)
+                      ? h('span', { className: 'dg-feedbackDim', key: 'co' },
+                          `${t('feedbackChangeOnly')}：${it.mark.changeOnly.join('/')}`)
+                      : null,
+                    h('span', { className: 'dg-feedbackOps', key: 'ops' }, [
+                      h('button', {
+                        type: 'button', className: 'dg-btn dg-btnSmall', key: 'edit',
+                        'data-gallery-feedback-edit': it.relPath,
+                        onClick: () => beginEdit(it),
+                      }, t('feedbackEdit')),
+                      h('button', {
+                        type: 'button', className: 'dg-btn dg-btnSmall', key: 'del',
+                        'data-gallery-feedback-remove': it.relPath,
+                        onClick: () => onRemove(it.relPath),
+                      }, '✕'),
+                    ]),
+                  ])
+                }),
+              ),
+
+          notice === null
+            ? null
+            : h('p', {
+                className: `dg-status ${notice.kind === 'ok' ? 'dg-ok' : 'dg-error'}`,
+                key: 'notice',
+                'data-gallery-feedback-notice': notice.kind,
+              }, notice.text),
+
+          // ---- 编辑弹窗（理由 / 只改 / 锁死）----
+          editing === null
+            ? null
+            : h('div', { className: 'dg-feedbackEdit', key: 'editForm', 'data-gallery-feedback-edit-form': editing.relPath }, [
+                h('div', { className: 'dg-feedbackEditHead', key: 'h' },
+                  format(t('feedbackEditTitle'), { name: editing.relPath.split('/').pop() ?? editing.relPath }),
+                ),
+                h('label', { className: 'dg-feedbackField', key: 'reason' }, [
+                  h('span', { className: 'dg-feedbackLabel', key: 'l' }, t('feedbackReasonLabel')),
+                  h('textarea', {
+                    className: 'dg-input dg-feedbackTextarea',
+                    key: 'in',
+                    rows: 2,
+                    value: editReason,
+                    placeholder: t('feedbackReasonPlaceholder'),
+                    'data-gallery-feedback-edit-reason': true,
+                    onChange: (event) => setEditReason(event.target.value),
+                  }),
+                ]),
+                h('label', { className: 'dg-feedbackField', key: 'co' }, [
+                  h('span', { className: 'dg-feedbackLabel', key: 'l' }, t('feedbackChangeOnlyLabel')),
+                  h('input', {
+                    type: 'text',
+                    className: 'dg-input',
+                    key: 'in',
+                    value: editChangeOnly,
+                    placeholder: t('feedbackChangePlaceholder'),
+                    'data-gallery-feedback-edit-change': true,
+                    onChange: (event) => setEditChangeOnly(event.target.value),
+                  }),
+                ]),
+                h('label', { className: 'dg-feedbackField', key: 'keep' }, [
+                  h('span', { className: 'dg-feedbackLabel', key: 'l' }, t('feedbackKeepLabel')),
+                  h('input', {
+                    type: 'text',
+                    className: 'dg-input',
+                    key: 'in',
+                    value: editKeep,
+                    placeholder: t('feedbackKeepPlaceholder'),
+                    'data-gallery-feedback-edit-keep': true,
+                    onChange: (event) => setEditKeep(event.target.value),
+                  }),
+                ]),
+                h('div', { className: 'dg-feedbackEditActions', key: 'acts' }, [
+                  h('button', {
+                    type: 'button', className: 'dg-btn', key: 'cancel',
+                    'data-gallery-feedback-edit-cancel': true,
+                    onClick: () => setEditing(null),
+                  }, t('cancel')),
+                  h('button', {
+                    type: 'button', className: 'dg-btn dg-primaryBtn', key: 'save',
+                    'data-gallery-feedback-edit-save': true,
+                    onClick: commitEdit,
+                  }, t('feedbackEditSave')),
+                ]),
+              ]),
+
+          h('div', { className: 'dg-feedbackActions', key: 'actions' }, [
+            h('button', {
+              type: 'button', className: 'dg-btn', key: 'clear',
+              'data-gallery-feedback-clear': true,
+              disabled: busy || items.length === 0,
+              onClick: onClear,
+            }, t('feedbackClear')),
+            h('button', {
+              type: 'button', className: 'dg-btn dg-primaryBtn', key: 'submit',
+              'data-gallery-feedback-generate': true,
+              disabled: !canSubmit,
+              title: foreignItems.length > 0 ? t('feedbackForeignWarnShort') : t('feedbackGenerateHint'),
+              onClick: () => { void generateDraft() },
+            }, busy
+              ? t('feedbackGenerating')
+              // 禁用时直接把原因写在按钮上，不只靠悬停 title
+              : foreignItems.length > 0
+                ? t('feedbackBlockedForeign')
+                : items.length === 0
+                  ? t('feedbackBlockedEmpty')
+                  : t('feedbackGenerateDraft')),
+          ]),
+        ]),
+      ])
+    }
+
     function ContextMenu({ t, x, y, item, actions, onClose }) {
       const menuRef = React.useRef(null)
       const [pos, setPos] = React.useState({ left: x, top: y })
@@ -1721,6 +2616,28 @@ const AUDIO_EXTS = ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.oga', '.o
         entry('reveal', t('ctxReveal'), '📂', () => actions.onReveal()),
         entry('copy', t('ctxCopy'), '⧉', () => actions.onCopy()),
         entry('delete', t('ctxDelete'), '🗑', () => actions.onDelete(), true),
+        // ---- 反馈标记（S3-a）：6 个动作，选中后进反馈篮，不直接发送 ----
+        actions.onMark !== undefined
+          ? h('div', { className: 'dg-ctxDivider', key: 'markDivider' }, t('ctxMarkSection'))
+          : null,
+        actions.onMark !== undefined
+          ? entry('mark-approve', t('ctxMarkApprove'), '✓', () => actions.onMark('approve'))
+          : null,
+        actions.onMark !== undefined
+          ? entry('mark-reject', t('ctxMarkReject'), '✕', () => actions.onMark('reject'))
+          : null,
+        actions.onMark !== undefined
+          ? entry('mark-finalize', t('ctxMarkFinalize'), '★', () => actions.onMark('finalize'))
+          : null,
+        actions.onMark !== undefined
+          ? entry('mark-redo', t('ctxMarkRedo'), '↻', () => actions.onMark('redo-one-dim'))
+          : null,
+        actions.onMark !== undefined
+          ? entry('mark-regen', t('ctxMarkRegen'), '⟳', () => actions.onMark('regenerate-selected'))
+          : null,
+        actions.onMark !== undefined
+          ? entry('mark-ref', t('ctxMarkReference'), '◎', () => actions.onMark('set-reference'))
+          : null,
       ]))
     }
 
@@ -1871,6 +2788,7 @@ const AUDIO_EXTS = ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.oga', '.o
         tabIndex: 0,
         title: `${item.name}\n${absPath}\n${t('mediaOpenHint')}`,
         'data-gallery-media': item.relPath,
+        'data-gallery-relpath': item.relPath,
         'data-gallery-media-type': item.mediaType ?? '',
         onClick: () => onPlay(item),
         onContextMenu: (event) => {
@@ -2272,6 +3190,7 @@ ${absPath}
           }
         },
         'data-gallery-file': item.relPath,
+        'data-gallery-relpath': item.relPath,
       }, [
         // ① 头部
         h('div', { className: 'dg-fcHead', key: 'head' }, [
@@ -2375,6 +3294,7 @@ ${absPath}
         className: `dg-card dg-cat-${item.category || 'none'}`,
         title: `${item.relPath}${item.category ? `\n[${t('cat' + item.category[0].toUpperCase() + item.category.slice(1))}]` : ''}`,
         'data-gallery-card': item.relPath,
+        'data-gallery-relpath': item.relPath,
         'data-gallery-category': item.category || '',
         onClick: (event) => onOpen(item, event.currentTarget),
         onContextMenu: (event) => {
@@ -3314,12 +4234,96 @@ ${absPath}
       const [ctxMenu, setCtxMenu] = React.useState(null)
       // 删除确认：{ item, busy }
       const [deleteTarget, setDeleteTarget] = React.useState(null)
+      // ---- 反馈标记（S3-a）----
+      // marks: { [relPath]: { action, reason?, changeOnly?, keep? } }
+      const [marks, setMarks] = React.useState({})
+      // 反馈篮是否打开
+      const [basketOpen, setBasketOpen] = React.useState(false)
+      // 编辑中的条目（null 表示不编辑）
+      const [editingItem, setEditingItem] = React.useState(null)
       // 网格滚动位置：打开查看器前记录，关闭后恢复，让视图停在原缩略图处
       const bodyScrollRef = React.useRef(null)
       const savedScrollRef = React.useRef(null)
 
+      // 首次挂载时拉取已有标记（持久化在 dsh-gallery-marks.json）
+      React.useEffect(() => {
+        let alive = true
+        callHost('getMarks', {})
+          .then((payload) => {
+            if (!alive) return
+            if (payload?.ok === false) return
+            if (payload !== null && typeof payload.marks === 'object' && payload.marks !== null) {
+              setMarks(payload.marks)
+            }
+          })
+          .catch((error) => console.warn('dsh-gallery: getMarks 失败', error))
+        return () => { alive = false }
+      }, [])
+
+      /**
+       * 给某卡片设标记 → 进反馈篮。
+       * 只改本地状态 + 落盘 marks，**绝不发送任何消息**。
+       */
+      const doMark = React.useCallback(async (item, action, extra) => {
+        const mark = { action, ...(extra ?? {}) }
+        setMarks((prev) => ({ ...prev, [item.relPath]: mark }))
+        setBasketOpen(true)
+        try {
+          const payload = await callHost('marks', { path: item.relPath, mark })
+          if (payload?.ok === false) throw new Error(payload?.error?.message ?? t('errorTitle'))
+        } catch (error) {
+          console.warn('dsh-gallery: 标记落盘失败', error)
+        }
+      }, [t])
+
+      /**
+       * 更新一条标记的附加字段（理由 / 只改 / 锁死）。
+       * 供反馈篮的编辑弹窗调用 —— 让调研结论 4（显式只改 + 其余锁死）真正可填。
+       */
+      const updateMark = React.useCallback(async (relPath, patch) => {
+        let nextMark = null
+        setMarks((prev) => {
+          const cur = prev[relPath]
+          if (cur === undefined) return prev
+          nextMark = { ...cur, ...patch }
+          return { ...prev, [relPath]: nextMark }
+        })
+        if (nextMark !== null) {
+          try {
+            await callHost('marks', { path: relPath, mark: nextMark })
+          } catch (error) {
+            console.warn('dsh-gallery: 更新标记失败', error)
+          }
+        }
+      }, [])
+
+      /** 移除一条标记。 */
+      const removeMark = React.useCallback(async (relPath) => {
+        setMarks((prev) => {
+          const next = { ...prev }
+          delete next[relPath]
+          return next
+        })
+        try {
+          await callHost('marks', { path: relPath, mark: null })
+        } catch (error) {
+          console.warn('dsh-gallery: 清除标记失败', error)
+        }
+      }, [])
+
+      /** 清空全部标记。 */
+      const clearMarks = React.useCallback(async () => {
+        const paths = Object.keys(marks)
+        setMarks({})
+        for (const relPath of paths) {
+          try { await callHost('marks', { path: relPath, mark: null }) } catch { /* 忽略单条失败 */ }
+        }
+      }, [marks])
+
       /** 打开右键菜单。 */
       const openContextMenu = React.useCallback((item, absPath, event) => {
+        // seam 兜底：记下最近右键的卡片，供独立包 getSelection() 用
+        lastContextRelPath.current = item.relPath
         setCtxMenu({
           item,
           absPath: absPath ?? buildAbsPath(view.status === 'ready' ? view.data.root : '', item.relPath),
@@ -3605,6 +4609,21 @@ ${absPath}
 
       // 分类图例：告诉用户三种边框颜色代表什么（只在有数据时显示）
       // 「未归类」只有在确实存在这类文件时才显示，避免图例噪音
+      // 反馈篮独立入口（S3-a）：关闭后能重新打开，不必再标记一张卡
+      const markedCount = Object.keys(marks).length
+      const basketToggle = h('button', {
+        type: 'button',
+        className: 'dg-btn dg-basketToggle',
+        key: 'basketToggle',
+        'data-gallery-open-basket': true,
+        'data-gallery-basket-count': markedCount,
+        title: t('feedbackBasketToggleHint'),
+        'aria-label': t('feedbackBasketToggleHint'),
+        onClick: () => setBasketOpen((v) => !v),
+      }, markedCount > 0
+        ? format(t('feedbackBasketToggleN'), { n: markedCount })
+        : t('feedbackBasketToggle'))
+
       const hasUnknown = data !== null && Array.isArray(data.groups) &&
         data.groups.some((gr) => (gr.counts?.unknown ?? 0) > 0)
       const legend = data !== null && items.length > 0
@@ -3967,6 +4986,41 @@ ${absPath}
           })
         : null
 
+      // 反馈篮（S3-a）：列出已标记条目 + 生成决策草稿
+      const markedList = Object.keys(marks).map((relPath) => {
+        // 从当前视图里找该条目，拿 category / sessionId
+        const flat = (Array.isArray(data?.items) ? data.items : [])
+        const groupsList = Array.isArray(data?.groups)
+          ? data.groups.flatMap((gr) => (Array.isArray(gr.files) ? gr.files.map((f) => ({ ...f, sessionId: gr.sessionId })) : []))
+          : []
+        const found = flat.find((it) => it.relPath === relPath)
+          ?? groupsList.find((it) => it.relPath === relPath)
+        return {
+          relPath,
+          category: found?.category ?? 'unknown',
+          sessionId: found?.sessionId,
+          mark: marks[relPath],
+        }
+      })
+      const feedbackLayer = basketOpen && markedList.length >= 0
+        ? h(FeedbackBasket, {
+            key: 'feedbackLayer',
+            t,
+            items: markedList,
+            currentSessionId: sessionId ?? '',
+            targetSessionTitle: scope === 'global'
+              ? (view.status === 'ready' && Array.isArray(view.data?.groups)
+                  ? (view.data.groups.find((g) => g.isCurrent)?.title ?? t('feedbackTargetCurrent'))
+                  : t('feedbackTargetCurrent'))
+              : '',
+            onClose: () => { setBasketOpen(false); setEditingItem(null) },
+            onRemove: (relPath) => { void removeMark(relPath) },
+            onEdit: (it) => { setEditingItem(it) },
+            onEditSave: (relPath, patch) => { void updateMark(relPath, patch) },
+            onClear: () => { void clearMarks() },
+          })
+        : null
+
       // 右键菜单
       const ctxLayer = ctxMenu !== null
         ? h(ContextMenu, {
@@ -3985,6 +5039,12 @@ ${absPath}
               onReveal: () => { void doReveal(ctxMenu.item) },
               onCopy: () => { void copyText(ctxMenu.absPath) },
               onDelete: () => setDeleteTarget({ item: ctxMenu.item, busy: false }),
+              // 6 个反馈动作（S3-a）：选中即进反馈篮，不发送
+              onMark: (action) => {
+                const target = ctxMenu.item
+                closeContextMenu()
+                void doMark(target, action)
+              },
             },
           })
         : null
@@ -4003,6 +5063,7 @@ ${absPath}
 
       return h('div', { className: 'dg-root', 'data-gallery-root': true }, [
         header,
+        basketToggle,
         legend,
         body,
         pager,
@@ -4011,6 +5072,7 @@ ${absPath}
         settingsLayer,
         ctxLayer,
         confirmLayer,
+        feedbackLayer,
       ])
     }
 
@@ -4251,6 +5313,90 @@ ${absPath}
       }, wide ? t('type.label') : '▦')
     }
 
+
+    /**
+     * 画廊对外 seam（S3-a v1）。
+     *
+     * 给独立包 / 未来扩展一个稳定入口，避免依赖 DOM 猜测。
+     * 契约版本放在 version 字段，check.mjs 第 17 项会核对。
+     *
+     * 注意：这是**只读 + 标记**的窄接口，不含发送能力 ——
+     * 发送永远由用户在 composer 里手动确认。
+     */
+    /** 最近一次右键选中的卡片 relPath（seam.getSelection 的兜底来源）。 */
+    const lastContextRelPath = { current: null }
+
+    function installSeam() {
+      const seam = {
+        version: 1,
+        /**
+         * 当前选中的卡片（查看器打开时是那张图；否则 null）。
+         * @returns { relPath: string } | null
+         */
+        /**
+         * 当前选中项。
+         *
+         * 优先级：
+         *   1. 查看器已打开 → 那张图（最明确的「当前选中」）
+         *   2. 否则 → 最近一次右键选中的卡片（lastContextRelPath）
+         *   3. 都没有 → 用 a11y 焦点/悬停兜底（:focus 的卡片）
+         *
+         * 每个卡片都挂 data-gallery-relpath，独立包可据此定位。
+         */
+        getSelection() {
+          // 1. 查看器内的图
+          const viewerEl = document.querySelector('[data-gallery-viewer] [data-gallery-src-relpath]')
+          if (viewerEl !== null) {
+            const relPath = viewerEl.getAttribute('data-gallery-src-relpath')
+            if (relPath !== null && relPath !== '') return { relPath, source: 'viewer' }
+          }
+          // 2. 最近右键选中的卡片
+          if (lastContextRelPath.current !== null) {
+            return { relPath: lastContextRelPath.current, source: 'context-menu' }
+          }
+          // 3. 焦点中的卡片（键盘/无鼠标场景）
+          const focused = document.querySelector('[data-gallery-relpath]:focus')
+          if (focused !== null) {
+            const relPath = focused.getAttribute('data-gallery-relpath')
+            if (relPath !== null && relPath !== '') return { relPath, source: 'focus' }
+          }
+          return null
+        },
+        /**
+         * 订阅「选中项变化」。返回退订函数。
+         * 实现方式：观察 DOM 属性变化（低成本、零依赖）。
+         */
+        subscribe(fn) {
+          if (typeof fn !== 'function') return () => {}
+          const target = document.querySelector('[data-gallery-root]')
+          if (target === null || typeof MutationObserver !== 'function') return () => {}
+          const observer = new MutationObserver(() => { try { fn(seam.getSelection()) } catch { /* 忽略订阅者异常 */ } })
+          observer.observe(target, { subtree: true, attributes: true, attributeFilter: ['data-gallery-viewer'] })
+          return () => observer.disconnect()
+        },
+        /** 当前所有标记（异步，来自 Host）。 */
+        async getMarks() {
+          try {
+            const payload = await callHost('getMarks', {})
+            return payload?.ok === false ? {} : (payload?.marks ?? {})
+          } catch { return {} }
+        },
+        /** 设/清一条标记。 */
+        async setMark(relPath, mark) {
+          try {
+            const payload = await callHost('marks', { path: relPath, mark: mark ?? null })
+            return payload?.ok !== false
+          } catch { return false }
+        },
+        /** 当前反馈草稿文本（若反馈篮已生成过；未生成返回空串）。 */
+        getFeedbackDraft() {
+          return draftRef.current ?? ''
+        },
+      }
+      window.dshGallerySeam = seam
+      return seam
+    }
+
     /** 对话区入口：编辑框右侧的紧凑按钮。 */
     function ComposerButton({ t }) {
       return h('button', {
@@ -4270,12 +5416,25 @@ ${absPath}
     }
 
     return {
+      // ⚠️ 不要声明 conversation.input / sessions / agents。
+      // 实测：inject 声明 conversation.input 会让 Cordis 插件在 web boot 阶段
+      // 一直 pending（"waiting for service: conversation.input"），宿主判定启动失败、
+      // 页面永久停在 "Loading plugins…"、主进程退出。
+      // 因此草稿写入走零 inject 的纯 DOM 路径（见 05-feedback.js 的 writeDraftToComposer）。
       inject: ['slots', 'locale', 'sidebarRightTabs', 'sidebarRight'],
       apply(ctx) {
         ctxRef.current = ctx
         ctx.effect(() => () => { ctxRef.current = null }, 'dsh-gallery: context handle')
         const t = ctx.locale.bind(NS)
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-gallery: dictionaries')
+
+        // seam v1（S3-a）：对外暴露窄接口，供独立包 / 扩展使用
+        ctx.effect(() => {
+          const seam = installSeam()
+          return () => {
+            if (window.dshGallerySeam === seam) delete window.dshGallerySeam
+          }
+        }, 'dsh-gallery: seam')
 
         ctx.effect(() => {
           const tag = document.createElement('style')
