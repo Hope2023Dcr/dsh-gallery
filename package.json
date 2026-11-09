@@ -2,7 +2,7 @@
   "name": "dsh-gallery",
   "version": "0.14.0",
   "type": "module",
-  "description": "产出画廊：解决 DSH 只在任务结尾才列出产出、过程不可见的问题。实时监控产出目录，图片自动刷新、文件原生预览、音视频面板内直接播放（实测 127MB 可拖；GB 级未分档），还能一键截取视频当前帧，并可给产出打判定攒成一条决策草稿（人工确认后发送），任务进行中即可校验纠正。",
+  "description": "产出画廊：图片 / 文件 / 音视频实时可见与当场校验；按标记筛选、把「定版」真正锁住、批量处置；图上圈选批注攒成决策草稿，人工确认后送回对话。Output gallery for DeepSeek Harness: live image, file and media gallery with marker filters, persisted confirmation, batch actions, region annotation and human-approved decision drafts.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Hope2023Dcr/dsh-gallery.git"
@@ -58,7 +58,13 @@
     "media-gallery",
     "video-preview",
     "audio-preview",
-    "range-seek"
+    "range-seek",
+    "filter",
+    "deliverable",
+    "confirm",
+    "batch",
+    "region-selection",
+    "annotation"
   ],
   "publishConfig": {
     "access": "public",
