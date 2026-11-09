@@ -9,6 +9,7 @@
  */
 
 import { promises as fsp } from 'node:fs'
+import { createHash } from 'node:crypto'
 import path from 'node:path'
 
 import { ROUTE, MEDIA_ROUTE } from './constants.js'
@@ -19,9 +20,24 @@ import {
 } from './settings.js'
 import { scanGallery } from './scan.js'
 import { resolveReadable, serveMedia, contentTypeFor } from './media.js'
-import { MARK_ACTIONS, readMarks, writeMarks, setMark } from './marks.js'
+import { MARK_ACTIONS, readMarks, writeMarks, setMark, setMarksBatch, marksFilePath } from './marks.js'
 
 /** reveal 相关的排查日志（失败/异常时便于定位，不影响功能）。 */
+/**
+ * 把相对路径解析到 roots 内的绝对路径（v0.13.7，删除闸门用）。
+ * 解析不出 / 越界返回 null。
+ */
+function resolveUnderRoots(roots, relPath) {
+  if (!Array.isArray(roots) || roots.length === 0) return null
+  for (const root of roots) {
+    if (typeof root !== "string" || root === "") continue
+    const abs = path.resolve(root, relPath)
+    if (!isInside(root, abs)) continue
+    return abs
+  }
+  return null
+}
+
 function LOG_RESOLVE(label, detail) {
   if (process.env.DSH_GALLERY_DEBUG === '1') {
     try { console.info('dsh-gallery ' + label, JSON.stringify(detail)) } catch { /* 忽略 */ }
@@ -513,6 +529,177 @@ export function registerOpsRoute(ctx, config) {
             } catch (error) {
               return json({ ok: false, error: { code: 'marks-write-failed', message: String(error?.message ?? error) } }, 500)
             }
+          }
+
+          if (op === 'marksBatch') {
+            /**
+             * 批量设 / 清标记（v0.13.7）。
+             *
+             * 一次写入搞定多个卡片，避免「批量确认 20 张 → 20 次读改写」。
+             * 仍然是**只改标记文件、绝不改写自动分类**（数据边界）。
+             *
+             * body: { updates: [{ path, mark }] }  mark 为 null 表示清除
+             */
+            const updates = Array.isArray(body?.updates) ? body.updates : null
+            if (updates === null) {
+              return json({ ok: false, error: { code: 'bad-request', message: '缺少 updates 数组' } }, 400)
+            }
+            if (updates.length > 200) {
+              return json({ ok: false, error: { code: 'too-many', message: '单次最多 200 条' } }, 400)
+            }
+            for (const u of updates) {
+              if (typeof u?.path !== 'string' || u.path === '') {
+                return json({ ok: false, error: { code: 'bad-request', message: 'updates 里有非法 path' } }, 400)
+              }
+              const m = u.mark
+              if (m !== null && m !== undefined) {
+                if (typeof m !== 'object' || !MARK_ACTIONS.includes(m.action)) {
+                  return json({ ok: false, error: { code: 'bad-request', message: 'action 不合法：' + String(m?.action) } }, 400)
+                }
+              }
+            }
+            try {
+              const settingsFile = resolveOptions(config).settingsFile
+              const next = await setMarksBatch(settingsFile, updates)
+              return json({ ok: true, marks: next, applied: updates.length })
+            } catch (error) {
+              return json({ ok: false, error: { code: 'marks-write-failed', message: String(error?.message ?? error) } }, 500)
+            }
+          }
+
+          if (op === 'deleteDiscarded') {
+            /**
+             * 清掉废稿（v0.13.7）—— **永久删除、不进回收站、不可逆**。
+             *
+             * 安全闸门（缺一不可）：
+             *   1. 两阶段：先 dryRun 拿清单，人看完再 confirm 真删
+             *   2. 清单一致性：真删时用 digest 校验「删的就是刚才看过的那批」
+             *   3. 每批上限 10 个（超过由前端分批，服务端再兜一层）
+             *   4. 只删 roots 内的普通文件
+             *   5. 绝不删插件自己的数据文件（settings / marks）
+             *   6. 删完同步清掉对应 marks，并返回被清的路径供前端清反馈篮
+             *
+             * body: { paths: string[], dryRun?: boolean, confirm?: boolean, digest?: string }
+             */
+            const paths = Array.isArray(body?.paths) ? body.paths : null
+            if (paths === null || paths.length === 0) {
+              return json({ ok: false, error: { code: 'bad-request', message: '缺少 paths 数组' } }, 400)
+            }
+            if (paths.length > 10) {
+              return json({
+                ok: false,
+                error: { code: 'batch-too-large', message: '单批最多 10 个，请分批处理', count: paths.length },
+              }, 400)
+            }
+
+            const opts = resolveOptions(config)
+            const settingsFile = opts.settingsFile
+            const marksFile = marksFilePath(settingsFile)
+            const forbidden = new Set([settingsFile, marksFile, settingsFile + '.tmp', marksFile + '.tmp'])
+
+            // ---- 逐个解析并校验 ----
+            const entries = []
+            const rejected = []
+            for (const p of paths) {
+              const relPath = String(p ?? '')
+              if (relPath === '') { rejected.push({ path: relPath, reason: 'empty-path' }); continue }
+              let abs
+              try {
+                abs = path.isAbsolute(relPath) ? relPath : resolveUnderRoots(opts.roots, relPath)
+              } catch {
+                rejected.push({ path: relPath, reason: 'outside-roots' }); continue
+              }
+              if (abs === null || abs === undefined) {
+                rejected.push({ path: relPath, reason: 'outside-roots' }); continue
+              }
+              // 插件自身数据文件一律拒绝
+              if (forbidden.has(abs)) {
+                rejected.push({ path: relPath, reason: 'plugin-data-file' }); continue
+              }
+              let st
+              try {
+                st = await fsp.stat(abs)
+              } catch {
+                rejected.push({ path: relPath, reason: 'not-found' }); continue
+              }
+              if (!st.isFile()) {
+                rejected.push({ path: relPath, reason: 'not-a-file' }); continue
+              }
+              entries.push({ relPath, absolute: abs, size: st.size })
+            }
+
+            // 清单指纹：路径排序后 hash，确保「确认的就是看过的」
+            const digestOf = (list) => {
+              const h = createHash('sha1')
+              for (const e of [...list].map((x) => x.absolute).sort()) h.update(e)
+              return h.digest('hex')
+            }
+            const digest = digestOf(entries)
+
+            // ---- dryRun：只列清单，不动磁盘 ----
+            if (body?.dryRun === true) {
+              return json({
+                ok: true,
+                dryRun: true,
+                count: entries.length,
+                digest,
+                files: entries.map((e) => ({ path: e.relPath, absolute: e.absolute, size: e.size })),
+                rejected,
+              })
+            }
+
+            // ---- 真删：必须显式 confirm + digest 一致 ----
+            if (body?.confirm !== true) {
+              return json({ ok: false, error: { code: 'confirm-required', message: '缺少 confirm 标记' } }, 400)
+            }
+            if (typeof body?.digest !== 'string' || body.digest !== digest) {
+              return json({
+                ok: false,
+                error: { code: 'digest-mismatch', message: '文件清单已变化（可能被重新扫描或改动），请重新确认' },
+              }, 409)
+            }
+
+            // ---- 执行删除（任一批失败立即停，不自动重试）----
+            const deleted = []
+            const failed = []
+            for (const e of entries) {
+              try {
+                await fsp.unlink(e.absolute)
+                deleted.push(e.relPath)
+              } catch (error) {
+                failed.push({ path: e.relPath, reason: String(error?.message ?? error) })
+              }
+            }
+
+            // ---- 同步清掉这些路径的 marks ----
+            let marksLeft = {}
+            if (deleted.length > 0) {
+              try {
+                const cur = await readMarks(settingsFile)
+                const next = { ...cur.marks }
+                for (const rp of deleted) delete next[rp]
+                await writeMarks(settingsFile, next)
+                marksLeft = next
+              } catch (error) {
+                return json({
+                  ok: false,
+                  error: {
+                    code: 'marks-cleanup-failed',
+                    message: '文件已删但标记清理失败：' + String(error?.message ?? error),
+                    deleted,
+                  },
+                }, 500)
+              }
+            }
+
+            return json({
+              ok: failed.length === 0,
+              deleted,
+              failed,
+              rejected,
+              marks: marksLeft,
+              note: `永久删除 ${deleted.length} 个文件（不进回收站）`,
+            })
           }
 
           if (op === 'reveal') {
