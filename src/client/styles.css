@@ -1102,3 +1102,78 @@
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
 }
 .dg-basketToggle[data-gallery-basket-count="0"] { color: #a9b1bd; }
+
+/* ---------- v0.13.7：分类开关 / 确认角标 / 批量 / 删除对话框 ---------- */
+
+/* 分类开关（原 legend，现可点） */
+.dg-legendToggle {
+  appearance: none; border: 1px solid transparent; background: transparent;
+  cursor: pointer; padding: 2px 6px; border-radius: 5px;
+  font: inherit; color: inherit;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.dg-legendToggle:hover { border-color: rgba(255, 255, 255, 0.18); background: rgba(255, 255, 255, 0.06); }
+.dg-legendToggle.dg-legendOff { opacity: 0.42; }
+.dg-legendToggle.dg-legendOff .dg-legendSwatch { filter: grayscale(1); }
+.dg-legendCount { font-size: 11px; color: #a9b1bd; margin-left: 2px; }
+.dg-legendSwatchPending { opacity: 0.55; border-style: dashed !important; }
+
+/* 卡片包装层 + 确认角标 + 多选框 */
+.dg-cardWrap { position: relative; }
+.dg-cardConfirmed > :first-child { outline: 2px solid #4a9d5f; outline-offset: -2px; }
+.dg-cardChecked > :first-child { outline: 2px solid #4a7cff; outline-offset: -2px; }
+.dg-confirmBadge {
+  position: absolute; top: 6px; left: 6px; z-index: 3;
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 1px 6px; border-radius: 9px;
+  background: #4a9d5f; color: #fff; font-size: 10px; font-weight: 600;
+  pointer-events: none; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+.dg-cardCheck {
+  position: absolute; top: 6px; right: 6px; z-index: 4;
+  width: 20px; height: 20px; border-radius: 4px;
+  border: 1.5px solid rgba(255, 255, 255, 0.65);
+  background: rgba(0, 0, 0, 0.45); color: #fff;
+  font-size: 12px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.dg-cardCheck:hover { border-color: #fff; background: rgba(0, 0, 0, 0.7); }
+.dg-cardCheckOn { background: #4a7cff; border-color: #4a7cff; }
+
+/* 批量操作条 */
+.dg-batchBar {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 6px 10px; margin: 0 0 6px;
+  background: rgba(74, 124, 255, 0.14);
+  border: 1px solid rgba(74, 124, 255, 0.35); border-radius: 6px;
+  font-size: 12px;
+}
+.dg-batchCount { font-weight: 600; color: #a9c2ff; white-space: nowrap; }
+.dg-batchOps { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* 危险动作按钮（清掉废稿） */
+.dg-dangerBtn { border-color: rgba(220, 80, 80, 0.55) !important; color: #ff9c9c !important; }
+.dg-dangerBtn:hover:not(:disabled) { background: rgba(220, 80, 80, 0.18) !important; border-color: #ff9c9c !important; }
+.dg-dangerText { color: #ff9c9c; font-size: 12px; font-weight: 600; }
+
+/* 删除确认对话框 */
+.dg-modalLayer {
+  position: fixed; inset: 0; z-index: 80;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.66);
+}
+.dg-modal {
+  width: min(560px, 92vw); max-height: 82vh; display: flex; flex-direction: column;
+  background: #1b1e24; color: #e8eaed;
+  border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 10px; overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+}
+.dg-modalHead { padding: 12px 14px; font-size: 14px; font-weight: 600; border-bottom: 1px solid rgba(255, 255, 255, 0.1); background: #22262e; }
+.dg-modalBody { padding: 12px 14px; overflow: auto; flex: 1; font-size: 12px; }
+.dg-modalSub { color: #a9b1bd; margin: 6px 0; }
+.dg-modalOps { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 14px; border-top: 1px solid rgba(255, 255, 255, 0.1); background: #22262e; }
+.dg-discardList { list-style: none; margin: 8px 0 0; padding: 0; max-height: 320px; overflow: auto; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px; }
+.dg-discardList li { display: flex; justify-content: space-between; gap: 10px; padding: 5px 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.06); font-family: ui-monospace, Consolas, monospace; font-size: 11px; }
+.dg-discardList li:last-child { border-bottom: none; }
+.dg-discardPath { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.dg-discardSize { color: #a9b1bd; white-space: nowrap; }
