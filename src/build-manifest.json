@@ -12,10 +12,11 @@
     "src/client/07-media.js",
     "src/client/08-cards.js",
     "src/client/09-viewer.js",
-    "src/client/10-settings.js",
-    "src/client/11-body.js",
-    "src/client/12-chrome.js",
-    "src/client/13-entry.js"
+    "src/client/10-annotate.js",
+    "src/client/11-settings.js",
+    "src/client/12-body.js",
+    "src/client/13-chrome.js",
+    "src/client/14-entry.js"
   ],
   "shared": "src/shared/protocol.js",
   "protocolOutput": "host/protocol.js",
