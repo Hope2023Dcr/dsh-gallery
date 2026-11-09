@@ -109,6 +109,37 @@ const AUDIO_EXTS = ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.oga', '.o
       catLegendInput: '输入素材',
       catLegendIntermediate: '中间产物',
       catLegendUnknown: '未归类',
+      catFilterFinalConfirmed: '最终交付·已确认',
+      catFilterFinalPending: '最终交付·待确认',
+      filterShowHint: '点击显示「{label}」',
+      filterHideHint: '点击隐藏「{label}」',
+      confirmBadgeLabel: '已确认',
+      confirmBadgeHint: '这张已定为最终版（判断已锁住，刷新/重启都保留）',
+      batchSelect: '选中以批量处理',
+      batchUnselect: '取消选中',
+      batchBarTitle: '已选 {n} 个',
+      batchConfirm: '确认',
+      batchUnconfirm: '取消确认',
+      batchClearMark: '清除标记',
+      batchClearSelection: '取消选择',
+      batchHintConfirm: '把选中卡片标为「已确认」（只改标记，不碰文件）',
+      batchHintClearMark: '清掉选中卡片的标记（只改标记，不碰文件）',
+      discardEntry: '清掉废稿（{n}）',
+      discardEntryHint: '删除所有标过「不要这张」的文件 —— 永久删除，不进回收站',
+      discardDialogTitle: '确认删除废稿',
+      discardDialogWarn: '以下文件将被永久删除，不进回收站，删除后无法恢复。',
+      discardDialogCount: '共 {n} 个文件',
+      discardDialogTooMany: '单批最多 10 个，当前 {n} 个。请分批处理。',
+      discardDialogConfirm: '永久删除这 {n} 个文件',
+      discardDialogCancel: '取消',
+      discardDialogDeleting: '正在删除…',
+      discardDone: '已永久删除 {n} 个文件',
+      discardFailed: '删除失败：{msg}',
+      discardDigestMismatch: '文件清单已变化，请重新确认',
+      scanModeEnter: '批量选择',
+      scanModeExit: '退出批量',
+      shownOfTotal: '已显示 {shown} / 共 {total}',
+
       catLegendHint: '边框颜色代表资产类型；「未归类」是会话记录里查不到归属的历史文件',
       // ===== 全局按对话分组 =====
       groupCount: '{count} 个',
@@ -192,6 +223,7 @@ const AUDIO_EXTS = ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.oga', '.o
       ctxMarkApprove: '通过',
       ctxMarkReject: '不要这张',
       ctxMarkFinalize: '定为最终版',
+      ctxMarkUnconfirm: '取消确认',
       ctxMarkRedo: '单维重做',
       ctxMarkRegen: '选择性重生成',
       ctxMarkReference: '设为参照',
@@ -312,6 +344,37 @@ const AUDIO_EXTS = ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.oga', '.o
       catLegendInput: 'Input material',
       catLegendIntermediate: 'Interim product',
       catLegendUnknown: 'Unclassified',
+      catFilterFinalConfirmed: 'Final · confirmed',
+      catFilterFinalPending: 'Final · pending',
+      filterShowHint: 'Click to show "{label}"',
+      filterHideHint: 'Click to hide "{label}"',
+      confirmBadgeLabel: 'Confirmed',
+      confirmBadgeHint: 'Marked as final (the decision is persisted across refresh and restart)',
+      batchSelect: 'Select for batch actions',
+      batchUnselect: 'Deselect',
+      batchBarTitle: '{n} selected',
+      batchConfirm: 'Confirm',
+      batchUnconfirm: 'Unconfirm',
+      batchClearMark: 'Clear marks',
+      batchClearSelection: 'Clear selection',
+      batchHintConfirm: 'Mark selected cards as confirmed (marks only, files untouched)',
+      batchHintClearMark: 'Clear marks on selected cards (marks only, files untouched)',
+      discardEntry: 'Delete discarded ({n})',
+      discardEntryHint: 'Permanently delete every file marked "reject" — bypasses the recycle bin',
+      discardDialogTitle: 'Confirm deleting discarded files',
+      discardDialogWarn: 'These files will be permanently deleted. They do not go to the recycle bin and cannot be restored.',
+      discardDialogCount: '{n} file(s)',
+      discardDialogTooMany: 'At most 10 per batch; you have {n}. Please process in batches.',
+      discardDialogConfirm: 'Permanently delete these {n} files',
+      discardDialogCancel: 'Cancel',
+      discardDialogDeleting: 'Deleting…',
+      discardDone: 'Permanently deleted {n} file(s)',
+      discardFailed: 'Delete failed: {msg}',
+      discardDigestMismatch: 'The file list changed; please confirm again',
+      scanModeEnter: 'Select',
+      scanModeExit: 'Exit selection',
+      shownOfTotal: '{shown} of {total} shown',
+
       catLegendHint: 'Border color shows the asset type; “Unclassified” means the session logs have no record of it',
       // Grouped by conversation (global view)
       groupCount: '{count} files',
@@ -393,6 +456,7 @@ const AUDIO_EXTS = ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.oga', '.o
       ctxMarkApprove: 'Approve',
       ctxMarkReject: 'Reject',
       ctxMarkFinalize: 'Finalize',
+      ctxMarkUnconfirm: 'Unconfirm',
       ctxMarkRedo: 'Redo one dimension',
       ctxMarkRegen: 'Regenerate selection',
       ctxMarkReference: 'Set as reference',
@@ -1764,6 +1828,81 @@ const AUDIO_EXTS = ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.oga', '.o
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
 }
 .dg-basketToggle[data-gallery-basket-count="0"] { color: #a9b1bd; }
+
+/* ---------- v0.13.7：分类开关 / 确认角标 / 批量 / 删除对话框 ---------- */
+
+/* 分类开关（原 legend，现可点） */
+.dg-legendToggle {
+  appearance: none; border: 1px solid transparent; background: transparent;
+  cursor: pointer; padding: 2px 6px; border-radius: 5px;
+  font: inherit; color: inherit;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.dg-legendToggle:hover { border-color: rgba(255, 255, 255, 0.18); background: rgba(255, 255, 255, 0.06); }
+.dg-legendToggle.dg-legendOff { opacity: 0.42; }
+.dg-legendToggle.dg-legendOff .dg-legendSwatch { filter: grayscale(1); }
+.dg-legendCount { font-size: 11px; color: #a9b1bd; margin-left: 2px; }
+.dg-legendSwatchPending { opacity: 0.55; border-style: dashed !important; }
+
+/* 卡片包装层 + 确认角标 + 多选框 */
+.dg-cardWrap { position: relative; }
+.dg-cardConfirmed > :first-child { outline: 2px solid #4a9d5f; outline-offset: -2px; }
+.dg-cardChecked > :first-child { outline: 2px solid #4a7cff; outline-offset: -2px; }
+.dg-confirmBadge {
+  position: absolute; top: 6px; left: 6px; z-index: 3;
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 1px 6px; border-radius: 9px;
+  background: #4a9d5f; color: #fff; font-size: 10px; font-weight: 600;
+  pointer-events: none; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+.dg-cardCheck {
+  position: absolute; top: 6px; right: 6px; z-index: 4;
+  width: 20px; height: 20px; border-radius: 4px;
+  border: 1.5px solid rgba(255, 255, 255, 0.65);
+  background: rgba(0, 0, 0, 0.45); color: #fff;
+  font-size: 12px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.dg-cardCheck:hover { border-color: #fff; background: rgba(0, 0, 0, 0.7); }
+.dg-cardCheckOn { background: #4a7cff; border-color: #4a7cff; }
+
+/* 批量操作条 */
+.dg-batchBar {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 6px 10px; margin: 0 0 6px;
+  background: rgba(74, 124, 255, 0.14);
+  border: 1px solid rgba(74, 124, 255, 0.35); border-radius: 6px;
+  font-size: 12px;
+}
+.dg-batchCount { font-weight: 600; color: #a9c2ff; white-space: nowrap; }
+.dg-batchOps { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* 危险动作按钮（清掉废稿） */
+.dg-dangerBtn { border-color: rgba(220, 80, 80, 0.55) !important; color: #ff9c9c !important; }
+.dg-dangerBtn:hover:not(:disabled) { background: rgba(220, 80, 80, 0.18) !important; border-color: #ff9c9c !important; }
+.dg-dangerText { color: #ff9c9c; font-size: 12px; font-weight: 600; }
+
+/* 删除确认对话框 */
+.dg-modalLayer {
+  position: fixed; inset: 0; z-index: 80;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.66);
+}
+.dg-modal {
+  width: min(560px, 92vw); max-height: 82vh; display: flex; flex-direction: column;
+  background: #1b1e24; color: #e8eaed;
+  border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 10px; overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+}
+.dg-modalHead { padding: 12px 14px; font-size: 14px; font-weight: 600; border-bottom: 1px solid rgba(255, 255, 255, 0.1); background: #22262e; }
+.dg-modalBody { padding: 12px 14px; overflow: auto; flex: 1; font-size: 12px; }
+.dg-modalSub { color: #a9b1bd; margin: 6px 0; }
+.dg-modalOps { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 14px; border-top: 1px solid rgba(255, 255, 255, 0.1); background: #22262e; }
+.dg-discardList { list-style: none; margin: 8px 0 0; padding: 0; max-height: 320px; overflow: auto; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px; }
+.dg-discardList li { display: flex; justify-content: space-between; gap: 10px; padding: 5px 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.06); font-family: ui-monospace, Consolas, monospace; font-size: 11px; }
+.dg-discardList li:last-child { border-bottom: none; }
+.dg-discardPath { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.dg-discardSize { color: #a9b1bd; white-space: nowrap; }
 `
 
 
@@ -2628,6 +2767,10 @@ function serializeFeedback(feedback) {
           : null,
         actions.onMark !== undefined
           ? entry('mark-finalize', t('ctxMarkFinalize'), '★', () => actions.onMark('finalize'))
+          : null,
+        // v0.13.7：已确认的卡片给出「取消确认」，退回待确认
+        actions.onUnconfirm !== undefined && actions.confirmed === true
+          ? entry('mark-unconfirm', t('ctxMarkUnconfirm'), '☆', () => actions.onUnconfirm())
           : null,
         actions.onMark !== undefined
           ? entry('mark-redo', t('ctxMarkRedo'), '↻', () => actions.onMark('redo-one-dim'))
@@ -4219,6 +4362,33 @@ ${absPath}
       const groupsInitRef = React.useRef(false)
       // 全局分组：哪些组显示了中间产物
       const [showInterim, setShowInterim] = React.useState({})
+      /**
+       * 分类显隐开关（v0.13.7）。
+       *
+       * 只记本次使用：不持久化，重开面板 / 重启回全显示。
+       * 理由：用户若忘了自己关过哪一类，会以为文件丢了 —— 每次从全显示开始最不容易误解。
+       *
+       * 键：
+       *   finalConfirmed  —— 最终交付·已确认（确认态，见 3.2）
+       *   finalPending    —— 最终交付·待确认
+       *   input           —— 输入素材
+       *   intermediate    —— 中间产物（与组内开关同源）
+       *   unknown         —— 未归类
+       */
+      const [categoryFilter, setCategoryFilter] = React.useState({
+        finalConfirmed: true,
+        finalPending: true,
+        input: true,
+        intermediate: true,
+        unknown: true,
+      })
+      /** 批量选择（v0.13.7）：选中的 relPath 集合。清空条件：切 kind / 切 scope / 刷新后失效项自动剔除。 */
+      const [selected, setSelected] = React.useState(new Set())
+      /** 批量模式：用户显式开启，或已有选中项时自动生效（避免勾了看不见批量条）。 */
+      const [batchMode, setBatchMode] = React.useState(false)
+      const selectMode = batchMode || selected.size > 0
+      /** 清废稿确认对话框：null=关闭；{ phase:'list'|'deleting', files, digest, count } */
+      const [discardDialog, setDiscardDialog] = React.useState(null)
       const toggleGroup = React.useCallback((key) => {
         setOpenGroups((prev) => {
           const next = new Set(prev)
@@ -4264,8 +4434,98 @@ ${absPath}
        * 给某卡片设标记 → 进反馈篮。
        * 只改本地状态 + 落盘 marks，**绝不发送任何消息**。
        */
+      /**
+       * 卡片的「确认态」—— 唯一真源是 marks 里的 confirmed 字段（v0.13.7）。
+       *
+       * **数据边界（最要紧）**：确认态只读标记文件，绝不读 / 写自动分类。
+       * 分类是机器猜的、会随 5 秒刷新变；判断是人给的、必须留得住。
+       */
+      const isConfirmed = React.useCallback((relPath) => {
+        return marks[relPath]?.confirmed === true
+      }, [marks])
+
+      /**
+       * 卡片的分类分组（用于顶部开关筛选）：
+       *   finalConfirmed / finalPending / input / intermediate / unknown
+       *
+       * 注意「最终交付」拆两态：靠确认态区分，不靠自动分类的 final。
+       * 一张 final 的卡片若没确认 → finalPending；确认了 → finalConfirmed。
+       */
+      const bucketOf = React.useCallback((file) => {
+        if (isConfirmed(file.relPath)) return 'finalConfirmed'
+        if (file.category === 'final') return 'finalPending'
+        if (file.category === 'input') return 'input'
+        if (file.category === 'intermediate') return 'intermediate'
+        return 'unknown'
+      }, [isConfirmed])
+
+      /** 切一个分类的显隐。 */
+      const toggleCategory = React.useCallback((key) => {
+        setCategoryFilter((prev) => ({ ...prev, [key]: !prev[key] }))
+      }, [])
+
+      /** 批量选择切换。 */
+      const toggleSelect = React.useCallback((relPath) => {
+        setSelected((prev) => {
+          const next = new Set(prev)
+          if (next.has(relPath)) next.delete(relPath)
+          else next.add(relPath)
+          return next
+        })
+      }, [])
+
+      /** 批量：确认 / 取消确认 / 清除标记（只改标记，不碰磁盘）。 */
+      const batchMark = React.useCallback(async (action) => {
+        const paths = [...selected]
+        if (paths.length === 0) return
+        const updates = paths.map((p) => ({
+          path: p,
+          // 确认：保留原有 action，加 confirmed:true
+          // 取消确认：去掉 confirmed
+          // 清除：整条删掉
+          mark: action === 'clear'
+            ? null
+            : action === 'confirm'
+              ? { ...(marks[p] ?? { action: 'finalize' }), confirmed: true }
+              : (() => {
+                  const cur = marks[p]
+                  if (cur === undefined) return null
+                  const next = { ...cur }
+                  delete next.confirmed
+                  // 若原来只为确认而建的 finalize 标记，取消后整条删掉
+                  if (next.action === 'finalize' && Object.keys(next).filter((k) => k !== 'action' && k !== 'markedAt').length === 0) {
+                    return null
+                  }
+                  return next
+                })(),
+        }))
+        // 本地先行（乐观更新）
+        setMarks((prev) => {
+          const next = { ...prev }
+          for (const u of updates) {
+            if (u.mark === null) delete next[u.path]
+            else next[u.path] = u.mark
+          }
+          return next
+        })
+        try {
+          const payload = await callHost('marksBatch', { updates })
+          if (payload?.ok === false) throw new Error(payload?.error?.message ?? t('errorTitle'))
+          if (payload?.marks !== undefined) setMarks(payload.marks)
+        } catch (error) {
+          console.warn('dsh-gallery: 批量标记失败', error)
+        }
+        setSelected(new Set())
+      }, [selected, marks, t])
+
       const doMark = React.useCallback(async (item, action, extra) => {
-        const mark = { action, ...(extra ?? {}) }
+        /**
+         * v0.13.7：`finalize` = 「定为最终版」要写成**持久确认态**。
+         *
+         * confirmed 字段是唯一真源：存进 marks 文件，刷新 / 重扫 / 切会话 / 重启都在。
+         * **绝不回写自动分类** —— 分类是机器猜的会变，判断是人给的必须留得住。
+         */
+        const mark = { action, ...(extra ?? {}), ...(action === 'finalize' ? { confirmed: true } : {}) }
         setMarks((prev) => ({ ...prev, [item.relPath]: mark }))
         setBasketOpen(true)
         try {
@@ -4296,6 +4556,29 @@ ${absPath}
           }
         }
       }, [])
+
+      /** 取消确认（v0.13.7）：把 confirmed 去掉，退回「待确认」。 */
+      const unconfirmOne = React.useCallback(async (relPath) => {
+        const cur = marks[relPath]
+        if (cur === undefined) return
+        const next = { ...cur }
+        delete next.confirmed
+        const cleaned = (next.action === 'finalize' &&
+          Object.keys(next).filter((k) => k !== 'action' && k !== 'markedAt').length === 0)
+          ? null
+          : next
+        setMarks((prev) => {
+          const n = { ...prev }
+          if (cleaned === null) delete n[relPath]
+          else n[relPath] = cleaned
+          return n
+        })
+        try {
+          await callHost('marks', { path: relPath, mark: cleaned })
+        } catch (error) {
+          console.warn('dsh-gallery: 取消确认失败', error)
+        }
+      }, [marks])
 
       /** 移除一条标记。 */
       const removeMark = React.useCallback(async (relPath) => {
@@ -4624,28 +4907,227 @@ ${absPath}
         ? format(t('feedbackBasketToggleN'), { n: markedCount })
         : t('feedbackBasketToggle'))
 
+      /**
+       * 各分类的全局计数（供顶部开关显示数字 + 判断「已显示 N / 共 M」）。
+       * v0.13.7：确认态计数来自 marks，不来自自动分类。
+       */
+      const catCounts = React.useMemo(() => {
+        const c = { finalConfirmed: 0, finalPending: 0, input: 0, intermediate: 0, unknown: 0 }
+        for (const it of items) {
+          const b = bucketOf(it)
+          if (Object.prototype.hasOwnProperty.call(c, b)) c[b] += 1
+        }
+        return c
+      }, [items, bucketOf])
+      const confirmedCount = catCounts.finalConfirmed
+      const pendingCount = catCounts.finalPending
+      const inputCount = catCounts.input
+      const interimCount = catCounts.intermediate
+      const unknownCount = catCounts.unknown
+
+      /** 按当前开关过滤后的可见文件数（供「已显示 N / 共 M」）。 */
+      const visibleStats = React.useMemo(() => {
+        let shown = 0
+        let total = 0
+        for (const it of items) {
+          total += 1
+          if (categoryFilter[bucketOf(it)] !== false) shown += 1
+        }
+        return { shown, total }
+      }, [items, categoryFilter, bucketOf])
+
       const hasUnknown = data !== null && Array.isArray(data.groups) &&
         data.groups.some((gr) => (gr.counts?.unknown ?? 0) > 0)
+      /**
+       * 分类开关（v0.13.7）：原来只是说明色块，现在可点。
+       *
+       * 规则：
+       *   · 彩色 = 显示，灰色 = 不显示
+       *   · 只有「最终交付」拆两态（已确认 / 待确认）；其余五种表态不进这里
+       *   · 「未归类」只在确实存在时出现
+       *   · 只记本次使用，不持久化
+       */
+      const filterToggle = (key, label, swatchClass, count, alwaysShow) => {
+        const on = categoryFilter[key] !== false
+        if (!on && !alwaysShow && count === 0) return null
+        return h('button', {
+          type: 'button',
+          key: 'tog:' + key,
+          className: `dg-legendItem dg-legendToggle${on ? '' : ' dg-legendOff'}`,
+          'data-gallery-filter': key,
+          'data-gallery-filter-on': on ? '1' : '0',
+          title: on ? format(t('filterHideHint'), { label }) : format(t('filterShowHint'), { label }),
+          onClick: () => toggleCategory(key),
+        }, [
+          h('span', { className: `dg-legendSwatch ${swatchClass}`, key: 's' }),
+          h('span', { key: 'l' }, label),
+          count > 0 ? h('span', { className: 'dg-legendCount', key: 'n' }, String(count)) : null,
+        ])
+      }
+
       const legend = data !== null && items.length > 0
-        ? h('div', { className: 'dg-legend', key: 'legend', title: t('catLegendHint') }, [
-            h('span', { className: 'dg-legendItem', key: 'f' }, [
-              h('span', { className: 'dg-legendSwatch dg-legendSwatch-final', key: 's' }),
-              h('span', { key: 'l' }, t('catLegendFinal')),
-            ]),
-            h('span', { className: 'dg-legendItem', key: 'i' }, [
-              h('span', { className: 'dg-legendSwatch dg-legendSwatch-input', key: 's' }),
-              h('span', { key: 'l' }, t('catLegendInput')),
-            ]),
-            h('span', { className: 'dg-legendItem', key: 'm' }, [
-              h('span', { className: 'dg-legendSwatch dg-legendSwatch-intermediate', key: 's' }),
-              h('span', { key: 'l' }, t('catLegendIntermediate')),
-            ]),
+        ? h('div', { className: 'dg-legend', key: 'legend', 'data-gallery-filterbar': true }, [
+            // 最终交付 · 已确认
+            filterToggle('finalConfirmed', t('catFilterFinalConfirmed'),
+              'dg-legendSwatch-final', confirmedCount, true),
+            // 最终交付 · 待确认
+            filterToggle('finalPending', t('catFilterFinalPending'),
+              'dg-legendSwatch-final dg-legendSwatchPending', pendingCount, true),
+            filterToggle('input', t('catLegendInput'), 'dg-legendSwatch-input', inputCount, true),
+            filterToggle('intermediate', t('catLegendIntermediate'), 'dg-legendSwatch-intermediate', interimCount, true),
             hasUnknown
-              ? h('span', { className: 'dg-legendItem', key: 'u' }, [
-                  h('span', { className: 'dg-legendSwatch dg-legendSwatch-unknown', key: 's' }),
-                  h('span', { key: 'l' }, t('catLegendUnknown')),
-                ])
+              ? filterToggle('unknown', t('catLegendUnknown'), 'dg-legendSwatch-unknown', unknownCount, true)
               : null,
+          ])
+        : null
+
+      /**
+       * 批量操作条（v0.13.7）—— 有选中项时出现。
+       * 三个动作：确认 / 取消确认 / 清除标记，**全部只改标记、不碰磁盘**。
+       */
+      const selectedCount = selected.size
+      const batchBar = selectedCount > 0
+        ? h('div', { className: 'dg-batchBar', key: 'batchBar', 'data-gallery-batch-bar': true }, [
+            h('span', { className: 'dg-batchCount', key: 'n' }, format(t('batchBarTitle'), { n: selectedCount })),
+            h('div', { className: 'dg-batchOps', key: 'ops' }, [
+              h('button', {
+                type: 'button', className: 'dg-btn dg-btnSmall', key: 'confirm',
+                'data-gallery-batch-confirm': true,
+                title: t('batchHintConfirm'),
+                onClick: () => { void batchMark('confirm') },
+              }, t('batchConfirm')),
+              h('button', {
+                type: 'button', className: 'dg-btn dg-btnSmall', key: 'unconfirm',
+                'data-gallery-batch-unconfirm': true,
+                onClick: () => { void batchMark('unconfirm') },
+              }, t('batchUnconfirm')),
+              h('button', {
+                type: 'button', className: 'dg-btn dg-btnSmall', key: 'clearmark',
+                'data-gallery-batch-clear': true,
+                title: t('batchHintClearMark'),
+                onClick: () => { void batchMark('clear') },
+              }, t('batchClearMark')),
+              h('button', {
+                type: 'button', className: 'dg-btn dg-btnSmall', key: 'clearSel',
+                'data-gallery-batch-clearsel': true,
+                onClick: () => { setSelected(new Set()); setBatchMode(false) },
+              }, t('batchClearSelection')),
+            ]),
+          ])
+        : null
+
+      /**
+       * 「清掉废稿」入口（v0.13.7）—— 只在确实有 reject 标记时出现。
+       * 这是**唯一会碰磁盘**的批量动作，走独立两阶段确认。
+       */
+      const discardPaths = React.useMemo(
+        () => Object.keys(marks).filter((rp) => marks[rp]?.action === 'reject'),
+        [marks],
+      )
+      const discardEntry = discardPaths.length > 0
+        ? h('button', {
+            type: 'button',
+            className: 'dg-btn dg-btnSmall dg-dangerBtn',
+            key: 'discardEntry',
+            'data-gallery-discard-entry': true,
+            'data-gallery-discard-count': discardPaths.length,
+            title: t('discardEntryHint'),
+            onClick: () => { void openDiscardDialog() },
+          }, format(t('discardEntry'), { n: discardPaths.length }))
+        : null
+
+      /** 打开删除确认：先向 Host 要清单（dryRun，不动磁盘）。 */
+      const openDiscardDialog = React.useCallback(async () => {
+        try {
+          const payload = await callHost('deleteDiscarded', { paths: discardPaths, dryRun: true })
+          if (payload?.ok === false) throw new Error(payload?.error?.message ?? t('errorTitle'))
+          setDiscardDialog({
+            phase: 'list',
+            files: payload?.files ?? [],
+            digest: payload?.digest ?? '',
+            count: payload?.count ?? 0,
+            rejected: payload?.rejected ?? [],
+          })
+        } catch (error) {
+          console.error('dsh-gallery: 取删除清单失败', error)
+        }
+      }, [discardPaths, t])
+
+      /** 真正执行删除（两阶段第二段）。 */
+      const runDiscard = React.useCallback(async () => {
+        if (discardDialog === null) return
+        if (discardDialog.count > 10) return
+        setDiscardDialog((prev) => (prev === null ? null : { ...prev, phase: 'deleting' }))
+        try {
+          const payload = await callHost('deleteDiscarded', {
+            paths: discardPaths,
+            confirm: true,
+            digest: discardDialog.digest,
+          })
+          if (payload?.ok === false) {
+            const code = payload?.error?.code
+            throw new Error(
+              code === 'digest-mismatch' ? t('discardDigestMismatch')
+                : code === 'batch-too-large' ? format(t('discardDialogTooMany'), { n: discardPaths.length })
+                  : (payload?.error?.message ?? t('errorTitle')))
+          }
+          const deleted = payload?.deleted ?? []
+          // 同步清本地状态：marks + 反馈篮（先拿被删路径，再剔）
+          if (payload?.marks !== undefined) setMarks(payload.marks)
+          // 反馈篮条目由 setMarks + 篮内渲染源自动同步，无需单独删
+          setSelected(new Set())
+          setDiscardDialog(null)
+          console.info('dsh-gallery:', format(t('discardDone'), { n: deleted.length }))
+          void refresh()
+        } catch (error) {
+          console.error('dsh-gallery: 删除失败', error)
+          setDiscardDialog((prev) => (prev === null ? null : { ...prev, phase: 'list', error: String(error?.message ?? error) }))
+        }
+      }, [discardDialog, discardPaths, t])
+
+      /** 删除确认对话框（两阶段：清单 → 真删）。 */
+      const discardDialogNode = discardDialog !== null
+        ? h('div', { className: 'dg-modalLayer', key: 'discardModal', 'data-gallery-discard-dialog': true }, [
+            h('div', { className: 'dg-modal', role: 'dialog', 'aria-modal': 'true' }, [
+              h('div', { className: 'dg-modalHead', key: 'h' }, t('discardDialogTitle')),
+              h('div', { className: 'dg-modalBody', key: 'b' }, [
+                h('p', { className: 'dg-dangerText', key: 'warn' }, t('discardDialogWarn')),
+                discardDialog.count > 10
+                  ? h('p', { className: 'dg-dangerText', key: 'tooMany' },
+                      format(t('discardDialogTooMany'), { n: discardDialog.count }))
+                  : null,
+                h('p', { className: 'dg-modalSub', key: 'cnt' }, format(t('discardDialogCount'), { n: discardDialog.count })),
+                // **完整路径逐条列出**（安全闸门要求，不许「已选 N 个」一句带过）
+                h('ul', { className: 'dg-discardList', key: 'list', 'data-gallery-discard-files': true },
+                  (discardDialog.files ?? []).map((f) => h('li', {
+                    key: f.absolute,
+                    title: f.absolute,
+                    'data-gallery-discard-file': f.absolute,
+                  }, [
+                    h('span', { className: 'dg-discardPath', key: 'p' }, f.path),
+                    h('span', { className: 'dg-discardSize', key: 's' }, formatBytes(f.size)),
+                  ]))),
+                discardDialog.error !== undefined
+                  ? h('p', { className: 'dg-dangerText', key: 'err' },
+                      format(t('discardFailed'), { msg: discardDialog.error }))
+                  : null,
+              ]),
+              h('div', { className: 'dg-modalOps', key: 'o' }, [
+                h('button', {
+                  type: 'button', className: 'dg-btn', key: 'cancel',
+                  disabled: discardDialog.phase === 'deleting',
+                  onClick: () => setDiscardDialog(null),
+                }, t('discardDialogCancel')),
+                h('button', {
+                  type: 'button', className: 'dg-btn dg-dangerBtn', key: 'ok',
+                  'data-gallery-discard-confirm': true,
+                  disabled: discardDialog.phase === 'deleting' || discardDialog.count > 10 || discardDialog.count === 0,
+                  onClick: () => { void runDiscard() },
+                }, discardDialog.phase === 'deleting'
+                  ? t('discardDialogDeleting')
+                  : format(t('discardDialogConfirm'), { n: discardDialog.count })),
+              ]),
+            ]),
           ])
         : null
 
@@ -4694,6 +5176,51 @@ ${absPath}
         const useGroups = scope === 'global' && Array.isArray(data.groups) && data.groups.length > 0
 
         if (useGroups) {
+          /**
+           * 卡片包装层（v0.13.7）：给任意卡片加「确认角标」+「批量多选框」。
+           *
+           * 为什么不改三个卡片组件：Card / FileCard / MediaCard 各自有复杂的内部结构，
+           * 在它们外面套一层 absolute 定位的 overlay 最省事，也不会影响既有交互
+           * （右键、点击预览、拖拽都不受影响，因为我们只加 pointer-events 可控的子元素）。
+           */
+          const wrapCard = (node, item, key) => {
+            const confirmed = isConfirmed(item.relPath)
+            const checked = selected.has(item.relPath)
+            const showCheckbox = selectMode || checked
+            return h('div', {
+              className: `dg-cardWrap${confirmed ? ' dg-cardConfirmed' : ''}${checked ? ' dg-cardChecked' : ''}`,
+              key: key + ':wrap',
+              'data-gallery-card-wrap': item.relPath,
+              'data-gallery-confirmed': confirmed ? '1' : '0',
+            }, [
+              node,
+              // 确认角标（只在确认态出现，与自动分色边框区分开）
+              confirmed
+                ? h('div', {
+                    className: 'dg-confirmBadge',
+                    key: 'badge',
+                    'data-gallery-confirm-badge': true,
+                    title: t('confirmBadgeHint'),
+                  }, [h('span', { key: 'i' }, '✓'), h('span', { key: 'l' }, t('confirmBadgeLabel'))])
+                : null,
+              // 多选框（批量模式下常显，或已选中时显示）
+              showCheckbox
+                ? h('button', {
+                    type: 'button',
+                    className: `dg-cardCheck${checked ? ' dg-cardCheckOn' : ''}`,
+                    key: 'check',
+                    'data-gallery-card-check': item.relPath,
+                    title: checked ? t('batchUnselect') : t('batchSelect'),
+                    onClick: (e) => {
+                      e.stopPropagation()
+                      e.preventDefault()
+                      toggleSelect(item.relPath)
+                    },
+                  }, checked ? '✓' : '')
+                : null,
+            ])
+          }
+
           const cardFor = (item, groupKey, listForViewer) => {
             // 分组里的文件也走同一套卡片组件
             const enriched = {
@@ -4703,7 +5230,7 @@ ${absPath}
             }
             // 音视频分组视图：必须走 MediaCard，否则会被当成图片卡片渲染（v0.10.1）
             if (kind === 'media') {
-              return h(MediaCard, {
+              return wrapCard(h(MediaCard, {
                 key: `${groupKey}:${item.relPath}`,
                 item: {
                   ...enriched,
@@ -4715,10 +5242,10 @@ ${absPath}
                 absPath: buildAbsPath(data.root, item.relPath),
                 onPlay: (target) => setMediaPlaying(target),
                 onContextMenu: openContextMenu,
-              })
+              }), item, `${groupKey}:${item.relPath}`)
             }
             if (kind === 'file') {
-              return h(FileCard, {
+              return wrapCard(h(FileCard, {
                 key: `${groupKey}:${item.relPath}`,
                 item: enriched,
                 t,
@@ -4735,9 +5262,9 @@ ${absPath}
                   }
                 },
                 onCopy: (abs) => { void copyText(abs) },
-              })
+              }), item, `${groupKey}:${item.relPath}`)
             }
-            return h(Card, {
+            return wrapCard(h(Card, {
               key: `${groupKey}:${item.relPath}`,
               item: enriched,
               t,
@@ -4755,7 +5282,7 @@ ${absPath}
                 if (pos < 0) return
                 openViewer(pos, anchorEl ?? null, list)
               },
-            })
+            }), item, `${groupKey}:${item.relPath}`)
           }
 
           const groupNodes = data.groups.map((group, gi) => {
@@ -4765,12 +5292,24 @@ ${absPath}
             //   - 当前对话：**默认显示**（用户刚做完的就是要看过程，可选收起）
             //   - 其他对话 / 历史资产：**默认隐藏**（避免别人调试图淹没列表）
             // 用户手动切换后，以 showInterim 里记录的为准（true=显示 / false=隐藏）。
+            // 组内「显示中间产物」与顶部「中间产物」开关**同源**（v0.13.7）：
+            //   顶部开关关掉 → 全局都不显示中间产物；
+            //   顶部开着 + 组内开关 → 由组内决定（默认当前对话显示、历史隐藏）。
+            // 不搞两套打架的开关。
             const interimDefault = group.isCurrent === true
             const stored = showInterim[groupKey]
-            const showIntermediate = stored === undefined ? interimDefault : stored
-            const visibleFiles = showIntermediate
-              ? group.files
-              : group.files.filter((f) => f.category !== 'intermediate')
+            const groupWantsIntermediate = stored === undefined ? interimDefault : stored
+            const globalAllowsIntermediate = categoryFilter.intermediate !== false
+            const showIntermediate = groupWantsIntermediate && globalAllowsIntermediate
+
+            // 分类开关过滤：按 bucketOf 判断该文件属哪一类，再查开关
+            const visibleFiles = group.files.filter((f) => {
+              const bucket = bucketOf(f)
+              if (categoryFilter[bucket] === false) return false
+              // 中间产物额外受组内开关控制（上面已算好）
+              if (f.category === 'intermediate' && !showIntermediate) return false
+              return true
+            })
             const hiddenCount = group.files.length - visibleFiles.length
 
             const chips = []
@@ -5040,6 +5579,8 @@ ${absPath}
               onCopy: () => { void copyText(ctxMenu.absPath) },
               onDelete: () => setDeleteTarget({ item: ctxMenu.item, busy: false }),
               // 6 个反馈动作（S3-a）：选中即进反馈篮，不发送
+              confirmed: marks[ctxMenu.item.relPath]?.confirmed === true,
+              onUnconfirm: () => { void unconfirmOne(ctxMenu.item.relPath) },
               onMark: (action) => {
                 const target = ctxMenu.item
                 closeContextMenu()
@@ -5064,6 +5605,9 @@ ${absPath}
       return h('div', { className: 'dg-root', 'data-gallery-root': true }, [
         header,
         basketToggle,
+        batchBar,
+        discardEntry,
+        discardDialogNode,
         legend,
         body,
         pager,
