@@ -113,13 +113,33 @@ node install.mjs --dry-run
 **用户不需要构建**：发布目录里的 `client.js` 与 `host/protocol.js` 都是**已拼好并提交进 git 的产物**。
 Release zip / npm 包 / `install.mjs` 用的都是这些产物。
 
+## 版本标签与文档修订的关系（备忘）
+
+**事实**：`tag v0.13.6` 指向提交 `a67d86b2`（定版代码 + 当时的 README）；
+之后 `main` 上新增了**纯文档提交**（README 措辞、路线图、兼容性章节、隐私表、
+S3-b 选型记录、发布凭据纪律等）。
+
+| 项 | 状态 |
+|---|---|
+| 代码差异 | **无** —— `client.js` / `host/*.js` / `index.js` 与标签逐字节一致 |
+| 文档差异 | 有 —— `main` 上的 README / 路线图 / 新增文档比标签里的新 |
+| 用户装 `#v0.13.6` | 拿到**定版代码** + 略旧的 README（文字差异，不影响功能） |
+| npm `dsh-gallery@0.13.6` | 同上（包在发版时打好，README 是发版那刻的版本） |
+
+**决议：这批文档修订不追发 v0.13.6、不重建 v0.13.6 tag、不重发 v0.13.6 npm。**
+**待办：随 v0.13.7 发版带上这批文档修订**（打 v0.13.7 tag 时自然包含）。
+
+> 为什么不现在补？—— 移动已发布 tag / 重建 Release / 重发同版本 npm 都属于
+> 破坏不可变发布记录的操作，风险高于收益。用户按 `latest` 或 tag 安装拿到的代码都是对的，
+> 差异仅限 README 措辞。
+
 ## 开发侧
 
 | 用途 | 路径 |
 |---|---|
 | 仓库根目录 | 本目录（GitHub 仓库 = 发布目录，路径不要改） |
 | 构建（**改 src/ 后必跑**） | `npm run build`（生成 `client.js` + `host/protocol.js`）；`npm run build -- --check` 只读比对 |
-| 校验 | `node scripts/check.mjs`（或 `./check.sh --install`，18 项中 16 项启用） |
+| 校验 | `node scripts/check.mjs`（或 `./check.sh --install`，**18 项全部启用 / 0 SKIP**） |
 | 契约测试 | `npm test`（显式枚举 `tests/contract/install-whitelist.test.mjs`；Node >= 20） |
 | 迁移与行号映射 | `docs/migration.md` |
 | 版本存档 | `CHANGELOG.md` |
