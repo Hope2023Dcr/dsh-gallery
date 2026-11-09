@@ -30,6 +30,63 @@ const VIDEO_EXTS = ['.mp4', '.webm', '.mov', '.m4v', '.mkv', '.avi', '.ogv']
 /** 音频扩展名。 */
 const AUDIO_EXTS = ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.oga', '.opus', '.wma']
 
+/**
+ * 框选批注的坐标契约（v0.14.0）—— Host 与 Client 的唯一真源。
+ *
+ * 为什么用归一化坐标：批注要落在「图片的某个位置」上，而不是「屏幕上某个像素」。
+ * 写像素值的话，换个窗口尺寸 / 换个缩放比例就全错了。
+ * 用相对宽高的 0–1 比例，无论怎么缩放都能还原到同一块区域。
+ *
+ * 形状类型：
+ *   rect  —— 矩形框（最主要，圈出「这块不对」）
+ *   arrow —— 箭头（指向具体某点）
+ *   text  —— 纯文字标注（钉在某位置，不带框）
+ */
+const ANNOTATION_SHAPES = ["rect", "arrow", "text"]
+
+/**
+ * 一条批注的数据形态：
+ * {
+ *   id: string,                  // 稳定 id（同一次会话内唯一）
+ *   shape: "rect|arrow|text",
+ *   x: number, y: number,        // 起点，归一化 0–1
+ *   w: number, h: number,        // 宽高，归一化 0–1（text/arrow 可只用 x,y）
+ *   note: string,                // 人写的说明（可为空）
+ *   frameMs: number|null,        // 视频帧时间（图片为 null）
+ * }
+ *
+ * 约束：x/y/w/h 必须落在 [0,1]；越界由写入端 clamp。
+ */
+const ANNOTATION_LIMITS = { min: 0, max: 1, maxNoteLength: 500, maxPerAsset: 50 }
+
+/** 把任意数值 clamp 到 [0,1]（批注坐标写入前必须过一遍）。 */
+function clamp01(v) {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return 0
+  if (n < 0) return 0
+  if (n > 1) return 1
+  return n
+}
+
+/** 校验并规整一条批注；不合法返回 null。 */
+function normalizeAnnotation(a) {
+  if (a === null || typeof a !== "object") return null
+  const shape = ANNOTATION_SHAPES.includes(a.shape) ? a.shape : "rect"
+  const note = typeof a.note === "string" ? a.note.slice(0, ANNOTATION_LIMITS.maxNoteLength) : ""
+  const x = clamp01(a.x)
+  const y = clamp01(a.y)
+  let w = clamp01(a.w)
+  let h = clamp01(a.h)
+  // 宽高至少留一点，且不越过右/下边界
+  if (w > 0 && x + w > 1) w = 1 - x
+  if (h > 0 && y + h > 1) h = 1 - y
+  const frameMs = Number.isFinite(a.frameMs) ? Math.max(0, Math.floor(a.frameMs)) : null
+  return {
+    id: typeof a.id === "string" && a.id !== "" ? a.id : ("a" + Math.random().toString(36).slice(2, 10)),
+    shape, x, y, w, h, note, frameMs,
+  }
+}
+
 
     /** tab 类型的身份；也是正文与标题在 keyed slot 里的 key。 */
     const KIND = 'gallery'
@@ -109,6 +166,13 @@ const AUDIO_EXTS = ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.oga', '.o
       catLegendInput: '输入素材',
       catLegendIntermediate: '中间产物',
       catLegendUnknown: '未归类',
+      annotEnter: '标注',
+      annotExit: '退出标注',
+      annotNotePrompt: '这块要改什么？（可留空）',
+      annotNotePlaceholder: '例如：沙发位置偏了 / 色调太暖',
+      annotNoNote: '（无说明）',
+      annotHint: '拖拽画框标出要改的位置，说明会写进决策草稿',
+      annotCount: '批注 {n} 处',
       catFilterFinalConfirmed: '最终交付·已确认',
       catFilterFinalPending: '最终交付·待确认',
       filterShowHint: '点击显示「{label}」',
@@ -344,6 +408,13 @@ const AUDIO_EXTS = ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.oga', '.o
       catLegendInput: 'Input material',
       catLegendIntermediate: 'Interim product',
       catLegendUnknown: 'Unclassified',
+      annotEnter: 'Annotate',
+      annotExit: 'Exit annotate',
+      annotNotePrompt: 'What should change here? (optional)',
+      annotNotePlaceholder: 'e.g. sofa position is off / color is too warm',
+      annotNoNote: '(no note)',
+      annotHint: 'Drag to box the area that needs changes; notes go into the decision draft',
+      annotCount: '{n} annotation(s)',
       catFilterFinalConfirmed: 'Final · confirmed',
       catFilterFinalPending: 'Final · pending',
       filterShowHint: 'Click to show "{label}"',
@@ -1903,6 +1974,41 @@ const AUDIO_EXTS = ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.oga', '.o
 .dg-discardList li:last-child { border-bottom: none; }
 .dg-discardPath { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
 .dg-discardSize { color: #a9b1bd; white-space: nowrap; }
+
+/* ---------- v0.14.0：框选批注层 ---------- */
+
+.dg-annotWrap { position: absolute; inset: 0; }
+.dg-annotSvg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.dg-annotSvg.dg-annotActive { background: rgba(74, 124, 255, 0.04); }
+.dg-btnActive { background: #4a7cff !important; color: #fff !important; border-color: #4a7cff !important; }
+
+/* 批注列表 */
+.dg-annotList {
+  position: absolute; left: 8px; bottom: 8px; z-index: 5;
+  max-width: 300px; max-height: 40%; overflow: auto;
+  background: rgba(27, 30, 36, 0.95); border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px; padding: 6px; display: flex; flex-direction: column; gap: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+.dg-annotItem { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #e8eaed; }
+.dg-annotIndex { color: #8fb6ff; font-weight: 600; }
+.dg-annotText { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 批注输入框 */
+.dg-annotEditor {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 6;
+  width: min(340px, 80%); background: #1b1e24; color: #e8eaed;
+  border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 8px; padding: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6);
+}
+.dg-annotEditorHead { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+.dg-annotInput {
+  width: 100%; box-sizing: border-box; padding: 6px 8px; border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.22); background: #2a2f38; color: #e8eaed;
+  font-size: 12px; font-family: inherit;
+}
+.dg-annotInput:focus { outline: 2px solid #4a7cff; outline-offset: -1px; }
+.dg-annotEditorOps { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
 `
 
 
@@ -3502,7 +3608,7 @@ ${absPath}
      *   - 右键预览区、按 O、点底部按钮 三种方式切换
      *   - 切换时**保留当前缩放与位置**，否则切过去跳回 1x 就没法对比
      */
-    function Viewer({ items, index, onClose, onStep, t, initialOriginal }) {
+    function Viewer({ items, index, onClose, onStep, t, initialOriginal, annotations, onAddAnnotation, onRemoveAnnotation }) {
       const item = items[index]
       // 文件预览已改走 DSH 原生侧栏（session 地址）；此处 Viewer 仅处理图片，isText 恒 false，
       // 下面的文本分支保留为死代码，供 v0.2 若需插件内预览时复用
@@ -3729,6 +3835,13 @@ ${absPath}
         }
       }
       // 中键按下时阻止浏览器默认的自动滚动
+      /** 批注模式（v0.14.0）：开启后指针交给 SVG 标注层，查看器的缩放/拖拽暂停。 */
+      const [annotActive, setAnnotActive] = React.useState(false)
+      const annotsOfCurrent = React.useMemo(
+        () => (typeof annotations === 'function' ? annotations(item) : []),
+        [annotations, item],
+      )
+
       const onMouseDown = (event) => {
         if (event.button === 1) event.preventDefault()
       }
@@ -3992,6 +4105,19 @@ ${absPath}
                 ? format(t('viewerOriginalLoading'), { pct: original.pct })
                 : t('viewerOriginalLoadingIndeterminate'))
             : (originalMode ? `◉ ${t('viewerToPreview')}` : `◎ ${t('viewerToOriginal')}`)),
+          // v0.14.0：批注模式开关
+          h('button', {
+            type: 'button',
+            className: `dg-btn${annotActive ? ' dg-btnActive' : ''}`,
+            key: 'annot',
+            'data-gallery-annot-toggle': true,
+            'aria-pressed': annotActive,
+            title: annotActive ? t('annotExit') : t('annotEnter'),
+            onClick: (event) => {
+              event.stopPropagation()
+              setAnnotActive((v) => !v)
+            },
+          }, annotActive ? `✎ ${t('annotExit')}` : `✎ ${t('annotEnter')}`),
           h('button', { type: 'button', className: 'dg-btn', key: 'prev', onClick: () => onStep(-1), 'aria-label': t('prev') }, '‹'),
           h('button', { type: 'button', className: 'dg-btn', key: 'next', onClick: () => onStep(1), 'aria-label': t('next') }, '›'),
           h('button', { type: 'button', className: 'dg-btn', key: 'close', onClick: onClose, 'aria-label': t('close') }, '✕'),
@@ -4027,20 +4153,35 @@ ${absPath}
             state.status === 'ready'
               ? (isText
                   ? h('pre', { className: 'dg-textPre', key: 'text' }, state.text)
-                  : h('img', {
-                      // 原图模式下显示原图 URL（按需加载好后才有）；
-                      // 未就绪时继续显示预览图，避免黑屏跳变
-                      src: originalMode && original.status === 'ready' ? original.url : state.url,
-                      alt: item.name,
-                      decoding: 'async',
-                      draggable: false,
-                      style: {
-                        transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                        transition: dragRef.current === null ? 'transform 120ms ease-out' : 'none',
-                        userSelect: 'none',
-                        pointerEvents: 'none',
-                      },
-                    }))
+                  // v0.14.0：图片 + 框选批注层（Fragment 包住，批注层覆盖在图上）
+                  : h(React.Fragment, { key: 'imgfrag' }, [
+                      h('img', {
+                        key: 'img',
+                        // 原图模式下显示原图 URL（按需加载好后才有）；
+                        // 未就绪时继续显示预览图，避免黑屏跳变
+                        src: originalMode && original.status === 'ready' ? original.url : state.url,
+                        alt: item.name,
+                        decoding: 'async',
+                        draggable: false,
+                        style: {
+                          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                          transition: dragRef.current === null ? 'transform 120ms ease-out' : 'none',
+                          userSelect: 'none',
+                          pointerEvents: 'none',
+                        },
+                      }),
+                      // 批注层：只在图片（非文本）时出现，且随 zoom 一起变换
+                      h(AnnotationLayer, {
+                        key: 'annot',
+                        t,
+                        annotations: annotsOfCurrent,
+                        active: annotActive,
+                        frameMs: null,
+                        stageRef: bodyRef,
+                        onAdd: (a) => { onAddAnnotation?.(item, a) },
+                        onRemove: (id) => { onRemoveAnnotation?.(item, id) },
+                      }),
+                    ]))
               : state.status === 'binary'
                 ? h('div', { className: 'dg-placeholder', key: 'bin' }, t('binaryHint'))
                 : h('div', { className: state.status === 'failed' ? 'dg-placeholder dg-error' : 'dg-placeholder' },
@@ -4071,6 +4212,193 @@ ${absPath}
      * 用户填一个绝对路径 → Host 校验 → 写入运行时配置 → 立即生效（不重启）。
      * 也可以点「恢复默认」，回到自动探测的结果。
      */
+
+/**
+ * 框选批注层（v0.14.0）—— 在查看器图片上圈出「哪儿不对」。
+ *
+ * 设计要点：
+ *   · 坐标全部归一化（0–1，相对图片宽高），见 shared/protocol.js 的 ANNOTATION_* 契约
+ *   · SVG 覆盖在图片之上；不干扰查看器原有的缩放/平移（只有「批注模式」下才接管指针）
+ *   · 拖拽画矩形 → 立刻弹出输入框写说明 → 存进批注列表
+ *   · 已存在的批注按归一化坐标还原绘制，缩放/换屏都不失真
+ *   · 批注不发送任何东西；出口是与决策草稿同一通道（见 05-feedback.js）
+ */
+
+function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, stageRef }) {
+  const [draft, setDraft] = React.useState(null)
+  const [editing, setEditing] = React.useState(null)
+  const svgRef = React.useRef(null)
+
+  /** 客户坐标 → 归一化（相对 SVG 的实际渲染盒） */
+  const toNorm = (event) => {
+    const el = svgRef.current
+    if (el === null) return null
+    const rect = el.getBoundingClientRect()
+    if (rect.width === 0 || rect.height === 0) return null
+    return {
+      x: clamp01((event.clientX - rect.left) / rect.width),
+      y: clamp01((event.clientY - rect.top) / rect.height),
+    }
+  }
+
+  const onPointerDown = (event) => {
+    if (!active) return
+    // 只响应主键；左键拖拽画框
+    if (event.button !== 0) return
+    const p = toNorm(event)
+    if (p === null) return
+    event.preventDefault()
+    event.stopPropagation()
+    try { event.currentTarget.setPointerCapture(event.pointerId) } catch { /* 忽略 */ }
+    setDraft({ x0: p.x, y0: p.y, x1: p.x, y1: p.y })
+  }
+
+  const onPointerMove = (event) => {
+    if (draft === null) return
+    const p = toNorm(event)
+    if (p === null) return
+    event.preventDefault()
+    event.stopPropagation()
+    setDraft((d) => (d === null ? null : { ...d, x1: p.x, y1: p.y }))
+  }
+
+  const finishDraft = (event) => {
+    if (draft === null) return
+    event.preventDefault()
+    event.stopPropagation()
+    const x = Math.min(draft.x0, draft.x1)
+    const y = Math.min(draft.y0, draft.y1)
+    const w = Math.abs(draft.x1 - draft.x0)
+    const h = Math.abs(draft.y1 - draft.y0)
+    setDraft(null)
+    // 太小当成误点，不产生批注（避免满屏碎框）
+    if (w < 0.01 || h < 0.01) return
+    setEditing({ shape: 'rect', x, y, w, h, note: '', frameMs: frameMs ?? null })
+  }
+
+  const saveEditing = () => {
+    if (editing === null) return
+    const normalized = normalizeAnnotation(editing)
+    if (normalized !== null) onAdd(normalized)
+    setEditing(null)
+  }
+
+  // ---- 绘制已有批注 ----
+  const shapes = (annotations ?? []).map((a) => {
+    if (a.shape === 'text') {
+      return h('g', { key: a.id }, [
+        h('circle', {
+          key: 'dot', cx: (a.x * 100) + '%', cy: (a.y * 100) + '%', r: 4,
+          fill: '#ffd166', stroke: '#000', strokeWidth: 1,
+        }),
+        h('text', {
+          key: 'txt', x: (a.x * 100) + '%', y: (a.y * 100) + '%',
+          dx: 8, dy: 4, fill: '#fff', fontSize: 12, stroke: '#000', strokeWidth: 0.6,
+          style: { paintOrder: 'stroke' },
+        }, a.note || ''),
+      ])
+    }
+    // rect / arrow 都先按矩形画（arrow 后续可细化），带说明文字
+    return h('g', { key: a.id }, [
+      h('rect', {
+        key: 'r',
+        x: (a.x * 100) + '%', y: (a.y * 100) + '%',
+        width: (a.w * 100) + '%', height: (a.h * 100) + '%',
+        fill: 'rgba(74, 124, 255, 0.14)', stroke: '#4a7cff', strokeWidth: 2,
+        rx: 3,
+      }),
+      a.note !== ''
+        ? h('text', {
+            key: 'n',
+            x: (a.x * 100) + '%', y: (a.y * 100) + '%',
+            dx: 4, dy: -6, fill: '#fff', fontSize: 12, stroke: '#000', strokeWidth: 0.6,
+            style: { paintOrder: 'stroke' },
+          }, a.note)
+        : null,
+    ])
+  })
+
+  // ---- 正在画的框 ----
+  const draftShape = draft === null ? null : (() => {
+    const x = Math.min(draft.x0, draft.x1)
+    const y = Math.min(draft.y0, draft.y1)
+    const w = Math.abs(draft.x1 - draft.x0)
+    const h = Math.abs(draft.y1 - draft.y0)
+    return h('rect', {
+      key: 'draft',
+      x: (x * 100) + '%', y: (y * 100) + '%',
+      width: (w * 100) + '%', height: (h * 100) + '%',
+      fill: 'rgba(74, 124, 255, 0.22)', stroke: '#4a7cff', strokeWidth: 2, strokeDasharray: '5 3',
+    })
+  })()
+
+  const editor = editing === null ? null : h('div', {
+    className: 'dg-annotEditor',
+    key: 'editor',
+    'data-gallery-annot-editor': true,
+  }, [
+    h('div', { className: 'dg-annotEditorHead', key: 'h' }, t('annotNotePrompt')),
+    h('input', {
+      type: 'text',
+      key: 'inp',
+      className: 'dg-annotInput',
+      'data-gallery-annot-input': true,
+      autoFocus: true,
+      placeholder: t('annotNotePlaceholder'),
+      value: editing.note,
+      maxLength: 500,
+      onChange: (e) => setEditing((cur) => (cur === null ? null : { ...cur, note: e.target.value })),
+      onKeyDown: (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); saveEditing() }
+        if (e.key === 'Escape') { e.preventDefault(); setEditing(null) }
+      },
+    }),
+    h('div', { className: 'dg-annotEditorOps', key: 'o' }, [
+      h('button', { type: 'button', className: 'dg-btn dg-btnSmall', key: 'c', onClick: () => setEditing(null) }, t('cancel')),
+      h('button', {
+        type: 'button', className: 'dg-btn dg-btnSmall dg-primaryBtn', key: 's',
+        'data-gallery-annot-save': true, onClick: saveEditing,
+      }, t('save')),
+    ]),
+  ])
+
+  const list = (annotations ?? []).length === 0 ? null : h('div', {
+    className: 'dg-annotList', key: 'list', 'data-gallery-annot-list': true,
+  }, (annotations ?? []).map((a) => h('div', {
+    className: 'dg-annotItem', key: a.id, 'data-gallery-annot-id': a.id,
+  }, [
+    h('span', { className: 'dg-annotIndex', key: 'i' }, '#'),
+    h('span', { className: 'dg-annotText', key: 't' }, a.note || t('annotNoNote')),
+    h('button', {
+      type: 'button', className: 'dg-btn dg-btnSmall dg-btnIcon', key: 'x',
+      title: t('delete'), 'data-gallery-annot-remove': a.id,
+      onClick: () => onRemove(a.id),
+    }, '✕'),
+  ])))
+
+  return h('div', { className: 'dg-annotWrap', key: 'annot', style: { position: 'absolute', inset: 0 } }, [
+    h('svg', {
+      key: 'svg',
+      ref: svgRef,
+      className: `dg-annotSvg${active ? ' dg-annotActive' : ''}`,
+      'data-gallery-annot-svg': true,
+      'data-gallery-annot-active': active ? '1' : '0',
+      viewBox: '0 0 100 100',
+      preserveAspectRatio: 'none',
+      style: {
+        position: 'absolute', inset: 0, width: '100%', height: '100%',
+        pointerEvents: active ? 'auto' : 'none',
+        cursor: active ? 'crosshair' : 'default',
+      },
+      onPointerDown,
+      onPointerMove,
+      onPointerUp: finishDraft,
+      onPointerCancel: () => setDraft(null),
+    }, [draftShape, ...shapes]),
+    list,
+    editor,
+  ])
+}
 
     function SettingsPanel({ t, onClose, onSaved }) {
       const [loading, setLoading] = React.useState(true)
@@ -4386,6 +4714,13 @@ ${absPath}
       const [selected, setSelected] = React.useState(new Set())
       /** 批量模式：用户显式开启，或已有选中项时自动生效（避免勾了看不见批量条）。 */
       const [batchMode, setBatchMode] = React.useState(false)
+      /**
+       * 框选批注（v0.14.0）：按 relPath 存，一次查看器内可加多条。
+       *
+       * 只记在内存 + 走草稿通道输出，**不落盘**（批注是"这次要跟 Agent 说的话"，
+       * 不是需要长期保留的状态；确认态才落盘，两者语义不同）。
+       */
+      const [annotations, setAnnotations] = React.useState({})
       const selectMode = batchMode || selected.size > 0
       /** 清废稿确认对话框：null=关闭；{ phase:'list'|'deleting', files, digest, count } */
       const [discardDialog, setDiscardDialog] = React.useState(null)
@@ -4579,6 +4914,34 @@ ${absPath}
           console.warn('dsh-gallery: 取消确认失败', error)
         }
       }, [marks])
+
+      /** 加一条批注（v0.14.0）。 */
+      const addAnnotation = React.useCallback((item, annot) => {
+        const relPath = item.relPath
+        setAnnotations((prev) => {
+          const cur = prev[relPath] ?? []
+          if (cur.length >= 50) return prev   // 与契约上限一致
+          return { ...prev, [relPath]: [...cur, annot] }
+        })
+      }, [])
+
+      /** 删一条批注。 */
+      const removeAnnotation = React.useCallback((item, id) => {
+        const relPath = item.relPath
+        setAnnotations((prev) => {
+          const cur = prev[relPath] ?? []
+          const next = cur.filter((a) => a.id !== id)
+          const out = { ...prev }
+          if (next.length === 0) delete out[relPath]
+          else out[relPath] = next
+          return out
+        })
+      }, [])
+
+      /** 取某文件的批注列表（给查看器用）。 */
+      const annotationsOf = React.useCallback((item) => {
+        return annotations[item.relPath] ?? []
+      }, [annotations])
 
       /** 移除一条标记。 */
       const removeMark = React.useCallback(async (relPath) => {
@@ -5496,6 +5859,9 @@ ${absPath}
       const viewerLayer = viewer !== null && Array.isArray(viewer.list) && viewer.list.length > 0
         ? h('div', { className: 'dg-viewerLayer', key: 'viewerLayer' },
             h(Viewer, {
+              annotations: annotationsOf,
+              onAddAnnotation: addAnnotation,
+              onRemoveAnnotation: removeAnnotation,
               items: viewer.list,
               index: Math.min(viewer.index, viewer.list.length - 1),
               t,
