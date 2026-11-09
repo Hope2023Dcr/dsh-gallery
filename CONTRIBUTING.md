@@ -117,3 +117,31 @@ PR 描述里请写清三件事：
 - 写死某个人的本机路径（发布给别人的东西不能这样）
 - 未经说明的大规模重构
 - 只改格式、不改逻辑的 PR（会干扰 blame）
+
+## 发布凭据纪律（重要）
+
+**凭据只从环境变量或凭据管理器读取，禁止出现在任何可留存的位置。**
+
+| 可以做 | 绝对不可以做 |
+|---|---|
+| 从 `NPM_TOKEN` 环境变量读取 | 把 token 写在命令行参数里（会进 shell history） |
+| 用 `npm login` 交互式登录 | 把 token 写进脚本、Makefile、package.json |
+| 用系统凭据管理器（如 git credential） | 把 token 打印到日志、终端输出、CI 日志 |
+| 发布前确认 `.npmrc` 无明文 | 把 token 贴进 issue / PR / 聊天记录 / 提交信息 |
+
+**发布前自查**：
+
+```sh
+# 确认 .npmrc 不含明文 token（应无输出）
+grep -i "authToken\|_auth\|password" ~/.npmrc || echo "clean"
+
+# 确认当前目录/脚本里没有残留 token
+grep -rniE "npm_(token|[A-Za-z0-9]{20,})" . --include="*.sh" --include="*.mjs" --include="*.json" || echo "clean"
+```
+
+**token 泄漏后的处置**：立即到 npmjs 网页端 **Access Tokens** 页撤销该 token 并重新生成，
+然后清理本地 `.npmrc` 与 shell history（`history -d` 或在 PowerShell 里清 `ConsoleHost_history.txt`）。
+**已经泄漏的 token 即使已从文件删除，只要没在网页端撤销，它就仍然有效。**
+
+**发布用 token 应设为 minimum 权限**：只给发布必要 scope，优先用 granular token 且限定到本包，
+不要用 classic token 的全账号权限。
