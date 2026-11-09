@@ -27,7 +27,7 @@ export const ACTIONS = [
 export const ACTION_LABELS_ZH = {
   approve: '通过',
   reject: '不要这张',
-  finalize: '定为最终版',
+  finalize: '已定稿',
   'redo-one-dim': '单维重做',
   'regenerate-selected': '选择性重生成',
   'set-reference': '设为参照',
@@ -37,7 +37,7 @@ export const ACTION_LABELS_ZH = {
 export const ACTION_LABELS_EN = {
   approve: 'approve',
   reject: 'reject',
-  finalize: 'finalize',
+  finalize: 'deliver',
   'redo-one-dim': 'redo one dimension',
   'regenerate-selected': 'regenerate',
   'set-reference': 'set as reference',
@@ -144,7 +144,12 @@ export function renderFeedbackText(feedback, options) {
   items.forEach((item, idx) => {
     const n = idx + 1
     const name = baseName(item.relPath)
-    const verb = labels[item.action] ?? item.action
+    const hasRegion = item.region !== undefined && item.region !== null
+    // 带框选区域的条目来自「框选批注」：动词写清楚是「只改这个框里的东西」，
+    // 比抽象动作名（单维重做）更贴近用户真正想说的话。
+    const verb = hasRegion
+      ? (locale === 'en' ? 'Change the boxed area only' : '按框选区域修改')
+      : (labels[item.action] ?? item.action)
     lines.push(`Annotation ${n}：${verb} —— ${name}`)
     lines.push(`${locale === 'en' ? 'Path' : '路径'}：${item.relPath}`)
     if (item.reason !== undefined) {
@@ -165,8 +170,16 @@ export function renderFeedbackText(feedback, options) {
         ? `preserve: ${item.preserve.join(' / ')}`
         : `保留：${item.preserve.join(' / ')}`)
     }
-    if (item.region !== undefined && item.region !== null) {
-      lines.push(`${locale === 'en' ? 'Region' : '区域'}：${JSON.stringify(item.region)}`)
+    if (hasRegion) {
+      // 人话百分比，别丢 JSON 给模型看：左上角 + 宽高，相对整张图
+      const pct = (v) => {
+        const num = Number(v)
+        return Number.isFinite(num) ? Math.round(Math.max(0, Math.min(1, num)) * 100) : 0
+      }
+      const r = item.region
+      lines.push(locale === 'en'
+        ? `Region: left ${pct(r.x)}%, top ${pct(r.y)}%, width ${pct(r.w)}%, height ${pct(r.h)}% (relative to the whole image)`
+        : `区域：左 ${pct(r.x)}%、上 ${pct(r.y)}%，宽 ${pct(r.w)}%、高 ${pct(r.h)}%（相对整张图）`)
     }
     if (item.params !== undefined && item.params !== null) {
       lines.push(`${locale === 'en' ? 'Params' : '参数'}：${JSON.stringify(item.params)}`)

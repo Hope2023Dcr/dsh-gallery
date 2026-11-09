@@ -158,35 +158,63 @@ function normalizeAnnotation(a) {
       scopeLogEmpty: '本对话的会话记录为空',
       subCount: '{shown} / {total} 条',
       // ===== 资产分类（三色边框）=====
-      catFinal: '最终',
-      catInput: '输入',
-      catIntermediate: '中间',
+      catFinal: '成稿',
+      catInput: '素材',
+      catIntermediate: '过程稿',
       catUnknown: '未归类',
-      catLegendFinal: '最终交付物',
-      catLegendInput: '输入素材',
-      catLegendIntermediate: '中间产物',
+      catLegendFinal: '成稿·待定',
+      catLegendInput: '素材',
+      catLegendIntermediate: '过程稿',
       catLegendUnknown: '未归类',
       annotEnter: '标注',
       annotExit: '退出标注',
       annotNotePrompt: '这块要改什么？（可留空）',
       annotNotePlaceholder: '例如：沙发位置偏了 / 色调太暖',
       annotNoNote: '（无说明）',
-      annotHint: '拖拽画框标出要改的位置，说明会写进决策草稿',
+      annotHint: '按住拖拽圈一处，或点两下（起点→终点）；可连续圈多处，保存后自动进反馈篮',
       annotCount: '批注 {n} 处',
-      catFilterFinalConfirmed: '最终交付·已确认',
-      catFilterFinalPending: '最终交付·待确认',
+      annotPendingTag: '待保存',
+      annotPendingHint: '黄色亮框就是刚圈的位置；写完点「保存并生效」，也可以直接在图上继续圈下一处（这处会先自动存档）',
+      annotStartTag: '再点一下定终点',
+      batchModeEnter: '批量选择',
+      batchModeExit: '退出批量',
+      batchModeEnterHint: '批量模式：直接点卡片即可选中/取消（此时点卡片不会打开大图），选好后统一表态',
+      batchModeExitHint: '退出批量模式并清空已选',
+      cardConfirm: '✓ 定稿',
+      cardConfirmed: '✓ 已定稿',
+      cardConfirmHint: '把这张定为「已定稿」（只写标记，不动文件，也不发送消息）',
+      cardUnconfirmHint: '清除表态，回到机器预判的阶段',
+      catFilterFinalConfirmed: '✓ 已定稿',
+      catFilterFinalPending: '成稿·待定',
+      catFilterRevise: '↩ 要重做',
+      catFilterArchive: '◇ 留档',
       filterShowHint: '点击显示「{label}」',
       filterHideHint: '点击隐藏「{label}」',
-      confirmBadgeLabel: '已确认',
-      confirmBadgeHint: '这张已定为最终版（判断已锁住，刷新/重启都保留）',
-      batchSelect: '选中以批量处理',
+      confirmBadgeLabel: '已定稿',
+      confirmBadgeHint: '这张已由人定为「已定稿」（判断已锁住，刷新/重启都保留）',
+      verdictBadgeDeliver: '已定稿',
+      verdictBadgeRevise: '要重做',
+      verdictBadgeArchive: '留档',
+      verdictDeliver: '✓ 已定稿',
+      verdictRevise: '↩ 要重做',
+      verdictArchive: '◇ 留档',
+      verdictDeliverHint: '定为最终可交付（只写标记，不动文件）',
+      verdictReviseHint: '这张要重做 / 打回（只写标记，不动文件）',
+      verdictArchiveHint: '留作备用、不参与交付（只写标记，不动文件）',
+      verdictBadgeHint: '人的结论优先于机器预判；刷新 / 重启都保留',
+      batchSelect: '点击卡片即可选中（也可点这个勾）',
       batchUnselect: '取消选中',
-      batchBarTitle: '已选 {n} 个',
-      batchConfirm: '确认',
-      batchUnconfirm: '取消确认',
+      batchBarTitle: '已选 {n} 个 · 批量设为',
+      batchConfirm: '✓ 已定稿',
+      batchUnconfirm: '清除表态',
+      batchSetRevise: '↩ 要重做',
+      batchSetArchive: '◇ 留档',
       batchClearMark: '清除标记',
       batchClearSelection: '取消选择',
-      batchHintConfirm: '把选中卡片标为「已确认」（只改标记，不碰文件）',
+      batchHintConfirm: '把选中卡片定为「已定稿」（只改标记，不碰文件）',
+      batchHintRevise: '把选中卡片标为「要重做」（只改标记，不碰文件）',
+      batchHintArchive: '把选中卡片标为「留档」（只改标记，不碰文件）',
+      batchHintClearVerdict: '清掉选中的表态，回到机器预判的阶段（只改标记，不碰文件）',
       batchHintClearMark: '清掉选中卡片的标记（只改标记，不碰文件）',
       discardEntry: '清掉废稿（{n}）',
       discardEntryHint: '删除所有标过「不要这张」的文件 —— 永久删除，不进回收站',
@@ -204,12 +232,12 @@ function normalizeAnnotation(a) {
       scanModeExit: '退出批量',
       shownOfTotal: '已显示 {shown} / 共 {total}',
 
-      catLegendHint: '边框颜色代表资产类型；「未归类」是会话记录里查不到归属的历史文件',
+      catLegendHint: '角标分两层：预判阶段（机器猜的，灰底）与人的结论（你定的，彩底）。一旦表态，卡片和筛选都按结论走',
       // ===== 全局按对话分组 =====
       groupCount: '{count} 个',
-      groupFinal: '最终 {n}',
-      groupInput: '输入 {n}',
-      groupIntermediate: '中间 {n}',
+      groupFinal: '成稿 {n}',
+      groupInput: '素材 {n}',
+      groupIntermediate: '过程稿 {n}',
       groupUnknown: '未归类 {n}',
       groupTruncated: '仅显示最近 {shown} 个，共 {total} 个',
       groupHistoryTitle: '历史资产',
@@ -283,11 +311,11 @@ function normalizeAnnotation(a) {
       mediaOpenExternal: '用系统播放器打开',
       mediaBlobSeekHint: '载入完成后可拖动进度条（宿主转发时丢了 Content-Length，直链无法 seek）',
       mediaOpenFolder: '打开所在文件夹',
-      ctxMarkSection: '标记（进反馈篮）',
+      ctxMarkSection: '结论 / 反馈',
       ctxMarkApprove: '通过',
       ctxMarkReject: '不要这张',
-      ctxMarkFinalize: '定为最终版',
-      ctxMarkUnconfirm: '取消确认',
+      ctxMarkFinalize: '✓ 已定稿（只记结论）',
+      ctxMarkUnconfirm: '清除表态',
       ctxMarkRedo: '单维重做',
       ctxMarkRegen: '选择性重生成',
       ctxMarkReference: '设为参照',
@@ -299,11 +327,17 @@ function normalizeAnnotation(a) {
       feedbackBasketToggleN: '反馈篮 · {n} 条',
       feedbackBasketToggleHint: '打开/关闭反馈篮，可在此生成决策草稿',
       feedbackBasketTitleN: '反馈篮 · {n} 条',
-      feedbackBasketEmpty: '还没有标记任何条目。在卡片上右键选择动作即可加入。',
+      feedbackBasketEmpty: '还没有可发的条目。在卡片上右键选择动作，或在图片上框选批注，都会进这里。',
       feedbackTargetSession: '将发往会话：{title}',
       feedbackForeignWarn: '有 {n} 条来自其他会话，不能一起提交（请先切到那个会话）。',
       feedbackForeignWarnShort: '含其他会话的条目，已禁用提交',
       feedbackEdit: '编辑',
+      // 框选批注（归到「反馈」这一侧：说明文字进反馈篮、随草稿发出）
+      feedbackClearHint: '清空篮子里的全部条目：表态与批注一起清掉（只改标记，不删任何文件）',
+      feedbackAnnotTag: '批注',
+      feedbackAnnotRegion: '区域 左{x}% 上{y}% · 宽{w}% 高{h}%',
+      feedbackAnnotNoNote: '（未填说明，按框选区域改）',
+      feedbackAnnotHint: '{n} 条框选批注会随反馈一起发出，序号与草稿里的 Annotation N 一一对应',
       feedbackEditTitle: '编辑：{name}',
       feedbackReasonLabel: '理由（可选）',
       feedbackChangeOnlyLabel: '只改（逗号分隔，可选）',
@@ -400,35 +434,63 @@ function normalizeAnnotation(a) {
       scopeLogEmpty: 'This chat’s session log is empty',
       subCount: '{shown} of {total}',
       // Asset categories (colored borders)
-      catFinal: 'Final',
-      catInput: 'Input',
-      catIntermediate: 'Interim',
+      catFinal: 'Draft',
+      catInput: 'Source',
+      catIntermediate: 'WIP',
       catUnknown: 'Unclassified',
-      catLegendFinal: 'Final deliverable',
-      catLegendInput: 'Input material',
-      catLegendIntermediate: 'Interim product',
+      catLegendFinal: 'Draft · pending',
+      catLegendInput: 'Source',
+      catLegendIntermediate: 'WIP',
       catLegendUnknown: 'Unclassified',
       annotEnter: 'Annotate',
       annotExit: 'Exit annotate',
       annotNotePrompt: 'What should change here? (optional)',
       annotNotePlaceholder: 'e.g. sofa position is off / color is too warm',
       annotNoNote: '(no note)',
-      annotHint: 'Drag to box the area that needs changes; notes go into the decision draft',
+      annotHint: 'Drag to box an area, or click twice (start → end). Box as many as you like — saved notes go straight into the feedback basket',
       annotCount: '{n} annotation(s)',
-      catFilterFinalConfirmed: 'Final · confirmed',
-      catFilterFinalPending: 'Final · pending',
+      annotPendingTag: 'Pending',
+      annotPendingHint: 'The yellow box is the area you just marked. Add a note and click Save, or keep boxing more areas (this one is stored first).',
+      annotStartTag: 'Click again to set the end',
+      batchModeEnter: 'Batch select',
+      batchModeExit: 'Exit batch',
+      batchModeEnterHint: 'Batch mode: click any card to select/deselect (clicking no longer opens the viewer), then apply one verdict to all',
+      batchModeExitHint: 'Leave batch mode and clear the selection',
+      cardConfirm: '✓ Finalize',
+      cardConfirmed: '✓ Finalized',
+      cardConfirmHint: 'Mark this as finalized (marks only; no file changes, no message sent)',
+      cardUnconfirmHint: 'Clear the verdict and fall back to the machine-guessed stage',
+      catFilterFinalConfirmed: '✓ Finalized',
+      catFilterFinalPending: 'Draft · pending',
+      catFilterRevise: '↩ Rework',
+      catFilterArchive: '◇ Archive',
       filterShowHint: 'Click to show "{label}"',
       filterHideHint: 'Click to hide "{label}"',
-      confirmBadgeLabel: 'Confirmed',
-      confirmBadgeHint: 'Marked as final (the decision is persisted across refresh and restart)',
-      batchSelect: 'Select for batch actions',
+      confirmBadgeLabel: 'Finalized',
+      confirmBadgeHint: 'A human finalized this (the decision persists across refresh and restart)',
+      verdictBadgeDeliver: 'Finalized',
+      verdictBadgeRevise: 'Rework',
+      verdictBadgeArchive: 'Archive',
+      verdictDeliver: '✓ Finalized',
+      verdictRevise: '↩ Rework',
+      verdictArchive: '◇ Archive',
+      verdictDeliverHint: 'Mark as ready to deliver (marks only, files untouched)',
+      verdictReviseHint: 'Mark as rework / send back (marks only, files untouched)',
+      verdictArchiveHint: 'Keep as backup, not for delivery (marks only, files untouched)',
+      verdictBadgeHint: 'Human verdict outranks the machine-guessed stage; persists across refresh and restart',
+      batchSelect: 'Click the card to select (or click this box)',
       batchUnselect: 'Deselect',
-      batchBarTitle: '{n} selected',
-      batchConfirm: 'Confirm',
-      batchUnconfirm: 'Unconfirm',
+      batchBarTitle: '{n} selected · set to',
+      batchConfirm: '✓ Finalized',
+      batchUnconfirm: 'Clear verdict',
+      batchSetRevise: '↩ Rework',
+      batchSetArchive: '◇ Archive',
       batchClearMark: 'Clear marks',
       batchClearSelection: 'Clear selection',
-      batchHintConfirm: 'Mark selected cards as confirmed (marks only, files untouched)',
+      batchHintConfirm: 'Mark selected cards as finalized (marks only, files untouched)',
+      batchHintRevise: 'Mark selected cards as rework (marks only, files untouched)',
+      batchHintArchive: 'Mark selected cards as archive (marks only, files untouched)',
+      batchHintClearVerdict: 'Clear the verdict on selected cards (marks only, files untouched)',
       batchHintClearMark: 'Clear marks on selected cards (marks only, files untouched)',
       discardEntry: 'Delete discarded ({n})',
       discardEntryHint: 'Permanently delete every file marked "reject" — bypasses the recycle bin',
@@ -446,12 +508,12 @@ function normalizeAnnotation(a) {
       scanModeExit: 'Exit selection',
       shownOfTotal: '{shown} of {total} shown',
 
-      catLegendHint: 'Border color shows the asset type; “Unclassified” means the session logs have no record of it',
+      catLegendHint: 'Two layers: stage (machine-guessed, grey badge) and verdict (yours, colored badge). Once you set a verdict, cards and filters follow it',
       // Grouped by conversation (global view)
       groupCount: '{count} files',
-      groupFinal: 'Final {n}',
-      groupInput: 'Input {n}',
-      groupIntermediate: 'Interim {n}',
+      groupFinal: 'Draft {n}',
+      groupInput: 'Source {n}',
+      groupIntermediate: 'WIP {n}',
       groupUnknown: 'Unclassified {n}',
       groupTruncated: 'Showing latest {shown} of {total}',
       groupHistoryTitle: 'Older assets',
@@ -523,11 +585,11 @@ function normalizeAnnotation(a) {
       mediaOpenExternal: 'Open in system player',
       mediaBlobSeekHint: 'Seeking works once loaded (the desktop shell drops Content-Length, so a direct link cannot seek)',
       mediaOpenFolder: 'Open containing folder',
-      ctxMarkSection: 'Mark (to feedback basket)',
+      ctxMarkSection: 'Verdict / feedback',
       ctxMarkApprove: 'Approve',
       ctxMarkReject: 'Reject',
-      ctxMarkFinalize: 'Finalize',
-      ctxMarkUnconfirm: 'Unconfirm',
+      ctxMarkFinalize: '✓ Finalize (verdict only)',
+      ctxMarkUnconfirm: 'Clear verdict',
       ctxMarkRedo: 'Redo one dimension',
       ctxMarkRegen: 'Regenerate selection',
       ctxMarkReference: 'Set as reference',
@@ -539,11 +601,17 @@ function normalizeAnnotation(a) {
       feedbackBasketToggleN: 'Basket · {n}',
       feedbackBasketToggleHint: 'Toggle the feedback basket to generate a draft',
       feedbackBasketTitleN: 'Feedback basket · {n} item(s)',
-      feedbackBasketEmpty: 'Nothing marked yet. Right-click a card and pick an action.',
+      feedbackBasketEmpty: 'Nothing to send yet. Right-click a card for an action, or box an area on an image — both land here.',
       feedbackTargetSession: 'Will be sent to session: {title}',
       feedbackForeignWarn: '{n} item(s) belong to another session and cannot be sent together.',
       feedbackForeignWarnShort: 'Contains items from another session — submit disabled',
       feedbackEdit: 'Edit',
+      // Boxed notes (feedback side: the note text goes into the basket and the draft)
+      feedbackClearHint: 'Clear every item in the basket, verdicts and notes alike (marks only — no files touched)',
+      feedbackAnnotTag: 'Note',
+      feedbackAnnotRegion: 'region left {x}% top {y}% · {w}%×{h}%',
+      feedbackAnnotNoNote: '(no note — change the boxed area)',
+      feedbackAnnotHint: '{n} boxed note(s) will be sent with this feedback, numbered to match `Annotation N` in the draft',
       feedbackEditTitle: 'Edit: {name}',
       feedbackReasonLabel: 'Reason (optional)',
       feedbackChangeOnlyLabel: 'Only change (comma separated, optional)',
@@ -615,6 +683,17 @@ function normalizeAnnotation(a) {
     }
 
 /** 格式化 / 图片压缩 / 并发限流工具。 */
+
+    /**
+     * 焦点是否落在可输入控件里。
+     * 查看器的全局快捷键（左右切图 / 数字缩放 / o 切原图 / Esc 退出）必须给打字让位，
+     * 否则在批注输入框里按方向键或输入字母就会切图、缩放、关掉大图。
+     */
+    function isTypingTarget(target) {
+      if (target === null || target === undefined) return false
+      if (typeof target.closest !== 'function') return false
+      return target.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]') !== null
+    }
 
     /** 极简模板替换：字典里只有 {name} 占位。 */
     function format(template, values) {
@@ -1058,6 +1137,8 @@ function normalizeAnnotation(a) {
   gap: 10px;
 }
 .dg-card {
+  box-sizing: border-box;
+  width: 100%;
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -1079,20 +1160,34 @@ function normalizeAnnotation(a) {
    输入 = 灰蓝、中间 = 橙色、最终 = 绿色。
    边框加粗到 2px 以便一眼分辨。 */
 .dg-card { position: relative; }
-.dg-cat-final      { border: 2px solid #1A936F; }
-.dg-cat-input      { border: 2px solid #8A8F99; }
-.dg-cat-intermediate { border: 2px solid #D48806; }
-.dg-cat-unknown    { border: 2px solid #C8CDD6; }
-.dg-cat-final:hover      { border-color: #157A5C; }
-.dg-cat-input:hover      { border-color: #6B7079; }
-.dg-cat-intermediate:hover { border-color: #B36F05; }
-.dg-cat-unknown:hover    { border-color: #A8AEB8; }
 
-/* 角标：贴在缩略图右上角 */
+/* 边框统一画在 .dg-cardWrap 的伪元素上（v0.14.2）：
+   原来用 outline 画在卡片子元素上，卡片宽度与网格格不一致时会外扩、压到邻卡。
+   伪元素 inset:0 + box-sizing:border-box 永远严格贴合网格格，缩放/焦点都不跑偏。 */
+.dg-cardWrap::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  box-sizing: border-box;
+  pointer-events: none;
+  z-index: 6;
+}
+.dg-cardWrap[data-gallery-bucket="finalConfirmed"]::after { border-color: #4a9d5f; }
+.dg-cardWrap[data-gallery-bucket="finalPending"]::after   { border-color: #1A936F; border-style: dashed; }
+.dg-cardWrap[data-gallery-bucket="revise"]::after         { border-color: #d4693c; }
+.dg-cardWrap[data-gallery-bucket="archive"]::after        { border-color: #6f8fb5; }
+.dg-cardWrap[data-gallery-bucket="input"]::after          { border-color: #8A8F99; }
+.dg-cardWrap[data-gallery-bucket="intermediate"]::after   { border-color: #D48806; }
+.dg-cardWrap[data-gallery-bucket="unknown"]::after        { border-color: #C8CDD6; }
+.dg-cardWrap.dg-cardChecked::after                        { border-color: #4a7cff !important; border-style: solid !important; }
+
+/* 阶段角标：贴左上（与结论角标同位置，二者互斥）；右上留给三个表态按钮 */
 .dg-catBadge {
   position: absolute;
   top: 6px;
-  right: 6px;
+  left: 6px;
   z-index: 2;
   padding: 2px 7px;
   border-radius: 9px;
@@ -1130,6 +1225,8 @@ function normalizeAnnotation(a) {
 .dg-legendSwatch-final      { background: #1A936F; }
 .dg-legendSwatch-input      { background: #8A8F99; }
 .dg-legendSwatch-intermediate { background: #D48806; }
+.dg-legendSwatch-revise  { background: #d4693c; }
+.dg-legendSwatch-archive { background: #6f8fb5; }
 .dg-legendSwatch-unknown    { background: #8C93A0; }
 
 /* ===== 分组（全局按对话）===== */
@@ -1525,7 +1622,7 @@ function normalizeAnnotation(a) {
   flex: 0 0 auto;
 }
 .dg-viewerTitle { flex: 1 1 auto; min-width: 0; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dg-viewerBody { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 10px 42px 10px 10px; }
+.dg-viewerBody { position: relative; flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 10px 42px 10px 10px; }
 .dg-viewerBody img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
 .dg-viewerLayer { position: absolute; inset: 0; z-index: 30; background: var(--dsw-specific-sidebar-fill, #111); display: flex; flex-direction: column; }
 .dg-viewerLayer .dg-viewer { flex: 1 1 auto; min-height: 0; }
@@ -1846,6 +1943,29 @@ function normalizeAnnotation(a) {
 }
 .dg-feedbackAction { flex: 0 0 auto; color: #8fb6ff; font-weight: 600; }
 .dg-feedbackName { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e8eaed; }
+
+/* 框选批注条目（v0.14.3）：黄调 + 左侧竖线，和「表态行」一眼分开 */
+.dg-feedbackAnnotItem {
+  position: relative; align-items: center; flex-wrap: wrap;
+  padding: 8px 44px 8px 6px;
+  background: rgba(255, 209, 102, 0.05);
+  border-left: 2px solid rgba(255, 209, 102, 0.5);
+}
+.dg-feedbackAnnotItem .dg-feedbackNo { background: #8a6d1f; color: #ffe6a3; }
+.dg-feedbackActionAnnot { color: #ffd166; }
+.dg-feedbackRegion { flex: 0 0 auto; color: #c8b071; font-size: 11px; }
+.dg-feedbackAnnotItem .dg-feedbackNote {
+  flex: 1 1 100%; margin-top: 4px;
+  color: #e8eaed; font-size: 12px; line-height: 1.45;
+  white-space: pre-wrap; word-break: break-word;
+}
+.dg-feedbackAnnotItem .dg-feedbackOps { position: absolute; right: 6px; top: 8px; }
+/* 批注提示条：让用户明确「框选说明会跟着发出去」 */
+.dg-feedbackAnnotHint {
+  padding: 7px 14px; font-size: 11px; color: #ffd166;
+  background: rgba(255, 209, 102, 0.08);
+  border-bottom: 1px solid rgba(255, 209, 102, 0.22);
+}
 .dg-feedbackDim { flex: 0 0 auto; color: #a9b1bd; font-size: 11px; }
 .dg-feedbackOps { flex: 0 0 auto; display: flex; gap: 4px; }
 
@@ -1917,25 +2037,60 @@ function normalizeAnnotation(a) {
 
 /* 卡片包装层 + 确认角标 + 多选框 */
 .dg-cardWrap { position: relative; }
-.dg-cardConfirmed > :first-child { outline: 2px solid #4a9d5f; outline-offset: -2px; }
-.dg-cardChecked > :first-child { outline: 2px solid #4a7cff; outline-offset: -2px; }
-.dg-confirmBadge {
-  position: absolute; top: 6px; left: 6px; z-index: 3;
-  display: inline-flex; align-items: center; gap: 3px;
-  padding: 1px 6px; border-radius: 9px;
-  background: #4a9d5f; color: #fff; font-size: 10px; font-weight: 600;
-  pointer-events: none; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+/* 结论角标（左上）：人的表态，优先于右上角的机器预判角标 */
+.dg-verdictBadge {
+  position: absolute; top: 6px; left: 6px; z-index: 5;
+  display: inline-flex; align-items: center;
+  padding: 1px 7px; border-radius: 9px;
+  color: #fff; font-size: 10px; font-weight: 700;
+  pointer-events: none; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
 }
+.dg-verdict-deliver { background: #4a9d5f; }
+.dg-verdict-revise  { background: #d4693c; }
+.dg-verdict-archive { background: #6f8fb5; }
+/* 有结论时，右上角「机器预判」角标让位，避免两层标签并排打架 */
+.dg-cardWrap[data-gallery-verdict="deliver"] .dg-catBadge,
+.dg-cardWrap[data-gallery-verdict="revise"] .dg-catBadge,
+.dg-cardWrap[data-gallery-verdict="archive"] .dg-catBadge { display: none; }
+
+/* 三种表态按钮：右上角一排，当前结论高亮，再点一次取消 */
+.dg-verdictOps {
+  position: absolute; top: 6px; right: 6px; z-index: 5;
+  display: inline-flex; gap: 3px;
+}
+.dg-verdictBtn {
+  width: 20px; height: 20px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%; border: 1px solid rgba(255, 255, 255, 0.55);
+  background: rgba(20, 26, 32, 0.78); color: #e8eaed;
+  font-size: 11px; line-height: 1; font-weight: 700;
+  cursor: pointer; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+}
+.dg-verdictBtn:hover { border-color: #fff; transform: scale(1.08); }
+.dg-verdictBtn-deliver.dg-verdictOn { background: #4a9d5f; border-color: #9fe3bd; color: #fff; }
+.dg-verdictBtn-revise.dg-verdictOn  { background: #d4693c; border-color: #ffb494; color: #fff; }
+.dg-verdictBtn-archive.dg-verdictOn { background: #6f8fb5; border-color: #c3d6ea; color: #fff; }
+/* 多选框（v0.14.3）：尺寸保持原样 20px —— 点选主要靠整卡，勾选框只做状态指示；
+   位置放右上（批量模式下三个单张表态按钮已收起，不冲突），避免压住底部文件名。 */
 .dg-cardCheck {
-  position: absolute; top: 6px; right: 6px; z-index: 4;
-  width: 20px; height: 20px; border-radius: 4px;
-  border: 1.5px solid rgba(255, 255, 255, 0.65);
-  background: rgba(0, 0, 0, 0.45); color: #fff;
-  font-size: 12px; line-height: 1; cursor: pointer;
+  position: absolute; top: 6px; right: 6px; z-index: 7;
+  width: 20px; height: 20px; border-radius: 5px;
+  border: 1.5px solid rgba(255, 255, 255, 0.7);
+  background: rgba(0, 0, 0, 0.5); color: #fff;
+  font-size: 12px; line-height: 1; font-weight: 700; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
 }
-.dg-cardCheck:hover { border-color: #fff; background: rgba(0, 0, 0, 0.7); }
-.dg-cardCheckOn { background: #4a7cff; border-color: #4a7cff; }
+.dg-cardCheck:hover { border-color: #fff; background: rgba(0, 0, 0, 0.75); }
+.dg-cardCheckOn { background: #4a7cff; border-color: #cfe0ff; }
+/* 批量模式：整张卡片都可点，给明确的可点提示 */
+.dg-cardSelectable, .dg-cardSelectable .dg-card { cursor: cell; }
+.dg-cardSelectable:hover::after { border-color: #8fa9ff !important; border-style: solid !important; }
+/* 已选中：加一层蓝色蒙层，隔一米也看得出来选没选 */
+.dg-cardWrap.dg-cardChecked::before {
+  content: ''; position: absolute; inset: 0; z-index: 3;
+  background: rgba(74, 124, 255, 0.18); border-radius: 8px; pointer-events: none;
+}
 
 /* 批量操作条 */
 .dg-batchBar {
@@ -1984,7 +2139,7 @@ function normalizeAnnotation(a) {
 
 /* 批注列表 */
 .dg-annotList {
-  position: absolute; left: 8px; bottom: 8px; z-index: 5;
+  position: absolute; left: 8px; top: 8px; z-index: 5;
   max-width: 300px; max-height: 40%; overflow: auto;
   background: rgba(27, 30, 36, 0.95); border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 8px; padding: 6px; display: flex; flex-direction: column; gap: 4px;
@@ -1994,9 +2149,9 @@ function normalizeAnnotation(a) {
 .dg-annotIndex { color: #8fb6ff; font-weight: 600; }
 .dg-annotText { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* 批注输入框 */
+/* 批注输入框：贴底居中，别挡住刚圈出来的框 */
 .dg-annotEditor {
-  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 6;
+  position: absolute; left: 50%; bottom: 14px; top: auto; transform: translateX(-50%); z-index: 6;
   width: min(340px, 80%); background: #1b1e24; color: #e8eaed;
   border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 8px; padding: 10px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6);
@@ -2009,6 +2164,26 @@ function normalizeAnnotation(a) {
 }
 .dg-annotInput:focus { outline: 2px solid #4a7cff; outline-offset: -1px; }
 .dg-annotEditorOps { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+
+
+/* ---------- v0.14.1：表态入口 / 防重叠 / 批注弹窗可辨识 ---------- */
+
+/* 卡片包装层不许被长文件名撑破网格列 */
+.dg-cardWrap { min-width: 0; }
+
+/* 批量模式（v0.14.3）：
+   勾选框放大到 30px 并放到右上——不压底部文件名/尺寸/时间；此时单张表态按钮收起
+   （批量条的三种表态就是它的替代），避免「整卡点选」与「点小圆钮」互相误触。 */
+.dg-cardSelectable .dg-verdictOps { display: none; }
+
+/* 「保存并生效」必须一眼看得见、和编辑器背景分开 */
+.dg-annotEditorOps .dg-annotSave {
+  background: #4a7cff !important; color: #fff !important;
+  border-color: #86a9ff !important; font-weight: 600;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2), 0 2px 8px rgba(74, 124, 255, 0.5);
+}
+.dg-annotEditorOps .dg-annotSave:hover:not(:disabled) { background: #6a92ff !important; }
+.dg-annotPendingHint { font-size: 11px; color: #ffd166; margin: -2px 0 8px; }
 `
 
 
@@ -2111,7 +2286,7 @@ const ACTIONS = [
 const ACTION_LABELS_ZH = {
   approve: '通过',
   reject: '不要这张',
-  finalize: '定为最终版',
+  finalize: '已定稿',
   'redo-one-dim': '单维重做',
   'regenerate-selected': '选择性重生成',
   'set-reference': '设为参照',
@@ -2121,7 +2296,7 @@ const ACTION_LABELS_ZH = {
 const ACTION_LABELS_EN = {
   approve: 'approve',
   reject: 'reject',
-  finalize: 'finalize',
+  finalize: 'deliver',
   'redo-one-dim': 'redo one dimension',
   'regenerate-selected': 'regenerate',
   'set-reference': 'set as reference',
@@ -2228,7 +2403,12 @@ function renderFeedbackText(feedback, options) {
   items.forEach((item, idx) => {
     const n = idx + 1
     const name = baseName(item.relPath)
-    const verb = labels[item.action] ?? item.action
+    const hasRegion = item.region !== undefined && item.region !== null
+    // 带框选区域的条目来自「框选批注」：动词写清楚是「只改这个框里的东西」，
+    // 比抽象动作名（单维重做）更贴近用户真正想说的话。
+    const verb = hasRegion
+      ? (locale === 'en' ? 'Change the boxed area only' : '按框选区域修改')
+      : (labels[item.action] ?? item.action)
     lines.push(`Annotation ${n}：${verb} —— ${name}`)
     lines.push(`${locale === 'en' ? 'Path' : '路径'}：${item.relPath}`)
     if (item.reason !== undefined) {
@@ -2249,8 +2429,16 @@ function renderFeedbackText(feedback, options) {
         ? `preserve: ${item.preserve.join(' / ')}`
         : `保留：${item.preserve.join(' / ')}`)
     }
-    if (item.region !== undefined && item.region !== null) {
-      lines.push(`${locale === 'en' ? 'Region' : '区域'}：${JSON.stringify(item.region)}`)
+    if (hasRegion) {
+      // 人话百分比，别丢 JSON 给模型看：左上角 + 宽高，相对整张图
+      const pct = (v) => {
+        const num = Number(v)
+        return Number.isFinite(num) ? Math.round(Math.max(0, Math.min(1, num)) * 100) : 0
+      }
+      const r = item.region
+      lines.push(locale === 'en'
+        ? `Region: left ${pct(r.x)}%, top ${pct(r.y)}%, width ${pct(r.w)}%, height ${pct(r.h)}% (relative to the whole image)`
+        : `区域：左 ${pct(r.x)}%、上 ${pct(r.y)}%，宽 ${pct(r.w)}%、高 ${pct(r.h)}%（相对整张图）`)
     }
     if (item.params !== undefined && item.params !== null) {
       lines.push(`${locale === 'en' ? 'Params' : '参数'}：${JSON.stringify(item.params)}`)
@@ -2296,7 +2484,7 @@ function serializeFeedback(feedback) {
     const FEEDBACK_ACTIONS_UI = [
       { id: 'approve', labelZh: '通过', labelEn: 'Approve', icon: '✓' },
       { id: 'reject', labelZh: '不要这张', labelEn: 'Reject', icon: '✕' },
-      { id: 'finalize', labelZh: '定为最终版', labelEn: 'Finalize', icon: '★' },
+      { id: 'finalize', labelZh: '已定稿', labelEn: 'Deliver', icon: '★' },
       { id: 'redo-one-dim', labelZh: '单维重做', labelEn: 'Redo one dim', icon: '↻' },
       { id: 'regenerate-selected', labelZh: '选择性重生成', labelEn: 'Regenerate', icon: '⟳' },
       { id: 'set-reference', labelZh: '设为参照', labelEn: 'Set reference', icon: '◎' },
@@ -2532,6 +2720,46 @@ function serializeFeedback(feedback) {
     }
 
     /**
+     * 把「卡片行」展开成契约条目（v0.14.3）：
+     *   · 卡片有表态 → 一条（动作 + 理由 + 只改/锁死）
+     *   · 卡片有批注 → 每条批注各一条，带 `region`（框选位置），动作固定为「按区域改」
+     *
+     * 为什么把批注展开成独立条目而不是塞进理由：
+     *   草稿要按 `Annotation N：` 逐条编号，模型也得逐条回应；
+     *   一张图三处批注 = 三条指令，混成一段会丢掉「哪条对哪个框」的对应关系。
+     */
+    function expandFeedbackItems(list) {
+      const out = []
+      for (const it of Array.isArray(list) ? list : []) {
+        const mark = it.mark
+        if (mark !== undefined && mark !== null) {
+          out.push({
+            relPath: it.relPath,
+            category: it.category ?? 'unknown',
+            action: mark.action ?? 'approve',
+            reason: mark.reason,
+            changeOnly: mark.changeOnly,
+            keep: mark.keep,
+            preserve: mark.preserve,
+          })
+        }
+        const annots = Array.isArray(it.annotations) ? it.annotations : []
+        for (const a of annots) {
+          const note = typeof a?.note === 'string' ? a.note.trim() : ''
+          out.push({
+            relPath: it.relPath,
+            category: it.category ?? 'unknown',
+            // 卡已被判「不要这张」时，批注也沿用打回；否则是「只改这个框」
+            action: mark?.action === 'reject' ? 'reject' : 'redo-one-dim',
+            reason: note === '' ? undefined : note,
+            region: { x: a.x, y: a.y, w: a.w, h: a.h },
+          })
+        }
+      }
+      return out
+    }
+
+    /**
      * 反馈篮：一个受控组件，管理条目列表 + 生成草稿。
      *
      * @param t - 文案
@@ -2545,7 +2773,8 @@ function serializeFeedback(feedback) {
      * @param onSubmitDraft - 生成草稿后的回调（用于提示）
      */
     function FeedbackBasket({ t, items, currentSessionId, targetSessionTitle,
-                              onClose, onRemove, onEdit, onClear, onEditSave }) {
+                              onClose, onRemove, onEdit, onClear, onEditSave,
+                              onRemoveAnnotation, onClearAll }) {
       // 语言判断：用 t 探测一个已知键 —— 命中中文就按 zh 渲染，否则 en。
       // （不引入 detectLocale，插件没有这个工具函数）
       const [locale] = React.useState(() => {
@@ -2556,6 +2785,21 @@ function serializeFeedback(feedback) {
       })
       const [busy, setBusy] = React.useState(false)
       const [notice, setNotice] = React.useState(null)
+
+      /**
+       * 展示行：一条表态 + 每条批注各占一行（v0.14.3）。
+       * 顺序必须与 expandFeedbackItems() 完全一致 —— 界面上的序号就是草稿里的 `Annotation N`。
+       */
+      const rows = React.useMemo(() => {
+        const out = []
+        for (const it of Array.isArray(items) ? items : []) {
+          if (it.mark !== undefined && it.mark !== null) out.push({ kind: 'mark', it })
+          const annots = Array.isArray(it.annotations) ? it.annotations : []
+          for (const a of annots) out.push({ kind: 'annot', it, a })
+        }
+        return out
+      }, [items])
+      const annotCount = rows.filter((r) => r.kind === 'annot').length
       // 编辑弹窗：正在编辑的条目 + 三个字段的草稿值
       const [editing, setEditing] = React.useState(null)
       const [editReason, setEditReason] = React.useState('')
@@ -2592,7 +2836,7 @@ function serializeFeedback(feedback) {
       // 历史会话判定：条目归属会话与当前会话不同 → 禁止提交
       const foreignItems = items.filter((it) => it.sessionId !== undefined
         && it.sessionId !== '' && currentSessionId !== '' && it.sessionId !== currentSessionId)
-      const canSubmit = items.length > 0 && foreignItems.length === 0 && busy === false
+      const canSubmit = rows.length > 0 && foreignItems.length === 0 && busy === false
 
       /** 生成草稿并写进 composer（不发送）。 */
       const generateDraft = React.useCallback(async () => {
@@ -2602,15 +2846,7 @@ function serializeFeedback(feedback) {
         try {
           const feedback = makeFeedback({
             sessionId: currentSessionId,
-            items: items.map((it) => ({
-              relPath: it.relPath,
-              category: it.category ?? 'unknown',
-              action: it.mark?.action ?? 'approve',
-              reason: it.mark?.reason,
-              changeOnly: it.mark?.changeOnly,
-              keep: it.mark?.keep,
-              preserve: it.mark?.preserve,
-            })),
+            items: expandFeedbackItems(items),
           })
           const text = renderFeedbackText(feedback, { locale, targetSessionTitle })
           const result = await writeDraftToComposer(text, currentSessionId)
@@ -2642,7 +2878,7 @@ function serializeFeedback(feedback) {
         }, [
           h('div', { className: 'dg-feedbackHead', key: 'head' }, [
             h('span', { className: 'dg-feedbackTitle', key: 'title' },
-              format(t('feedbackBasketTitleN'), { n: items.length }),
+              format(t('feedbackBasketTitleN'), { n: rows.length }),
             ),
             h('button', {
               type: 'button', className: 'dg-btn', key: 'close',
@@ -2662,24 +2898,65 @@ function serializeFeedback(feedback) {
                 format(t('feedbackForeignWarn'), { n: foreignItems.length }))
             : null,
 
-          items.length === 0
+          // 批注提示：让用户明确知道框选说明会跟着反馈一起发出去
+          annotCount > 0
+            ? h('div', { className: 'dg-feedbackAnnotHint', key: 'annotHint', 'data-gallery-feedback-annot-hint': annotCount },
+                format(t('feedbackAnnotHint'), { n: annotCount }))
+            : null,
+
+          rows.length === 0
             ? h('p', { className: 'dg-status', key: 'empty' }, t('feedbackBasketEmpty'))
             : h('ul', { className: 'dg-feedbackList', key: 'list' },
-                items.map((it, idx) => {
+                rows.map((row, idx) => {
+                  const it = row.it
+                  const fileName = it.relPath.split('/').pop() ?? it.relPath
+                  const rowKey = `${it.relPath}:${row.kind}:${row.kind === 'annot' ? row.a.id : 'mark'}`
+                  // ① 批注行：位置 + 说明，只有删除（说明在查看器里改）
+                  if (row.kind === 'annot') {
+                    const a = row.a
+                    const pct = (v) => {
+                      const num = Number(v)
+                      return Number.isFinite(num) ? Math.round(Math.max(0, Math.min(1, num)) * 100) : 0
+                    }
+                    return h('li', {
+                      className: 'dg-feedbackItem dg-feedbackAnnotItem',
+                      key: rowKey,
+                      'data-gallery-feedback-annot-item': a.id,
+                      'data-gallery-feedback-no': idx + 1,
+                    }, [
+                      h('span', { className: 'dg-feedbackNo', key: 'n' }, String(idx + 1)),
+                      h('span', { className: 'dg-feedbackAction dg-feedbackActionAnnot', key: 'a' }, t('feedbackAnnotTag')),
+                      h('span', { className: 'dg-feedbackName', key: 'name', title: it.relPath }, fileName),
+                      h('span', { className: 'dg-feedbackDim dg-feedbackRegion', key: 'r' },
+                        format(t('feedbackAnnotRegion'), { x: pct(a.x), y: pct(a.y), w: pct(a.w), h: pct(a.h) })),
+                      h('span', { className: 'dg-feedbackNote', key: 'note' },
+                        (typeof a.note === 'string' && a.note.trim() !== '') ? a.note : t('feedbackAnnotNoNote')),
+                      h('span', { className: 'dg-feedbackOps', key: 'ops' }, [
+                        h('button', {
+                          type: 'button', className: 'dg-btn dg-btnSmall', key: 'del',
+                          title: t('delete'),
+                          'data-gallery-feedback-remove-annot': a.id,
+                          onClick: () => {
+                            if (typeof onRemoveAnnotation === 'function') onRemoveAnnotation(it.relPath, a.id)
+                          },
+                        }, '✕'),
+                      ]),
+                    ])
+                  }
+                  // ② 表态行：动作 + 理由/只改，可编辑可删
                   const actionDef = FEEDBACK_ACTIONS_UI.find((a) => a.id === it.mark?.action)
                   const label = actionDef === undefined
                     ? (it.mark?.action ?? '')
                     : (locale === 'en' ? actionDef.labelEn : actionDef.labelZh)
                   return h('li', {
                     className: 'dg-feedbackItem',
-                    key: it.relPath,
+                    key: rowKey,
                     'data-gallery-feedback-item': it.relPath,
                     'data-gallery-feedback-no': idx + 1,
                   }, [
                     h('span', { className: 'dg-feedbackNo', key: 'n' }, String(idx + 1)),
                     h('span', { className: 'dg-feedbackAction', key: 'a' }, label),
-                    h('span', { className: 'dg-feedbackName', key: 'name', title: it.relPath },
-                      it.relPath.split('/').pop() ?? it.relPath),
+                    h('span', { className: 'dg-feedbackName', key: 'name', title: it.relPath }, fileName),
                     (it.mark?.changeOnly !== undefined && it.mark.changeOnly.length > 0)
                       ? h('span', { className: 'dg-feedbackDim', key: 'co' },
                           `${t('feedbackChangeOnly')}：${it.mark.changeOnly.join('/')}`)
@@ -2767,10 +3044,12 @@ function serializeFeedback(feedback) {
 
           h('div', { className: 'dg-feedbackActions', key: 'actions' }, [
             h('button', {
-              type: 'button', className: 'dg-btn', key: 'clear',
+              type: 'button', className: 'dg-btn dg-dangerBtn', key: 'clear',
               'data-gallery-feedback-clear': true,
-              disabled: busy || items.length === 0,
-              onClick: onClear,
+              title: t('feedbackClearHint'),
+              disabled: busy || rows.length === 0,
+              // 「清空」要连批注一起清，否则批注留在图上、篮子里却空了
+              onClick: typeof onClearAll === 'function' ? onClearAll : onClear,
             }, t('feedbackClear')),
             h('button', {
               type: 'button', className: 'dg-btn dg-primaryBtn', key: 'submit',
@@ -2783,7 +3062,7 @@ function serializeFeedback(feedback) {
               // 禁用时直接把原因写在按钮上，不只靠悬停 title
               : foreignItems.length > 0
                 ? t('feedbackBlockedForeign')
-                : items.length === 0
+                : rows.length === 0
                   ? t('feedbackBlockedEmpty')
                   : t('feedbackGenerateDraft')),
           ]),
@@ -3850,6 +4129,8 @@ ${absPath}
        * 放大状态下左键是用来拖图的，松手后若真的移动过就不算点击。
        */
       const onClickBody = (event) => {
+        // 标注模式下点图只用于画框，不能顺手把大图关掉（老板 20:32 指出的冲突）
+        if (annotActive) return
         event.preventDefault()
         if (lastDragMoved.current === true) {
           lastDragMoved.current = false
@@ -3926,6 +4207,9 @@ ${absPath}
       // 远程控制下键盘比鼠标精确，是主要操作方式。
       React.useEffect(() => {
         const onKey = (event) => {
+          // 正在输入（批注说明等）时，所有查看器快捷键让位：
+          // 左右键要能移动光标、字母 o/0/+/- 要能当文字输入，Esc 只取消编辑
+          if (isTypingTarget(event.target)) return
           const key = event.key
           if (key === 'Escape') {
             event.preventDefault()
@@ -4214,20 +4498,41 @@ ${absPath}
      */
 
 /**
- * 框选批注层（v0.14.0）—— 在查看器图片上圈出「哪儿不对」。
+ * 框选批注层（v0.14.2）—— 在查看器图片上圈出「哪儿不对」。
  *
  * 设计要点：
  *   · 坐标全部归一化（0–1，相对图片宽高），见 shared/protocol.js 的 ANNOTATION_* 契约
  *   · SVG 覆盖在图片之上；不干扰查看器原有的缩放/平移（只有「批注模式」下才接管指针）
- *   · 拖拽画矩形 → 立刻弹出输入框写说明 → 存进批注列表
- *   · 已存在的批注按归一化坐标还原绘制，缩放/换屏都不失真
+ *   · 拖拽画矩形 → 亮框**一直留着**直到保存/取消 → 输入框写说明 → 存进批注列表
+ *   · 已存在的批注按归一化坐标还原绘制，带编号，缩放/换屏都不失真
  *   · 批注不发送任何东西；出口是与决策草稿同一通道（见 05-feedback.js）
+ *
+ * v0.14.1 修：
+ *   ① 局部变量 h 遮蔽 React.createElement（画框直接崩面板）→ 全部改名 boxH
+ *   ② 拖完松手就把草稿框清掉，图上没有任何边界标志 → 草稿保留到保存/取消
+ *   ③ 输入框里按方向键/字母被查看器全局快捷键抢走 → 本层拦事件 + 查看器侧判焦点
+ *   ④ 放大状态下查看器 pointerdown 会捕获指针，弹窗里的按钮点不动 → 弹窗拦冒泡
+ *
+ * v0.14.2 修：
+ *   ⑤ 弹窗开着时第二处按不下：改为一按下就先把当前草稿存档，可连续圈多处
+ *   ⑥ 只认「按住拖拽」：补「点两下」定义矩形（点起点 → 点终点），两种习惯都能用
  */
 
 function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, stageRef }) {
   const [draft, setDraft] = React.useState(null)
   const [editing, setEditing] = React.useState(null)
+  /** 已点下第一下、等第二下定终点时的起点（归一化坐标）。 */
+  const [pendingStart, setPendingStart] = React.useState(null)
   const svgRef = React.useRef(null)
+
+  /** 退出标注模式时清掉未保存的草稿，避免输入框/虚线框残留。 */
+  React.useEffect(() => {
+    if (active) return undefined
+    setDraft(null)
+    setEditing(null)
+    setPendingStart(null)
+    return undefined
+  }, [active])
 
   /** 客户坐标 → 归一化（相对 SVG 的实际渲染盒） */
   const toNorm = (event) => {
@@ -4241,50 +4546,129 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
     }
   }
 
-  const onPointerDown = (event) => {
-    if (!active) return
-    // 只响应主键；左键拖拽画框
-    if (event.button !== 0) return
-    const p = toNorm(event)
-    if (p === null) return
-    event.preventDefault()
-    event.stopPropagation()
-    try { event.currentTarget.setPointerCapture(event.pointerId) } catch { /* 忽略 */ }
-    setDraft({ x0: p.x, y0: p.y, x1: p.x, y1: p.y })
-  }
+  const rectFrom = (p0, p1) => ({
+    x: Math.min(p0.x, p1.x),
+    y: Math.min(p0.y, p1.y),
+    w: Math.abs(p1.x - p0.x),
+    h: Math.abs(p1.y - p0.y),
+  })
 
-  const onPointerMove = (event) => {
-    if (draft === null) return
-    const p = toNorm(event)
-    if (p === null) return
-    event.preventDefault()
-    event.stopPropagation()
-    setDraft((d) => (d === null ? null : { ...d, x1: p.x, y1: p.y }))
-  }
+  /** 太小当成误点，不产生批注（避免满屏碎框）。 */
+  const isValidBox = (box) => box.w >= 0.01 && box.h >= 0.01
 
-  const finishDraft = (event) => {
-    if (draft === null) return
-    event.preventDefault()
-    event.stopPropagation()
-    const x = Math.min(draft.x0, draft.x1)
-    const y = Math.min(draft.y0, draft.y1)
-    const w = Math.abs(draft.x1 - draft.x0)
-    const h = Math.abs(draft.y1 - draft.y0)
+  const clearPending = () => {
     setDraft(null)
-    // 太小当成误点，不产生批注（避免满屏碎框）
-    if (w < 0.01 || h < 0.01) return
-    setEditing({ shape: 'rect', x, y, w, h, note: '', frameMs: frameMs ?? null })
+    setEditing(null)
+    setPendingStart(null)
   }
 
-  const saveEditing = () => {
+  /**
+   * 把正在编辑的草稿直接存档（说明可留空）。
+   * 用于「弹窗还开着就在图上圈下一处」：不丢当前这处，也不卡住下一处。
+   */
+  const commitEditing = () => {
     if (editing === null) return
     const normalized = normalizeAnnotation(editing)
     if (normalized !== null) onAdd(normalized)
     setEditing(null)
   }
 
+  const beginEdit = (box) => {
+    // draft 的形态必须是 {x0,y0,x1,y1}（绘制层按这四个角算框），
+    // 不能直接塞 {x,y,w,h}，否则 Math.min(undefined) → NaN%，框画不出来。
+    setDraft({ x0: box.x, y0: box.y, x1: box.x + box.w, y1: box.y + box.h })
+    setEditing({ shape: 'rect', ...box, note: '', frameMs: frameMs ?? null })
+    setPendingStart(null)
+  }
+
+  const onPointerDown = (event) => {
+    if (!active) return
+    // 放大状态下查看器会在 pointerdown 里 setPointerCapture；这里必须拦住冒泡，
+    // 否则弹窗内的输入框/按钮会被「拖图」逻辑抢走，表现为点击无反应。
+    event.stopPropagation()
+    if (event.button !== 0) return
+    const p = toNorm(event)
+    if (p === null) return
+    event.preventDefault()
+    try { event.currentTarget.setPointerCapture(event.pointerId) } catch { /* 忽略 */ }
+
+    // 上一处还在输入 → 先存档，第二处才按得下去（v0.14.2 ⑤）
+    if (editing !== null) commitEditing()
+
+    // 已经点过第一下 → 这一下当终点，直接成框（v0.14.2 ⑥）
+    if (pendingStart !== null) {
+      const box = rectFrom(pendingStart, p)
+      if (isValidBox(box)) {
+        beginEdit(box)
+      } else {
+        // 两次点到同一处：把起点挪到新位置，继续等第二下
+        setPendingStart(p)
+        setDraft({ x0: p.x, y0: p.y, x1: p.x, y1: p.y })
+      }
+      return
+    }
+
+    setPendingStart(p)
+    setDraft({ x0: p.x, y0: p.y, x1: p.x, y1: p.y })
+  }
+
+  const onPointerMove = (event) => {
+    if (!active || draft === null || editing !== null) return
+    event.stopPropagation()
+    const p = toNorm(event)
+    if (p === null) return
+    event.preventDefault()
+    setDraft((d) => (d === null ? null : { ...d, x1: p.x, y1: p.y }))
+  }
+
+  const finishDraft = (event) => {
+    if (draft === null || editing !== null) return
+    event.preventDefault()
+    event.stopPropagation()
+    const box = rectFrom({ x: draft.x0, y: draft.y0 }, { x: draft.x1, y: draft.y1 })
+    if (!isValidBox(box)) {
+      // 只是点了一下、还没拖：保留起点，等第二下点终点（v0.14.2 ⑥）
+      setPendingStart({ x: draft.x0, y: draft.y0 })
+      setDraft(null)
+      return
+    }
+    // 草稿框不清：输入框弹出期间，图上必须仍然看得见刚才圈的位置
+    beginEdit(box)
+  }
+
+  const saveEditing = () => {
+    if (editing === null) return
+    const normalized = normalizeAnnotation(editing)
+    if (normalized !== null) onAdd(normalized)
+    clearPending()
+  }
+
+  /**
+   * 双层描边矩形：白色外线 + 彩色内线。
+   * vectorEffect=non-scaling-stroke 让线宽固定为屏幕像素，缩放时既不糊也不粗得离谱。
+   */
+  const rectPair = (key, a, color, dashed) => {
+    const box = {
+      x: (a.x * 100) + '%', y: (a.y * 100) + '%',
+      width: (a.w * 100) + '%', height: (a.h * 100) + '%',
+      rx: 3,
+    }
+    const dash = dashed ? { strokeDasharray: '7 5' } : {}
+    return h('g', { key }, [
+      h('rect', {
+        ...box, key: 'outer', fill: 'none', stroke: '#ffffff', strokeWidth: 4,
+        vectorEffect: 'non-scaling-stroke', opacity: 0.92, ...dash,
+      }),
+      h('rect', {
+        ...box, key: 'inner',
+        fill: dashed ? 'rgba(255, 209, 102, 0.20)' : 'rgba(74, 124, 255, 0.18)',
+        stroke: color, strokeWidth: 2, vectorEffect: 'non-scaling-stroke', ...dash,
+      }),
+    ])
+  }
+
   // ---- 绘制已有批注 ----
-  const shapes = (annotations ?? []).map((a) => {
+  const shapes = (annotations ?? []).map((a, idx) => {
     if (a.shape === 'text') {
       return h('g', { key: a.id }, [
         h('circle', {
@@ -4298,46 +4682,64 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
         }, a.note || ''),
       ])
     }
-    // rect / arrow 都先按矩形画（arrow 后续可细化），带说明文字
+    // rect / arrow 都先按矩形画（arrow 后续可细化），带编号与说明文字
     return h('g', { key: a.id }, [
-      h('rect', {
-        key: 'r',
+      rectPair('r', a, '#4a7cff', false),
+      h('text', {
+        key: 'n',
         x: (a.x * 100) + '%', y: (a.y * 100) + '%',
-        width: (a.w * 100) + '%', height: (a.h * 100) + '%',
-        fill: 'rgba(74, 124, 255, 0.14)', stroke: '#4a7cff', strokeWidth: 2,
-        rx: 3,
-      }),
-      a.note !== ''
-        ? h('text', {
-            key: 'n',
-            x: (a.x * 100) + '%', y: (a.y * 100) + '%',
-            dx: 4, dy: -6, fill: '#fff', fontSize: 12, stroke: '#000', strokeWidth: 0.6,
-            style: { paintOrder: 'stroke' },
-          }, a.note)
-        : null,
+        dx: 4, dy: -6, fill: '#fff', fontSize: 12, stroke: '#000', strokeWidth: 0.6,
+        style: { paintOrder: 'stroke' },
+      }, `#${idx + 1}${a.note !== '' ? ' ' + a.note : ''}`),
     ])
   })
 
-  // ---- 正在画的框 ----
-  const draftShape = draft === null ? null : (() => {
-    const x = Math.min(draft.x0, draft.x1)
-    const y = Math.min(draft.y0, draft.y1)
-    const w = Math.abs(draft.x1 - draft.x0)
-    const h = Math.abs(draft.y1 - draft.y0)
-    return h('rect', {
-      key: 'draft',
-      x: (x * 100) + '%', y: (y * 100) + '%',
-      width: (w * 100) + '%', height: (h * 100) + '%',
-      fill: 'rgba(74, 124, 255, 0.22)', stroke: '#4a7cff', strokeWidth: 2, strokeDasharray: '5 3',
-    })
-  })()
+  // ---- 正在画的框 / 已点下的起点（保存前一直可见）----
+  const draftShape = draft !== null
+    ? (() => {
+        const x = Math.min(draft.x0, draft.x1)
+        const y = Math.min(draft.y0, draft.y1)
+        const w = Math.abs(draft.x1 - draft.x0)
+        const boxH = Math.abs(draft.y1 - draft.y0)
+        return h('g', { key: 'draft' }, [
+          rectPair('box', { x, y, w, h: boxH }, '#ffd166', true),
+          h('text', {
+            key: 'tag', x: (x * 100) + '%', y: (y * 100) + '%',
+            dx: 4, dy: -6, fill: '#ffe08a', fontSize: 12, stroke: '#000', strokeWidth: 0.6,
+            style: { paintOrder: 'stroke' },
+          }, t('annotPendingTag')),
+        ])
+      })()
+    : (pendingStart !== null
+        ? h('g', { key: 'startPoint' }, [
+            h('circle', {
+              cx: (pendingStart.x * 100) + '%', cy: (pendingStart.y * 100) + '%', r: 5,
+              fill: '#ffd166', stroke: '#000', strokeWidth: 1.5,
+            }),
+            h('text', {
+              x: (pendingStart.x * 100) + '%', y: (pendingStart.y * 100) + '%',
+              dx: 9, dy: 4, fill: '#ffe08a', fontSize: 12, stroke: '#000', strokeWidth: 0.6,
+              style: { paintOrder: 'stroke' },
+            }, t('annotStartTag')),
+          ])
+        : null)
+
+  /** 弹窗与批注列表：一律拦住指针/点击冒泡，别让查看器抢事件。 */
+  const blockViewer = {
+    onPointerDown: (e) => e.stopPropagation(),
+    onPointerUp: (e) => e.stopPropagation(),
+    onClick: (e) => e.stopPropagation(),
+    onContextMenu: (e) => { e.preventDefault(); e.stopPropagation() },
+  }
 
   const editor = editing === null ? null : h('div', {
     className: 'dg-annotEditor',
     key: 'editor',
     'data-gallery-annot-editor': true,
+    ...blockViewer,
   }, [
     h('div', { className: 'dg-annotEditorHead', key: 'h' }, t('annotNotePrompt')),
+    h('div', { className: 'dg-annotPendingHint', key: 'p' }, t('annotPendingHint')),
     h('input', {
       type: 'text',
       key: 'inp',
@@ -4349,42 +4751,52 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
       maxLength: 500,
       onChange: (e) => setEditing((cur) => (cur === null ? null : { ...cur, note: e.target.value })),
       onKeyDown: (e) => {
+        // 方向键/字母键属于输入内容，不能被查看器的全局快捷键截走
+        e.stopPropagation()
         if (e.key === 'Enter') { e.preventDefault(); saveEditing() }
-        if (e.key === 'Escape') { e.preventDefault(); setEditing(null) }
+        if (e.key === 'Escape') { e.preventDefault(); clearPending() }
       },
     }),
     h('div', { className: 'dg-annotEditorOps', key: 'o' }, [
-      h('button', { type: 'button', className: 'dg-btn dg-btnSmall', key: 'c', onClick: () => setEditing(null) }, t('cancel')),
       h('button', {
-        type: 'button', className: 'dg-btn dg-btnSmall dg-primaryBtn', key: 's',
-        'data-gallery-annot-save': true, onClick: saveEditing,
+        type: 'button', className: 'dg-btn dg-btnSmall', key: 'c',
+        onClick: (e) => { e.stopPropagation(); e.preventDefault(); clearPending() },
+      }, t('cancel')),
+      h('button', {
+        type: 'button', className: 'dg-btn dg-btnSmall dg-annotSave', key: 's',
+        'data-gallery-annot-save': true,
+        onClick: (e) => { e.stopPropagation(); e.preventDefault(); saveEditing() },
       }, t('save')),
     ]),
   ])
 
   const list = (annotations ?? []).length === 0 ? null : h('div', {
     className: 'dg-annotList', key: 'list', 'data-gallery-annot-list': true,
-  }, (annotations ?? []).map((a) => h('div', {
+    ...blockViewer,
+  }, (annotations ?? []).map((a, idx) => h('div', {
     className: 'dg-annotItem', key: a.id, 'data-gallery-annot-id': a.id,
   }, [
-    h('span', { className: 'dg-annotIndex', key: 'i' }, '#'),
+    h('span', { className: 'dg-annotIndex', key: 'i' }, `#${idx + 1}`),
     h('span', { className: 'dg-annotText', key: 't' }, a.note || t('annotNoNote')),
     h('button', {
       type: 'button', className: 'dg-btn dg-btnSmall dg-btnIcon', key: 'x',
       title: t('delete'), 'data-gallery-annot-remove': a.id,
-      onClick: () => onRemove(a.id),
+      onClick: (e) => { e.stopPropagation(); e.preventDefault(); onRemove(a.id) },
     }, '✕'),
   ])))
 
-  return h('div', { className: 'dg-annotWrap', key: 'annot', style: { position: 'absolute', inset: 0 } }, [
+  return h('div', {
+    className: 'dg-annotWrap', key: 'annot',
+    style: { position: 'absolute', inset: 0, zIndex: 3 },
+  }, [
     h('svg', {
       key: 'svg',
       ref: svgRef,
       className: `dg-annotSvg${active ? ' dg-annotActive' : ''}`,
       'data-gallery-annot-svg': true,
       'data-gallery-annot-active': active ? '1' : '0',
-      viewBox: '0 0 100 100',
-      preserveAspectRatio: 'none',
+      // 不设 viewBox：坐标本来就是百分比（相对 SVG 视口），去掉 viewBox 后
+      // 线宽与字号按屏幕像素计算，否则 12 号字会被放大成几十像素、盖住整张图。
       style: {
         position: 'absolute', inset: 0, width: '100%', height: '100%',
         pointerEvents: active ? 'auto' : 'none',
@@ -4393,7 +4805,9 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
       onPointerDown,
       onPointerMove,
       onPointerUp: finishDraft,
-      onPointerCancel: () => setDraft(null),
+      onPointerCancel: () => { setDraft(null); setPendingStart(null) },
+      onClick: active ? (event) => { event.preventDefault(); event.stopPropagation() } : undefined,
+      onContextMenu: active ? (event) => { event.preventDefault(); event.stopPropagation() } : undefined,
     }, [draftShape, ...shapes]),
     list,
     editor,
@@ -4706,6 +5120,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
       const [categoryFilter, setCategoryFilter] = React.useState({
         finalConfirmed: true,
         finalPending: true,
+        revise: true,
+        archive: true,
         input: true,
         intermediate: true,
         unknown: true,
@@ -4775,9 +5191,17 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
        * **数据边界（最要紧）**：确认态只读标记文件，绝不读 / 写自动分类。
        * 分类是机器猜的、会随 5 秒刷新变；判断是人给的、必须留得住。
        */
-      const isConfirmed = React.useCallback((relPath) => {
-        return marks[relPath]?.confirmed === true
+      const verdictOf = React.useCallback((relPath) => {
+        const m = marks[relPath]
+        if (m === undefined) return 'none'
+        if (m.verdict === 'revise' || m.verdict === 'archive') return m.verdict
+        if (m.verdict === 'deliver' || m.confirmed === true) return 'deliver'
+        return 'none'
       }, [marks])
+
+      const isConfirmed = React.useCallback((relPath) => {
+        return verdictOf(relPath) === 'deliver'
+      }, [verdictOf])
 
       /**
        * 卡片的分类分组（用于顶部开关筛选）：
@@ -4787,12 +5211,15 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
        * 一张 final 的卡片若没确认 → finalPending；确认了 → finalConfirmed。
        */
       const bucketOf = React.useCallback((file) => {
-        if (isConfirmed(file.relPath)) return 'finalConfirmed'
+        const v = verdictOf(file.relPath)
+        if (v === 'deliver') return 'finalConfirmed'
+        if (v === 'revise') return 'revise'
+        if (v === 'archive') return 'archive'
         if (file.category === 'final') return 'finalPending'
         if (file.category === 'input') return 'input'
         if (file.category === 'intermediate') return 'intermediate'
         return 'unknown'
-      }, [isConfirmed])
+      }, [verdictOf])
 
       /** 切一个分类的显隐。 */
       const toggleCategory = React.useCallback((key) => {
@@ -4809,30 +5236,30 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
         })
       }, [])
 
-      /** 批量：确认 / 取消确认 / 清除标记（只改标记，不碰磁盘）。 */
+      /** 批量表态 / 清标记（只改标记，不碰磁盘）。action: deliver | revise | archive | none | clear */
       const batchMark = React.useCallback(async (action) => {
         const paths = [...selected]
         if (paths.length === 0) return
         const updates = paths.map((p) => ({
           path: p,
-          // 确认：保留原有 action，加 confirmed:true
-          // 取消确认：去掉 confirmed
-          // 清除：整条删掉
           mark: action === 'clear'
             ? null
-            : action === 'confirm'
-              ? { ...(marks[p] ?? { action: 'finalize' }), confirmed: true }
-              : (() => {
-                  const cur = marks[p]
+            : (() => {
+                const cur = marks[p]
+                if (action === 'none') {
                   if (cur === undefined) return null
                   const next = { ...cur }
                   delete next.confirmed
-                  // 若原来只为确认而建的 finalize 标记，取消后整条删掉
-                  if (next.action === 'finalize' && Object.keys(next).filter((k) => k !== 'action' && k !== 'markedAt').length === 0) {
-                    return null
-                  }
+                  delete next.verdict
+                  const rest = Object.keys(next).filter((k) => k !== 'action' && k !== 'markedAt')
+                  if (next.action === 'finalize' && rest.length === 0) return null
                   return next
-                })(),
+                }
+                const next = { ...(cur ?? { action: 'finalize' }), verdict: action }
+                if (action === 'deliver') next.confirmed = true
+                else delete next.confirmed
+                return next
+              })(),
         }))
         // 本地先行（乐观更新）
         setMarks((prev) => {
@@ -4860,7 +5287,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
          * confirmed 字段是唯一真源：存进 marks 文件，刷新 / 重扫 / 切会话 / 重启都在。
          * **绝不回写自动分类** —— 分类是机器猜的会变，判断是人给的必须留得住。
          */
-        const mark = { action, ...(extra ?? {}), ...(action === 'finalize' ? { confirmed: true } : {}) }
+        const mark = { action, ...(extra ?? {}), ...(action === 'finalize' ? { confirmed: true, verdict: 'deliver' } : {}) }
         setMarks((prev) => ({ ...prev, [item.relPath]: mark }))
         setBasketOpen(true)
         try {
@@ -4898,6 +5325,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
         if (cur === undefined) return
         const next = { ...cur }
         delete next.confirmed
+        delete next.verdict
         const cleaned = (next.action === 'finalize' &&
           Object.keys(next).filter((k) => k !== 'action' && k !== 'markedAt').length === 0)
           ? null
@@ -4915,6 +5343,46 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
         }
       }, [marks])
 
+      /**
+       * 卡片上的「确认交付 / 取消确认」（v0.14.1）。
+       * 单张表态：只写 marks 文件，既不打开反馈篮，也不发送任何消息。
+       * 与右键「定为最终版」共用同一份 confirmed 真源，刷新/切视图/重启都在。
+       */
+      const setVerdictOne = React.useCallback(async (relPath, verdict) => {
+        const cur = marks[relPath]
+        let next
+        if (verdict === 'none') {
+          if (cur === undefined) return
+          const rest = { ...cur }
+          delete rest.confirmed
+          delete rest.verdict
+          const onlyFinalize = rest.action === 'finalize' &&
+            Object.keys(rest).filter((k) => k !== 'action' && k !== 'markedAt').length === 0
+          next = onlyFinalize ? null : rest
+        } else {
+          next = { ...(cur ?? { action: 'finalize' }), verdict }
+          if (verdict === 'deliver') next.confirmed = true
+          else delete next.confirmed
+        }
+        setMarks((prev) => {
+          const n = { ...prev }
+          if (next === null) delete n[relPath]
+          else n[relPath] = next
+          return n
+        })
+        try {
+          const payload = await callHost('marks', { path: relPath, mark: next })
+          if (payload?.ok === false) throw new Error(payload?.error?.message ?? t('errorTitle'))
+        } catch (error) {
+          console.warn('dsh-gallery: 单张表态落盘失败', error)
+        }
+      }, [marks, t])
+
+      /** 卡片主按钮：已定稿 ↔ 清除表态。 */
+      const toggleConfirmOne = React.useCallback((relPath) => {
+        return setVerdictOne(relPath, verdictOf(relPath) === 'deliver' ? 'none' : 'deliver')
+      }, [setVerdictOne, verdictOf])
+
       /** 加一条批注（v0.14.0）。 */
       const addAnnotation = React.useCallback((item, annot) => {
         const relPath = item.relPath
@@ -4928,6 +5396,18 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
       /** 删一条批注。 */
       const removeAnnotation = React.useCallback((item, id) => {
         const relPath = item.relPath
+        setAnnotations((prev) => {
+          const cur = prev[relPath] ?? []
+          const next = cur.filter((a) => a.id !== id)
+          const out = { ...prev }
+          if (next.length === 0) delete out[relPath]
+          else out[relPath] = next
+          return out
+        })
+      }, [])
+
+      /** 删一条批注（按 relPath，反馈篮用；查看器走带 item 的那个）。 */
+      const removeAnnotationById = React.useCallback((relPath, id) => {
         setAnnotations((prev) => {
           const cur = prev[relPath] ?? []
           const next = cur.filter((a) => a.id !== id)
@@ -5140,6 +5620,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
       React.useEffect(() => {
         if (viewer === null) return undefined
         const onKey = (event) => {
+          // 批注输入框里按 Esc 只取消编辑，不能把整个查看器关掉
+          if (isTypingTarget(event.target)) return
           if (event.key === 'Escape') {
             event.preventDefault()
             setViewer(null)
@@ -5242,6 +5724,18 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
             onClick: () => { setKind('media'); setPage(1); setViewer(null) },
           }, t('kindMedia')),
         ]),
+        // 批量选择入口（v0.14.1 修 v0.13.7 死锁）：此前没有任何 setBatchMode(true) 调用
+        h('button', {
+          type: 'button',
+          className: `dg-btn${batchMode ? ' dg-btnActive' : ''}`,
+          key: 'batchMode',
+          'data-gallery-batch-mode': batchMode ? '1' : '0',
+          title: batchMode ? t('batchModeExitHint') : t('batchModeEnterHint'),
+          onClick: () => setBatchMode((v) => {
+            if (v) setSelected(new Set())
+            return !v
+          }),
+        }, batchMode ? t('batchModeExit') : t('batchModeEnter')),
         settingsBtn,
         h('button', {
           type: 'button',
@@ -5256,7 +5750,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
       // 分类图例：告诉用户三种边框颜色代表什么（只在有数据时显示）
       // 「未归类」只有在确实存在这类文件时才显示，避免图例噪音
       // 反馈篮独立入口（S3-a）：关闭后能重新打开，不必再标记一张卡
-      const markedCount = Object.keys(marks).length
+      // 计数取「表态 ∪ 批注」并集：只有框选批注、没表态的卡也算一条待发反馈
+      const markedCount = new Set([...Object.keys(marks), ...Object.keys(annotations)]).size
       const basketToggle = h('button', {
         type: 'button',
         className: 'dg-btn dg-basketToggle',
@@ -5275,7 +5770,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
        * v0.13.7：确认态计数来自 marks，不来自自动分类。
        */
       const catCounts = React.useMemo(() => {
-        const c = { finalConfirmed: 0, finalPending: 0, input: 0, intermediate: 0, unknown: 0 }
+        const c = { finalConfirmed: 0, finalPending: 0, revise: 0, archive: 0, input: 0, intermediate: 0, unknown: 0 }
         for (const it of items) {
           const b = bucketOf(it)
           if (Object.prototype.hasOwnProperty.call(c, b)) c[b] += 1
@@ -5333,9 +5828,12 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
             // 最终交付 · 已确认
             filterToggle('finalConfirmed', t('catFilterFinalConfirmed'),
               'dg-legendSwatch-final', confirmedCount, true),
-            // 最终交付 · 待确认
+            // 成稿 · 待定
             filterToggle('finalPending', t('catFilterFinalPending'),
               'dg-legendSwatch-final dg-legendSwatchPending', pendingCount, true),
+            // 人的结论（高于自动分类）
+            filterToggle('revise', t('catFilterRevise'), 'dg-legendSwatch-revise', catCounts.revise, true),
+            filterToggle('archive', t('catFilterArchive'), 'dg-legendSwatch-archive', catCounts.archive, true),
             filterToggle('input', t('catLegendInput'), 'dg-legendSwatch-input', inputCount, true),
             filterToggle('intermediate', t('catLegendIntermediate'), 'dg-legendSwatch-intermediate', interimCount, true),
             hasUnknown
@@ -5357,12 +5855,25 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
                 type: 'button', className: 'dg-btn dg-btnSmall', key: 'confirm',
                 'data-gallery-batch-confirm': true,
                 title: t('batchHintConfirm'),
-                onClick: () => { void batchMark('confirm') },
+                onClick: () => { void batchMark('deliver') },
               }, t('batchConfirm')),
+              h('button', {
+                type: 'button', className: 'dg-btn dg-btnSmall', key: 'revise',
+                'data-gallery-batch-revise': true,
+                title: t('batchHintRevise'),
+                onClick: () => { void batchMark('revise') },
+              }, t('batchSetRevise')),
+              h('button', {
+                type: 'button', className: 'dg-btn dg-btnSmall', key: 'archive',
+                'data-gallery-batch-archive': true,
+                title: t('batchHintArchive'),
+                onClick: () => { void batchMark('archive') },
+              }, t('batchSetArchive')),
               h('button', {
                 type: 'button', className: 'dg-btn dg-btnSmall', key: 'unconfirm',
                 'data-gallery-batch-unconfirm': true,
-                onClick: () => { void batchMark('unconfirm') },
+                title: t('batchHintClearVerdict'),
+                onClick: () => { void batchMark('none') },
               }, t('batchUnconfirm')),
               h('button', {
                 type: 'button', className: 'dg-btn dg-btnSmall', key: 'clearmark',
@@ -5538,52 +6049,111 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
         // 全局模式 + 有分组数据 → 按对话分组渲染（可折叠）
         const useGroups = scope === 'global' && Array.isArray(data.groups) && data.groups.length > 0
 
-        if (useGroups) {
-          /**
-           * 卡片包装层（v0.13.7）：给任意卡片加「确认角标」+「批量多选框」。
-           *
-           * 为什么不改三个卡片组件：Card / FileCard / MediaCard 各自有复杂的内部结构，
-           * 在它们外面套一层 absolute 定位的 overlay 最省事，也不会影响既有交互
-           * （右键、点击预览、拖拽都不受影响，因为我们只加 pointer-events 可控的子元素）。
-           */
-          const wrapCard = (node, item, key) => {
-            const confirmed = isConfirmed(item.relPath)
-            const checked = selected.has(item.relPath)
-            const showCheckbox = selectMode || checked
-            return h('div', {
-              className: `dg-cardWrap${confirmed ? ' dg-cardConfirmed' : ''}${checked ? ' dg-cardChecked' : ''}`,
-              key: key + ':wrap',
-              'data-gallery-card-wrap': item.relPath,
-              'data-gallery-confirmed': confirmed ? '1' : '0',
-            }, [
-              node,
-              // 确认角标（只在确认态出现，与自动分色边框区分开）
-              confirmed
-                ? h('div', {
-                    className: 'dg-confirmBadge',
-                    key: 'badge',
-                    'data-gallery-confirm-badge': true,
-                    title: t('confirmBadgeHint'),
-                  }, [h('span', { key: 'i' }, '✓'), h('span', { key: 'l' }, t('confirmBadgeLabel'))])
-                : null,
-              // 多选框（批量模式下常显，或已选中时显示）
-              showCheckbox
-                ? h('button', {
-                    type: 'button',
-                    className: `dg-cardCheck${checked ? ' dg-cardCheckOn' : ''}`,
-                    key: 'check',
-                    'data-gallery-card-check': item.relPath,
-                    title: checked ? t('batchUnselect') : t('batchSelect'),
-                    onClick: (e) => {
-                      e.stopPropagation()
-                      e.preventDefault()
-                      toggleSelect(item.relPath)
-                    },
-                  }, checked ? '✓' : '')
-                : null,
-            ])
-          }
+        /** 卡片包装层（v0.14.1）：确认角标 + 单张表态入口 + 批量多选框。
+         *  分组视图与「当前对话」视图共用，避免后者没有表态入口。 */
+        const wrapCard = (node, item, key) => {
+          const verdict = verdictOf(item.relPath)
+          const bucket = bucketOf(item)
+          const checked = selected.has(item.relPath)
+          const showCheckbox = selectMode || checked
+          const badgeLabel = verdict === 'deliver'
+            ? t('verdictBadgeDeliver')
+            : verdict === 'revise'
+              ? t('verdictBadgeRevise')
+              : verdict === 'archive'
+                ? t('verdictBadgeArchive')
+                : null
+          return h('div', {
+            className: `dg-cardWrap${checked ? ' dg-cardChecked' : ''}${selectMode ? ' dg-cardSelectable' : ''}`,
+            key: key + ':wrap',
+            'data-gallery-card-wrap': item.relPath,
+            'data-gallery-confirmed': verdict === 'deliver' ? '1' : '0',
+            'data-gallery-verdict': verdict,
+            'data-gallery-bucket': bucket,
+            /**
+             * 批量模式下整张卡片都能点（v0.14.3）：
+             * 点卡片任意位置 = 选中/取消，不再打开大图 / 侧栏预览 / 播放器。
+             * 只放行卡片上的按钮（三种表态、多选框），它们有自己的语义。
+             * 用 capture 而不是改每个 Card 的 onOpen：三种卡片（图片/文件/音视频）
+             * 与分组视图、当前对话视图共用这一层，一处生效。
+             */
+            onClickCapture: selectMode
+              ? (event) => {
+                  const target = event.target
+                  if (target !== null && target !== undefined && typeof target.closest === 'function') {
+                    if (target.closest('[data-gallery-verdict-set],[data-gallery-card-check]') !== null) return
+                  }
+                  event.preventDefault()
+                  event.stopPropagation()
+                  toggleSelect(item.relPath)
+                }
+              : undefined,
+          }, [
+            node,
+            // 人的结论角标：一旦表态，右上角「机器预判」角标由 CSS 隐去，只留这一枚
+            badgeLabel === null
+              ? null
+              : h('div', {
+                  className: `dg-verdictBadge dg-verdict-${verdict}`,
+                  key: 'badge',
+                  'data-gallery-verdict-badge': verdict,
+                  title: t('verdictBadgeHint'),
+                }, badgeLabel),
+            // 三种表态：再点一次同一个 = 清除表态
+            h('div', { className: 'dg-verdictOps', key: 'verdictOps', 'data-gallery-verdict-ops': verdict }, [
+              h('button', {
+                type: 'button', key: 'deliver',
+                className: `dg-verdictBtn dg-verdictBtn-deliver${verdict === 'deliver' ? ' dg-verdictOn' : ''}`,
+                'data-gallery-verdict-set': 'deliver',
+                'data-gallery-verdict-active': verdict === 'deliver' ? '1' : '0',
+                title: t('verdictDeliverHint'),
+                onClick: (e) => {
+                  e.stopPropagation(); e.preventDefault()
+                  void setVerdictOne(item.relPath, verdict === 'deliver' ? 'none' : 'deliver')
+                },
+              }, '✓'),
+              h('button', {
+                type: 'button', key: 'revise',
+                className: `dg-verdictBtn dg-verdictBtn-revise${verdict === 'revise' ? ' dg-verdictOn' : ''}`,
+                'data-gallery-verdict-set': 'revise',
+                'data-gallery-verdict-active': verdict === 'revise' ? '1' : '0',
+                title: t('verdictReviseHint'),
+                onClick: (e) => {
+                  e.stopPropagation(); e.preventDefault()
+                  void setVerdictOne(item.relPath, verdict === 'revise' ? 'none' : 'revise')
+                },
+              }, '↩'),
+              h('button', {
+                type: 'button', key: 'archive',
+                className: `dg-verdictBtn dg-verdictBtn-archive${verdict === 'archive' ? ' dg-verdictOn' : ''}`,
+                'data-gallery-verdict-set': 'archive',
+                'data-gallery-verdict-active': verdict === 'archive' ? '1' : '0',
+                title: t('verdictArchiveHint'),
+                onClick: (e) => {
+                  e.stopPropagation(); e.preventDefault()
+                  void setVerdictOne(item.relPath, verdict === 'archive' ? 'none' : 'archive')
+                },
+              }, '◇'),
+            ]),
+            // 多选框（批量模式下常显，或已选中时显示）
+            showCheckbox
+              ? h('button', {
+                  type: 'button',
+                  className: `dg-cardCheck${checked ? ' dg-cardCheckOn' : ''}`,
+                  key: 'check',
+                  'data-gallery-card-check': item.relPath,
+                  title: checked ? t('batchUnselect') : t('batchSelect'),
+                  onClick: (e) => {
+                    e.stopPropagation()
+                    e.preventDefault()
+                    toggleSelect(item.relPath)
+                  },
+                }, checked ? '✓' : '')
+              : null,
+          ])
+        }
 
+        if (useGroups) {
           const cardFor = (item, groupKey, listForViewer) => {
             // 分组里的文件也走同一套卡片组件
             const enriched = {
@@ -5670,7 +6240,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
               const bucket = bucketOf(f)
               if (categoryFilter[bucket] === false) return false
               // 中间产物额外受组内开关控制（上面已算好）
-              if (f.category === 'intermediate' && !showIntermediate) return false
+              if (bucket === 'intermediate' && !showIntermediate) return false
               return true
             })
             const hiddenCount = group.files.length - visibleFiles.length
@@ -5769,7 +6339,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
           ])
         } else {
         // 音视频：卡片直接播放（不走图片查看器）
-      const mediaGridChildren = items.map((item) => h(MediaCard, {
+      const mediaGridChildren = items.map((item) => wrapCard(h(MediaCard, {
         key: item.relPath,
         item,
         t,
@@ -5777,9 +6347,9 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
         absPath: buildAbsPath(data === null ? '' : data.root, item.relPath),
         onPlay: (target) => setMediaPlaying(target),
         onContextMenu: openContextMenu,
-      }))
+      }), item, item.relPath))
 
-      const gridChildren = items.map((item) => kind === 'file'
+      const gridChildren = items.map((item) => wrapCard(kind === 'file'
           ? h(FileCard, {
               key: item.relPath,
               item,
@@ -5805,7 +6375,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
               limiter: limiter.current,
               onContextMenu: openContextMenu,
               onOpen: (opened, anchorEl) => openViewer(items.indexOf(opened), anchorEl, items),
-            }))
+            }), item, item.relPath))
         // 网格区外面包一层定位容器，右侧放滚动辅助列（无滚轮场景用）
         body = h('div', { className: 'dg-bodyWrap', key: 'bodyWrap' }, [
           h('div', {
@@ -5891,8 +6461,14 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
           })
         : null
 
-      // 反馈篮（S3-a）：列出已标记条目 + 生成决策草稿
-      const markedList = Object.keys(marks).map((relPath) => {
+      // 反馈篮（S3-a）：列出已标记条目 + 带批注的卡片（v0.14.3 批注并入反馈）
+      // 批注属于「反馈」这一侧：它不进 marks（不参与表态/筛选/落盘），
+      // 但只要有批注，这张卡就出现在反馈篮里，草稿会按 Annotation N 逐条带出说明与框选区域。
+      const feedbackPaths = Array.from(new Set([
+        ...Object.keys(marks),
+        ...Object.keys(annotations),
+      ]))
+      const markedList = feedbackPaths.map((relPath) => {
         // 从当前视图里找该条目，拿 category / sessionId
         const flat = (Array.isArray(data?.items) ? data.items : [])
         const groupsList = Array.isArray(data?.groups)
@@ -5905,6 +6481,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
           category: found?.category ?? 'unknown',
           sessionId: found?.sessionId,
           mark: marks[relPath],
+          annotations: Array.isArray(annotations[relPath]) ? annotations[relPath] : [],
         }
       })
       const feedbackLayer = basketOpen && markedList.length >= 0
@@ -5923,6 +6500,10 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
             onEdit: (it) => { setEditingItem(it) },
             onEditSave: (relPath, patch) => { void updateMark(relPath, patch) },
             onClear: () => { void clearMarks() },
+            // 批注：属于反馈侧，删一条只动内存，不碰 marks
+            onRemoveAnnotation: (relPath, annotId) => { removeAnnotationById(relPath, annotId) },
+            // 「清空反馈篮」= 表态 + 批注一起清，否则批注留在图上、篮子却空了
+            onClearAll: () => { void clearMarks(); setAnnotations({}) },
           })
         : null
 
@@ -5945,8 +6526,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
               onCopy: () => { void copyText(ctxMenu.absPath) },
               onDelete: () => setDeleteTarget({ item: ctxMenu.item, busy: false }),
               // 6 个反馈动作（S3-a）：选中即进反馈篮，不发送
-              confirmed: marks[ctxMenu.item.relPath]?.confirmed === true,
-              onUnconfirm: () => { void unconfirmOne(ctxMenu.item.relPath) },
+              confirmed: verdictOf(ctxMenu.item.relPath) === 'deliver',
+              onUnconfirm: () => { void setVerdictOne(ctxMenu.item.relPath, 'none') },
               onMark: (action) => {
                 const target = ctxMenu.item
                 closeContextMenu()

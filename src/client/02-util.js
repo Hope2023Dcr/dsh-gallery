@@ -1,5 +1,16 @@
 /** 格式化 / 图片压缩 / 并发限流工具。 */
 
+    /**
+     * 焦点是否落在可输入控件里。
+     * 查看器的全局快捷键（左右切图 / 数字缩放 / o 切原图 / Esc 退出）必须给打字让位，
+     * 否则在批注输入框里按方向键或输入字母就会切图、缩放、关掉大图。
+     */
+    function isTypingTarget(target) {
+      if (target === null || target === undefined) return false
+      if (typeof target.closest !== 'function') return false
+      return target.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]') !== null
+    }
+
     /** 极简模板替换：字典里只有 {name} 占位。 */
     function format(template, values) {
       return String(template).replace(/\{(\w+)\}/g, (whole, key) => {

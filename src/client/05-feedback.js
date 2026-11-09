@@ -20,7 +20,7 @@
     const FEEDBACK_ACTIONS_UI = [
       { id: 'approve', labelZh: '通过', labelEn: 'Approve', icon: '✓' },
       { id: 'reject', labelZh: '不要这张', labelEn: 'Reject', icon: '✕' },
-      { id: 'finalize', labelZh: '定为最终版', labelEn: 'Finalize', icon: '★' },
+      { id: 'finalize', labelZh: '已定稿', labelEn: 'Deliver', icon: '★' },
       { id: 'redo-one-dim', labelZh: '单维重做', labelEn: 'Redo one dim', icon: '↻' },
       { id: 'regenerate-selected', labelZh: '选择性重生成', labelEn: 'Regenerate', icon: '⟳' },
       { id: 'set-reference', labelZh: '设为参照', labelEn: 'Set reference', icon: '◎' },
@@ -256,6 +256,46 @@
     }
 
     /**
+     * 把「卡片行」展开成契约条目（v0.14.3）：
+     *   · 卡片有表态 → 一条（动作 + 理由 + 只改/锁死）
+     *   · 卡片有批注 → 每条批注各一条，带 `region`（框选位置），动作固定为「按区域改」
+     *
+     * 为什么把批注展开成独立条目而不是塞进理由：
+     *   草稿要按 `Annotation N：` 逐条编号，模型也得逐条回应；
+     *   一张图三处批注 = 三条指令，混成一段会丢掉「哪条对哪个框」的对应关系。
+     */
+    function expandFeedbackItems(list) {
+      const out = []
+      for (const it of Array.isArray(list) ? list : []) {
+        const mark = it.mark
+        if (mark !== undefined && mark !== null) {
+          out.push({
+            relPath: it.relPath,
+            category: it.category ?? 'unknown',
+            action: mark.action ?? 'approve',
+            reason: mark.reason,
+            changeOnly: mark.changeOnly,
+            keep: mark.keep,
+            preserve: mark.preserve,
+          })
+        }
+        const annots = Array.isArray(it.annotations) ? it.annotations : []
+        for (const a of annots) {
+          const note = typeof a?.note === 'string' ? a.note.trim() : ''
+          out.push({
+            relPath: it.relPath,
+            category: it.category ?? 'unknown',
+            // 卡已被判「不要这张」时，批注也沿用打回；否则是「只改这个框」
+            action: mark?.action === 'reject' ? 'reject' : 'redo-one-dim',
+            reason: note === '' ? undefined : note,
+            region: { x: a.x, y: a.y, w: a.w, h: a.h },
+          })
+        }
+      }
+      return out
+    }
+
+    /**
      * 反馈篮：一个受控组件，管理条目列表 + 生成草稿。
      *
      * @param t - 文案
@@ -269,7 +309,8 @@
      * @param onSubmitDraft - 生成草稿后的回调（用于提示）
      */
     function FeedbackBasket({ t, items, currentSessionId, targetSessionTitle,
-                              onClose, onRemove, onEdit, onClear, onEditSave }) {
+                              onClose, onRemove, onEdit, onClear, onEditSave,
+                              onRemoveAnnotation, onClearAll }) {
       // 语言判断：用 t 探测一个已知键 —— 命中中文就按 zh 渲染，否则 en。
       // （不引入 detectLocale，插件没有这个工具函数）
       const [locale] = React.useState(() => {
@@ -280,6 +321,21 @@
       })
       const [busy, setBusy] = React.useState(false)
       const [notice, setNotice] = React.useState(null)
+
+      /**
+       * 展示行：一条表态 + 每条批注各占一行（v0.14.3）。
+       * 顺序必须与 expandFeedbackItems() 完全一致 —— 界面上的序号就是草稿里的 `Annotation N`。
+       */
+      const rows = React.useMemo(() => {
+        const out = []
+        for (const it of Array.isArray(items) ? items : []) {
+          if (it.mark !== undefined && it.mark !== null) out.push({ kind: 'mark', it })
+          const annots = Array.isArray(it.annotations) ? it.annotations : []
+          for (const a of annots) out.push({ kind: 'annot', it, a })
+        }
+        return out
+      }, [items])
+      const annotCount = rows.filter((r) => r.kind === 'annot').length
       // 编辑弹窗：正在编辑的条目 + 三个字段的草稿值
       const [editing, setEditing] = React.useState(null)
       const [editReason, setEditReason] = React.useState('')
@@ -316,7 +372,7 @@
       // 历史会话判定：条目归属会话与当前会话不同 → 禁止提交
       const foreignItems = items.filter((it) => it.sessionId !== undefined
         && it.sessionId !== '' && currentSessionId !== '' && it.sessionId !== currentSessionId)
-      const canSubmit = items.length > 0 && foreignItems.length === 0 && busy === false
+      const canSubmit = rows.length > 0 && foreignItems.length === 0 && busy === false
 
       /** 生成草稿并写进 composer（不发送）。 */
       const generateDraft = React.useCallback(async () => {
@@ -326,15 +382,7 @@
         try {
           const feedback = makeFeedback({
             sessionId: currentSessionId,
-            items: items.map((it) => ({
-              relPath: it.relPath,
-              category: it.category ?? 'unknown',
-              action: it.mark?.action ?? 'approve',
-              reason: it.mark?.reason,
-              changeOnly: it.mark?.changeOnly,
-              keep: it.mark?.keep,
-              preserve: it.mark?.preserve,
-            })),
+            items: expandFeedbackItems(items),
           })
           const text = renderFeedbackText(feedback, { locale, targetSessionTitle })
           const result = await writeDraftToComposer(text, currentSessionId)
@@ -366,7 +414,7 @@
         }, [
           h('div', { className: 'dg-feedbackHead', key: 'head' }, [
             h('span', { className: 'dg-feedbackTitle', key: 'title' },
-              format(t('feedbackBasketTitleN'), { n: items.length }),
+              format(t('feedbackBasketTitleN'), { n: rows.length }),
             ),
             h('button', {
               type: 'button', className: 'dg-btn', key: 'close',
@@ -386,24 +434,65 @@
                 format(t('feedbackForeignWarn'), { n: foreignItems.length }))
             : null,
 
-          items.length === 0
+          // 批注提示：让用户明确知道框选说明会跟着反馈一起发出去
+          annotCount > 0
+            ? h('div', { className: 'dg-feedbackAnnotHint', key: 'annotHint', 'data-gallery-feedback-annot-hint': annotCount },
+                format(t('feedbackAnnotHint'), { n: annotCount }))
+            : null,
+
+          rows.length === 0
             ? h('p', { className: 'dg-status', key: 'empty' }, t('feedbackBasketEmpty'))
             : h('ul', { className: 'dg-feedbackList', key: 'list' },
-                items.map((it, idx) => {
+                rows.map((row, idx) => {
+                  const it = row.it
+                  const fileName = it.relPath.split('/').pop() ?? it.relPath
+                  const rowKey = `${it.relPath}:${row.kind}:${row.kind === 'annot' ? row.a.id : 'mark'}`
+                  // ① 批注行：位置 + 说明，只有删除（说明在查看器里改）
+                  if (row.kind === 'annot') {
+                    const a = row.a
+                    const pct = (v) => {
+                      const num = Number(v)
+                      return Number.isFinite(num) ? Math.round(Math.max(0, Math.min(1, num)) * 100) : 0
+                    }
+                    return h('li', {
+                      className: 'dg-feedbackItem dg-feedbackAnnotItem',
+                      key: rowKey,
+                      'data-gallery-feedback-annot-item': a.id,
+                      'data-gallery-feedback-no': idx + 1,
+                    }, [
+                      h('span', { className: 'dg-feedbackNo', key: 'n' }, String(idx + 1)),
+                      h('span', { className: 'dg-feedbackAction dg-feedbackActionAnnot', key: 'a' }, t('feedbackAnnotTag')),
+                      h('span', { className: 'dg-feedbackName', key: 'name', title: it.relPath }, fileName),
+                      h('span', { className: 'dg-feedbackDim dg-feedbackRegion', key: 'r' },
+                        format(t('feedbackAnnotRegion'), { x: pct(a.x), y: pct(a.y), w: pct(a.w), h: pct(a.h) })),
+                      h('span', { className: 'dg-feedbackNote', key: 'note' },
+                        (typeof a.note === 'string' && a.note.trim() !== '') ? a.note : t('feedbackAnnotNoNote')),
+                      h('span', { className: 'dg-feedbackOps', key: 'ops' }, [
+                        h('button', {
+                          type: 'button', className: 'dg-btn dg-btnSmall', key: 'del',
+                          title: t('delete'),
+                          'data-gallery-feedback-remove-annot': a.id,
+                          onClick: () => {
+                            if (typeof onRemoveAnnotation === 'function') onRemoveAnnotation(it.relPath, a.id)
+                          },
+                        }, '✕'),
+                      ]),
+                    ])
+                  }
+                  // ② 表态行：动作 + 理由/只改，可编辑可删
                   const actionDef = FEEDBACK_ACTIONS_UI.find((a) => a.id === it.mark?.action)
                   const label = actionDef === undefined
                     ? (it.mark?.action ?? '')
                     : (locale === 'en' ? actionDef.labelEn : actionDef.labelZh)
                   return h('li', {
                     className: 'dg-feedbackItem',
-                    key: it.relPath,
+                    key: rowKey,
                     'data-gallery-feedback-item': it.relPath,
                     'data-gallery-feedback-no': idx + 1,
                   }, [
                     h('span', { className: 'dg-feedbackNo', key: 'n' }, String(idx + 1)),
                     h('span', { className: 'dg-feedbackAction', key: 'a' }, label),
-                    h('span', { className: 'dg-feedbackName', key: 'name', title: it.relPath },
-                      it.relPath.split('/').pop() ?? it.relPath),
+                    h('span', { className: 'dg-feedbackName', key: 'name', title: it.relPath }, fileName),
                     (it.mark?.changeOnly !== undefined && it.mark.changeOnly.length > 0)
                       ? h('span', { className: 'dg-feedbackDim', key: 'co' },
                           `${t('feedbackChangeOnly')}：${it.mark.changeOnly.join('/')}`)
@@ -491,10 +580,12 @@
 
           h('div', { className: 'dg-feedbackActions', key: 'actions' }, [
             h('button', {
-              type: 'button', className: 'dg-btn', key: 'clear',
+              type: 'button', className: 'dg-btn dg-dangerBtn', key: 'clear',
               'data-gallery-feedback-clear': true,
-              disabled: busy || items.length === 0,
-              onClick: onClear,
+              title: t('feedbackClearHint'),
+              disabled: busy || rows.length === 0,
+              // 「清空」要连批注一起清，否则批注留在图上、篮子里却空了
+              onClick: typeof onClearAll === 'function' ? onClearAll : onClear,
             }, t('feedbackClear')),
             h('button', {
               type: 'button', className: 'dg-btn dg-primaryBtn', key: 'submit',
@@ -507,7 +598,7 @@
               // 禁用时直接把原因写在按钮上，不只靠悬停 title
               : foreignItems.length > 0
                 ? t('feedbackBlockedForeign')
-                : items.length === 0
+                : rows.length === 0
                   ? t('feedbackBlockedEmpty')
                   : t('feedbackGenerateDraft')),
           ]),

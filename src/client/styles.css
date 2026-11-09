@@ -261,6 +261,8 @@
   gap: 10px;
 }
 .dg-card {
+  box-sizing: border-box;
+  width: 100%;
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -282,20 +284,34 @@
    输入 = 灰蓝、中间 = 橙色、最终 = 绿色。
    边框加粗到 2px 以便一眼分辨。 */
 .dg-card { position: relative; }
-.dg-cat-final      { border: 2px solid #1A936F; }
-.dg-cat-input      { border: 2px solid #8A8F99; }
-.dg-cat-intermediate { border: 2px solid #D48806; }
-.dg-cat-unknown    { border: 2px solid #C8CDD6; }
-.dg-cat-final:hover      { border-color: #157A5C; }
-.dg-cat-input:hover      { border-color: #6B7079; }
-.dg-cat-intermediate:hover { border-color: #B36F05; }
-.dg-cat-unknown:hover    { border-color: #A8AEB8; }
 
-/* 角标：贴在缩略图右上角 */
+/* 边框统一画在 .dg-cardWrap 的伪元素上（v0.14.2）：
+   原来用 outline 画在卡片子元素上，卡片宽度与网格格不一致时会外扩、压到邻卡。
+   伪元素 inset:0 + box-sizing:border-box 永远严格贴合网格格，缩放/焦点都不跑偏。 */
+.dg-cardWrap::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  box-sizing: border-box;
+  pointer-events: none;
+  z-index: 6;
+}
+.dg-cardWrap[data-gallery-bucket="finalConfirmed"]::after { border-color: #4a9d5f; }
+.dg-cardWrap[data-gallery-bucket="finalPending"]::after   { border-color: #1A936F; border-style: dashed; }
+.dg-cardWrap[data-gallery-bucket="revise"]::after         { border-color: #d4693c; }
+.dg-cardWrap[data-gallery-bucket="archive"]::after        { border-color: #6f8fb5; }
+.dg-cardWrap[data-gallery-bucket="input"]::after          { border-color: #8A8F99; }
+.dg-cardWrap[data-gallery-bucket="intermediate"]::after   { border-color: #D48806; }
+.dg-cardWrap[data-gallery-bucket="unknown"]::after        { border-color: #C8CDD6; }
+.dg-cardWrap.dg-cardChecked::after                        { border-color: #4a7cff !important; border-style: solid !important; }
+
+/* 阶段角标：贴左上（与结论角标同位置，二者互斥）；右上留给三个表态按钮 */
 .dg-catBadge {
   position: absolute;
   top: 6px;
-  right: 6px;
+  left: 6px;
   z-index: 2;
   padding: 2px 7px;
   border-radius: 9px;
@@ -333,6 +349,8 @@
 .dg-legendSwatch-final      { background: #1A936F; }
 .dg-legendSwatch-input      { background: #8A8F99; }
 .dg-legendSwatch-intermediate { background: #D48806; }
+.dg-legendSwatch-revise  { background: #d4693c; }
+.dg-legendSwatch-archive { background: #6f8fb5; }
 .dg-legendSwatch-unknown    { background: #8C93A0; }
 
 /* ===== 分组（全局按对话）===== */
@@ -728,7 +746,7 @@
   flex: 0 0 auto;
 }
 .dg-viewerTitle { flex: 1 1 auto; min-width: 0; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dg-viewerBody { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 10px 42px 10px 10px; }
+.dg-viewerBody { position: relative; flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 10px 42px 10px 10px; }
 .dg-viewerBody img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
 .dg-viewerLayer { position: absolute; inset: 0; z-index: 30; background: var(--dsw-specific-sidebar-fill, #111); display: flex; flex-direction: column; }
 .dg-viewerLayer .dg-viewer { flex: 1 1 auto; min-height: 0; }
@@ -1049,6 +1067,29 @@
 }
 .dg-feedbackAction { flex: 0 0 auto; color: #8fb6ff; font-weight: 600; }
 .dg-feedbackName { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e8eaed; }
+
+/* 框选批注条目（v0.14.3）：黄调 + 左侧竖线，和「表态行」一眼分开 */
+.dg-feedbackAnnotItem {
+  position: relative; align-items: center; flex-wrap: wrap;
+  padding: 8px 44px 8px 6px;
+  background: rgba(255, 209, 102, 0.05);
+  border-left: 2px solid rgba(255, 209, 102, 0.5);
+}
+.dg-feedbackAnnotItem .dg-feedbackNo { background: #8a6d1f; color: #ffe6a3; }
+.dg-feedbackActionAnnot { color: #ffd166; }
+.dg-feedbackRegion { flex: 0 0 auto; color: #c8b071; font-size: 11px; }
+.dg-feedbackAnnotItem .dg-feedbackNote {
+  flex: 1 1 100%; margin-top: 4px;
+  color: #e8eaed; font-size: 12px; line-height: 1.45;
+  white-space: pre-wrap; word-break: break-word;
+}
+.dg-feedbackAnnotItem .dg-feedbackOps { position: absolute; right: 6px; top: 8px; }
+/* 批注提示条：让用户明确「框选说明会跟着发出去」 */
+.dg-feedbackAnnotHint {
+  padding: 7px 14px; font-size: 11px; color: #ffd166;
+  background: rgba(255, 209, 102, 0.08);
+  border-bottom: 1px solid rgba(255, 209, 102, 0.22);
+}
 .dg-feedbackDim { flex: 0 0 auto; color: #a9b1bd; font-size: 11px; }
 .dg-feedbackOps { flex: 0 0 auto; display: flex; gap: 4px; }
 
@@ -1120,25 +1161,60 @@
 
 /* 卡片包装层 + 确认角标 + 多选框 */
 .dg-cardWrap { position: relative; }
-.dg-cardConfirmed > :first-child { outline: 2px solid #4a9d5f; outline-offset: -2px; }
-.dg-cardChecked > :first-child { outline: 2px solid #4a7cff; outline-offset: -2px; }
-.dg-confirmBadge {
-  position: absolute; top: 6px; left: 6px; z-index: 3;
-  display: inline-flex; align-items: center; gap: 3px;
-  padding: 1px 6px; border-radius: 9px;
-  background: #4a9d5f; color: #fff; font-size: 10px; font-weight: 600;
-  pointer-events: none; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+/* 结论角标（左上）：人的表态，优先于右上角的机器预判角标 */
+.dg-verdictBadge {
+  position: absolute; top: 6px; left: 6px; z-index: 5;
+  display: inline-flex; align-items: center;
+  padding: 1px 7px; border-radius: 9px;
+  color: #fff; font-size: 10px; font-weight: 700;
+  pointer-events: none; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
 }
+.dg-verdict-deliver { background: #4a9d5f; }
+.dg-verdict-revise  { background: #d4693c; }
+.dg-verdict-archive { background: #6f8fb5; }
+/* 有结论时，右上角「机器预判」角标让位，避免两层标签并排打架 */
+.dg-cardWrap[data-gallery-verdict="deliver"] .dg-catBadge,
+.dg-cardWrap[data-gallery-verdict="revise"] .dg-catBadge,
+.dg-cardWrap[data-gallery-verdict="archive"] .dg-catBadge { display: none; }
+
+/* 三种表态按钮：右上角一排，当前结论高亮，再点一次取消 */
+.dg-verdictOps {
+  position: absolute; top: 6px; right: 6px; z-index: 5;
+  display: inline-flex; gap: 3px;
+}
+.dg-verdictBtn {
+  width: 20px; height: 20px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%; border: 1px solid rgba(255, 255, 255, 0.55);
+  background: rgba(20, 26, 32, 0.78); color: #e8eaed;
+  font-size: 11px; line-height: 1; font-weight: 700;
+  cursor: pointer; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+}
+.dg-verdictBtn:hover { border-color: #fff; transform: scale(1.08); }
+.dg-verdictBtn-deliver.dg-verdictOn { background: #4a9d5f; border-color: #9fe3bd; color: #fff; }
+.dg-verdictBtn-revise.dg-verdictOn  { background: #d4693c; border-color: #ffb494; color: #fff; }
+.dg-verdictBtn-archive.dg-verdictOn { background: #6f8fb5; border-color: #c3d6ea; color: #fff; }
+/* 多选框（v0.14.3）：尺寸保持原样 20px —— 点选主要靠整卡，勾选框只做状态指示；
+   位置放右上（批量模式下三个单张表态按钮已收起，不冲突），避免压住底部文件名。 */
 .dg-cardCheck {
-  position: absolute; top: 6px; right: 6px; z-index: 4;
-  width: 20px; height: 20px; border-radius: 4px;
-  border: 1.5px solid rgba(255, 255, 255, 0.65);
-  background: rgba(0, 0, 0, 0.45); color: #fff;
-  font-size: 12px; line-height: 1; cursor: pointer;
+  position: absolute; top: 6px; right: 6px; z-index: 7;
+  width: 20px; height: 20px; border-radius: 5px;
+  border: 1.5px solid rgba(255, 255, 255, 0.7);
+  background: rgba(0, 0, 0, 0.5); color: #fff;
+  font-size: 12px; line-height: 1; font-weight: 700; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
 }
-.dg-cardCheck:hover { border-color: #fff; background: rgba(0, 0, 0, 0.7); }
-.dg-cardCheckOn { background: #4a7cff; border-color: #4a7cff; }
+.dg-cardCheck:hover { border-color: #fff; background: rgba(0, 0, 0, 0.75); }
+.dg-cardCheckOn { background: #4a7cff; border-color: #cfe0ff; }
+/* 批量模式：整张卡片都可点，给明确的可点提示 */
+.dg-cardSelectable, .dg-cardSelectable .dg-card { cursor: cell; }
+.dg-cardSelectable:hover::after { border-color: #8fa9ff !important; border-style: solid !important; }
+/* 已选中：加一层蓝色蒙层，隔一米也看得出来选没选 */
+.dg-cardWrap.dg-cardChecked::before {
+  content: ''; position: absolute; inset: 0; z-index: 3;
+  background: rgba(74, 124, 255, 0.18); border-radius: 8px; pointer-events: none;
+}
 
 /* 批量操作条 */
 .dg-batchBar {
@@ -1187,7 +1263,7 @@
 
 /* 批注列表 */
 .dg-annotList {
-  position: absolute; left: 8px; bottom: 8px; z-index: 5;
+  position: absolute; left: 8px; top: 8px; z-index: 5;
   max-width: 300px; max-height: 40%; overflow: auto;
   background: rgba(27, 30, 36, 0.95); border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 8px; padding: 6px; display: flex; flex-direction: column; gap: 4px;
@@ -1197,9 +1273,9 @@
 .dg-annotIndex { color: #8fb6ff; font-weight: 600; }
 .dg-annotText { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* 批注输入框 */
+/* 批注输入框：贴底居中，别挡住刚圈出来的框 */
 .dg-annotEditor {
-  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 6;
+  position: absolute; left: 50%; bottom: 14px; top: auto; transform: translateX(-50%); z-index: 6;
   width: min(340px, 80%); background: #1b1e24; color: #e8eaed;
   border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 8px; padding: 10px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6);
@@ -1212,3 +1288,23 @@
 }
 .dg-annotInput:focus { outline: 2px solid #4a7cff; outline-offset: -1px; }
 .dg-annotEditorOps { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+
+
+/* ---------- v0.14.1：表态入口 / 防重叠 / 批注弹窗可辨识 ---------- */
+
+/* 卡片包装层不许被长文件名撑破网格列 */
+.dg-cardWrap { min-width: 0; }
+
+/* 批量模式（v0.14.3）：
+   勾选框放大到 30px 并放到右上——不压底部文件名/尺寸/时间；此时单张表态按钮收起
+   （批量条的三种表态就是它的替代），避免「整卡点选」与「点小圆钮」互相误触。 */
+.dg-cardSelectable .dg-verdictOps { display: none; }
+
+/* 「保存并生效」必须一眼看得见、和编辑器背景分开 */
+.dg-annotEditorOps .dg-annotSave {
+  background: #4a7cff !important; color: #fff !important;
+  border-color: #86a9ff !important; font-weight: 600;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2), 0 2px 8px rgba(74, 124, 255, 0.5);
+}
+.dg-annotEditorOps .dg-annotSave:hover:not(:disabled) { background: #6a92ff !important; }
+.dg-annotPendingHint { font-size: 11px; color: #ffd166; margin: -2px 0 8px; }

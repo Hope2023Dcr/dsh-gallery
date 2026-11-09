@@ -263,6 +263,8 @@
        * 放大状态下左键是用来拖图的，松手后若真的移动过就不算点击。
        */
       const onClickBody = (event) => {
+        // 标注模式下点图只用于画框，不能顺手把大图关掉（老板 20:32 指出的冲突）
+        if (annotActive) return
         event.preventDefault()
         if (lastDragMoved.current === true) {
           lastDragMoved.current = false
@@ -339,6 +341,9 @@
       // 远程控制下键盘比鼠标精确，是主要操作方式。
       React.useEffect(() => {
         const onKey = (event) => {
+          // 正在输入（批注说明等）时，所有查看器快捷键让位：
+          // 左右键要能移动光标、字母 o/0/+/- 要能当文字输入，Esc 只取消编辑
+          if (isTypingTarget(event.target)) return
           const key = event.key
           if (key === 'Escape') {
             event.preventDefault()

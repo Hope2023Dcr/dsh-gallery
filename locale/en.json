@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Output Gallery",
-    "description": "Fixes DSH reporting produced files only after a task ends: watches your output folders live with auto-refreshing image thumbnails, native file preview, and in-panel video/audio playback over HTTP Range (seeking works at any file size), plus one-click frame capture, so you can verify and intervene mid-task."
+    "description": "Fixes DSH reporting produced files only after a task ends: watches your output folders live with auto-refreshing thumbnails, native file preview, and in-panel media playback over HTTP Range, so you can verify and intervene mid-task. Above the automatic asset tags (final / intermediate / input) sits a human verdict layer (finalized / redo / archive) that persists, filters and applies in batches, overriding the machine guess; region annotations merge into a feedback basket and become a decision draft you approve before sending."
   }
 }
