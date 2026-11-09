@@ -222,7 +222,7 @@ github:Hope2023Dcr/dsh-gallery
 > 想锁定版本（推荐，避免仓库更新导致行为变化）：
 >
 > ```
-> git+https://github.com/Hope2023Dcr/dsh-gallery.git#COMMIT_SHA_V0141
+> git+https://github.com/Hope2023Dcr/dsh-gallery.git#260a8dadfb39b393fdb8e85b182dd1f871e3ea43
 > ```
 
 > 上面那个 commit 对应 **v0.14.1**（表态定性层 + 批注进反馈篮 + 批量整卡点选）。
