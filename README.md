@@ -15,7 +15,7 @@
 > 一句话边界：**能看见 → 能表态 → 能把判断写成草稿送回对话（人确认）**；
 > **不能**自动改变一个正在跑的任务。
 
-[![Version](https://img.shields.io/badge/version-0.13.6-blue.svg)](#)
+[![Version](https://img.shields.io/badge/version-0.13.6-blue.svg)](https://github.com/Hope2023Dcr/dsh-gallery/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](#技术说明给想改代码的人)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#兼容性)
@@ -242,6 +242,12 @@ github:Hope2023Dcr/dsh-gallery
 >
 > tag `v0.13.6` 对应本次发布（含 S3-a 反馈契约、blob 播放可拖、reveal 修复）。
 > 钉 commit 会随文档回填提交而漂移，且不利于复现安装来源。
+
+> **装到的是什么（如实说明）**：`#v0.13.6` 指向标签里的**定版代码**，
+> `client.js` / `host/*.js` / `index.js` 与本次发布逐字节一致。
+> 标签之后 `main` 上还会新增**纯文档提交**（README、CHANGELOG、路线图措辞）——
+> 这些提交**不含任何代码改动**，所以用 tag 装到的代码与最新 `main` 完全相同，
+> 只是包里那份 README 文字会比仓库 `main` 上的略旧一点（想看最新文档直接读仓库 `main`）。
 > **更推荐直接用 npm**（`npm i dsh-gallery`）—— 版本号跟着 `latest` 走，不用每次手工核对哈希。
 
 > ⚠️ 这种方式需要**能访问 GitHub**。DSH 的「国内镜像」只代理 npm 包，不代替 GitHub 下载。
