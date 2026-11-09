@@ -106,3 +106,31 @@ export async function setMark(settingsFile, relPath, mark) {
     return next
   })
 }
+
+/**
+ * 批量设 / 清标记（v0.13.7）—— 一次读改写 + 一次原子写。
+ *
+ * 为什么批量：批量确认 20 张卡时，逐个 setMark 会触发 20 次「读文件 → 改 → 写」，
+ * 既慢又增加并发写窗口。这里串行化一次搞定。
+ *
+ * @param updates - [{ path: string, mark: object|null }]  mark=null 表示清除
+ * @returns 更新后的 marks 对象
+ */
+export async function setMarksBatch(settingsFile, updates) {
+  return enqueue(async () => {
+    const current = await readMarks(settingsFile)
+    const next = { ...current.marks }
+    for (const u of updates) {
+      const relPath = String(u?.path ?? "")
+      if (relPath === "") continue
+      const mark = u?.mark
+      if (mark === null || mark === undefined) {
+        delete next[relPath]
+      } else {
+        next[relPath] = { ...mark, markedAt: mark.markedAt ?? Date.now() }
+      }
+    }
+    await writeMarks(settingsFile, next)
+    return next
+  })
+}
