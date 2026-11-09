@@ -21,7 +21,7 @@
      *   - 右键预览区、按 O、点底部按钮 三种方式切换
      *   - 切换时**保留当前缩放与位置**，否则切过去跳回 1x 就没法对比
      */
-    function Viewer({ items, index, onClose, onStep, t, initialOriginal }) {
+    function Viewer({ items, index, onClose, onStep, t, initialOriginal, annotations, onAddAnnotation, onRemoveAnnotation }) {
       const item = items[index]
       // 文件预览已改走 DSH 原生侧栏（session 地址）；此处 Viewer 仅处理图片，isText 恒 false，
       // 下面的文本分支保留为死代码，供 v0.2 若需插件内预览时复用
@@ -248,6 +248,13 @@
         }
       }
       // 中键按下时阻止浏览器默认的自动滚动
+      /** 批注模式（v0.14.0）：开启后指针交给 SVG 标注层，查看器的缩放/拖拽暂停。 */
+      const [annotActive, setAnnotActive] = React.useState(false)
+      const annotsOfCurrent = React.useMemo(
+        () => (typeof annotations === 'function' ? annotations(item) : []),
+        [annotations, item],
+      )
+
       const onMouseDown = (event) => {
         if (event.button === 1) event.preventDefault()
       }
@@ -511,6 +518,19 @@
                 ? format(t('viewerOriginalLoading'), { pct: original.pct })
                 : t('viewerOriginalLoadingIndeterminate'))
             : (originalMode ? `◉ ${t('viewerToPreview')}` : `◎ ${t('viewerToOriginal')}`)),
+          // v0.14.0：批注模式开关
+          h('button', {
+            type: 'button',
+            className: `dg-btn${annotActive ? ' dg-btnActive' : ''}`,
+            key: 'annot',
+            'data-gallery-annot-toggle': true,
+            'aria-pressed': annotActive,
+            title: annotActive ? t('annotExit') : t('annotEnter'),
+            onClick: (event) => {
+              event.stopPropagation()
+              setAnnotActive((v) => !v)
+            },
+          }, annotActive ? `✎ ${t('annotExit')}` : `✎ ${t('annotEnter')}`),
           h('button', { type: 'button', className: 'dg-btn', key: 'prev', onClick: () => onStep(-1), 'aria-label': t('prev') }, '‹'),
           h('button', { type: 'button', className: 'dg-btn', key: 'next', onClick: () => onStep(1), 'aria-label': t('next') }, '›'),
           h('button', { type: 'button', className: 'dg-btn', key: 'close', onClick: onClose, 'aria-label': t('close') }, '✕'),
@@ -546,20 +566,35 @@
             state.status === 'ready'
               ? (isText
                   ? h('pre', { className: 'dg-textPre', key: 'text' }, state.text)
-                  : h('img', {
-                      // 原图模式下显示原图 URL（按需加载好后才有）；
-                      // 未就绪时继续显示预览图，避免黑屏跳变
-                      src: originalMode && original.status === 'ready' ? original.url : state.url,
-                      alt: item.name,
-                      decoding: 'async',
-                      draggable: false,
-                      style: {
-                        transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                        transition: dragRef.current === null ? 'transform 120ms ease-out' : 'none',
-                        userSelect: 'none',
-                        pointerEvents: 'none',
-                      },
-                    }))
+                  // v0.14.0：图片 + 框选批注层（Fragment 包住，批注层覆盖在图上）
+                  : h(React.Fragment, { key: 'imgfrag' }, [
+                      h('img', {
+                        key: 'img',
+                        // 原图模式下显示原图 URL（按需加载好后才有）；
+                        // 未就绪时继续显示预览图，避免黑屏跳变
+                        src: originalMode && original.status === 'ready' ? original.url : state.url,
+                        alt: item.name,
+                        decoding: 'async',
+                        draggable: false,
+                        style: {
+                          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                          transition: dragRef.current === null ? 'transform 120ms ease-out' : 'none',
+                          userSelect: 'none',
+                          pointerEvents: 'none',
+                        },
+                      }),
+                      // 批注层：只在图片（非文本）时出现，且随 zoom 一起变换
+                      h(AnnotationLayer, {
+                        key: 'annot',
+                        t,
+                        annotations: annotsOfCurrent,
+                        active: annotActive,
+                        frameMs: null,
+                        stageRef: bodyRef,
+                        onAdd: (a) => { onAddAnnotation?.(item, a) },
+                        onRemove: (id) => { onRemoveAnnotation?.(item, id) },
+                      }),
+                    ]))
               : state.status === 'binary'
                 ? h('div', { className: 'dg-placeholder', key: 'bin' }, t('binaryHint'))
                 : h('div', { className: state.status === 'failed' ? 'dg-placeholder dg-error' : 'dg-placeholder' },
