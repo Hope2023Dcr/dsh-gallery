@@ -1,6 +1,6 @@
 {
   "name": "dsh-gallery",
-  "version": "0.13.6",
+  "version": "0.13.7",
   "type": "module",
   "description": "产出画廊：解决 DSH 只在任务结尾才列出产出、过程不可见的问题。实时监控产出目录，图片自动刷新、文件原生预览、音视频面板内直接播放（实测 127MB 可拖；GB 级未分档），还能一键截取视频当前帧，并可给产出打判定攒成一条决策草稿（人工确认后发送），任务进行中即可校验纠正。",
   "repository": {
@@ -58,11 +58,7 @@
     "media-gallery",
     "video-preview",
     "audio-preview",
-    "range-seek",
-    "feedback",
-    "decision-draft",
-    "human-in-the-loop",
-    "annotation"
+    "range-seek"
   ],
   "publishConfig": {
     "access": "public",
