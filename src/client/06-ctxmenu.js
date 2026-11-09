@@ -81,6 +81,10 @@
         actions.onMark !== undefined
           ? entry('mark-finalize', t('ctxMarkFinalize'), '★', () => actions.onMark('finalize'))
           : null,
+        // v0.13.7：已确认的卡片给出「取消确认」，退回待确认
+        actions.onUnconfirm !== undefined && actions.confirmed === true
+          ? entry('mark-unconfirm', t('ctxMarkUnconfirm'), '☆', () => actions.onUnconfirm())
+          : null,
         actions.onMark !== undefined
           ? entry('mark-redo', t('ctxMarkRedo'), '↻', () => actions.onMark('redo-one-dim'))
           : null,
