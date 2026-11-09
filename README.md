@@ -9,19 +9,21 @@
 > **让你在任务进行中就能看到产出、当场校验，而不是结束后才发现做错了。**
 >
 > 📌 **当前是 `0.x` 开发预览版**：核心能力（实时看见、当场校验、就地处置）已可用。
-> **v0.13.6 起，判定还能攒成一条结构化决策草稿写进输入框，由你确认后发送（L1 人工闸门）**；
+> **v0.13.7 / v0.14.0 起，判定还能攒成一条结构化决策草稿写进输入框，由你确认后发送（L1 人工闸门）**；
 > **自动 steer / 喊停正在跑的任务（L2 / L3）尚未实现**，列在[路线图](#路线图)里。
 >
 > 一句话边界：**能看见 → 能表态 → 能把判断写成草稿送回对话（人确认）**；
 > **不能**自动改变一个正在跑的任务。
+> 
+> **v0.13.7 起还能按标记筛选、把「定版」真正锁住、批量处置；v0.14.0 起可以在图上圈选批注。**
 
-[![Version](https://img.shields.io/badge/version-0.13.6-blue.svg)](https://github.com/Hope2023Dcr/dsh-gallery/releases)
+[![Version](https://img.shields.io/badge/version-0.14.0-blue.svg)](https://github.com/Hope2023Dcr/dsh-gallery/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](#技术说明给想改代码的人)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#兼容性)
-[![DSH plugin](https://img.shields.io/badge/DSH-plugin-blueviolet.svg)](#)
+[![DSH plugin](https://img.shields.io/badge/DSH-plugin-blueviolet.svg)](#安装)
 
-**关键词**：DeepSeek Harness 插件 · DSH plugin · 产出画廊 · output gallery · 图片画廊 · image gallery · 文件预览 · file preview · **音视频画廊 · media gallery · 视频预览 · video preview** · **反馈篮 · feedback basket · 决策草稿 · decision draft · 人工确认 · human-in-the-loop** · 侧边栏面板 · sidebar panel · Agent 产出管理 · output artifacts
+**关键词**：DeepSeek Harness 插件 · DSH plugin · 产出画廊 · output gallery · 图片画廊 · image gallery · 文件预览 · file preview · **音视频画廊 · media gallery · 视频预览 · video preview** · **反馈篮 · feedback basket · 决策草稿 · decision draft · 人工确认 · human-in-the-loop** · **按标记筛选 · filter · 确认锁住 · confirm · 批量处置 · batch · 圈选批注 · region annotation** · 侧边栏面板 · sidebar panel · Agent 产出管理 · output artifacts
 
 ---
 
@@ -113,8 +115,8 @@
 |---|---|
 | 点整张卡片 | 在面板内弹出播放器 |
 | 视频卡片 | 显示**首帧缩略图**（进入视口才抽帧，避免一次解码几十个视频） |
-| **拖进度条** | ✅ **实测 127 MB 可拖；GB 级未做大小分档** —— 面板内播放走 blob（整包载入后交给浏览器，可任意 seek） |
-| **点开到可播** | ✅ 1.1 MB 视频与 96.5 秒音频约 250 ms；**127 MB 实测 502 ms，可正常拖动**；GB 级未做大小分档 |
+| **拖进度条** | ✅ **实测 127 MB 可拖** —— 面板内播放走 blob（整包载入后交给浏览器，可任意 seek）；**超过面板播放上限的文件会引导用系统播放器打开**（不做大视频分档） |
+| **点开到可播** | ✅ 1.1 MB 视频与 96.5 秒音频约 250 ms；**127 MB 实测 502 ms，可正常拖动** |
 | 播放器里「📷 截取当前帧」 | 把当前画面存成 PNG，文件名带时间码（如 `片子_00-12-34.png`） |
 | 浏览器解不了格式 | 显示提示 +「▶ 用系统播放器打开」/「📂 打开所在文件夹」两个按钮 |
 
@@ -237,10 +239,10 @@ github:Hope2023Dcr/dsh-gallery
 > 想锁定版本（推荐，避免仓库更新导致行为变化）—— **钉 tag，不要钉 commit**：
 >
 > ```
-> git+https://github.com/Hope2023Dcr/dsh-gallery.git#v0.13.6
+> git+https://github.com/Hope2023Dcr/dsh-gallery.git#v0.14.0
 > ```
 >
-> tag `v0.13.6` 对应本次发布（含 S3-a 反馈契约、blob 播放可拖、reveal 修复）。
+> tag `v0.14.0` 对应本次发布（含 S3-a 反馈契约、v0.13.7 筛选/确认/批量、v0.14.0 圈选批注）。
 > 钉 commit 会随文档回填提交而漂移，且不利于复现安装来源。
 
 > **装到的是什么（如实说明）**：`#v0.13.6` 指向标签里的**定版代码**，
@@ -441,6 +443,7 @@ config:
 | **会话日志** | **只读**。解析 `~/.dsh/sessions/**` 来判定「本对话产出」，不修改、不复制、不上传 |
 | **文件内容** | 预览时实时读磁盘，**不写进任何索引或缓存文件** |
 | **内存缓存** | 会话日志解析结果只在内存里（按 `路径+mtime+size` 做键），不落盘 |
+| **圈选批注（v0.14.0）** | 批注**只在内存里**：它是「这次要跟 Agent 说的话」，随查看器关闭即消失，不落盘、不上传 |
 
 > 会话日志里包含你的对话内容，插件只抽取 `tool/call` 事件里的**文件路径**，
 > 不读取、不存储对话文本。
@@ -505,16 +508,19 @@ window.dshGallerySeam = {
 | **对外 seam v1** | `window.dshGallerySeam` —— 只读，不含任何发送能力 |
 | **过程可见与即时校验** | 三类资产（图片 / 文件 / 音视频）实时刷新、面板内预览与播放 |
 | **反馈篮独立入口** | 右下角常驻「反馈篮 · N 条」按钮，关掉也能重开（v0.13.5） |
+| **按标记筛选** | 顶部五个分类开关，点一下显隐；只有「最终交付」拆「已确认 / 待确认」（v0.13.7） |
+| **确认态真锁住** | 「定为最终版」写进标记文件 `confirmed` 字段，刷新 / 重扫 / 切会话 / 重启都在（v0.13.7） |
+| **批量处置** | 多选后确认 / 取消确认 / 清除标记，一次原子写；「清掉废稿」带完整安全闸门（v0.13.7） |
+| **圈选批注** | 图上拖框 + 说明，归一化坐标攒批进决策草稿，人确认后发送（v0.14.0） |
 
 ### 未实现（诚实标注，不画大饼）
 
 | 计划 | 状态 |
 |---|---|
 | 版本历史（同一文件跨 turn 的修改点，只存 size/mtime） | ❌ 未实现 |
-| 交付物手动 pin（除 `present` 之外的标记方式） | ❌ 未实现 —— **注意区别**：反馈篮的「定为最终版」产出的是**一条判定草稿**（文本，人要确认），并不等于把 pin 写进主线状态；真正的"标记进状态"还没做 |
-| 按标记筛选 / 批量处置 | ❌ 未实现（能表态了，但还不能按判定筛出卡片、批量处理） |
-| 图片框选批注 / A/B 对比 / 参数回灌（S3-b） | ❌ 未实现 |
-| 自动 steer / cancel 独立包（S3-c） | ❌ 未实现 |
+| A/B 对比 / 参数回灌 | ❌ 未实现 |
+| 自动 steer（L2）/ 喊停正在跑的任务（L3） | ❌ 未实现 —— 归独立包 `dsh-gallery-decision`，**默认关闭** |
+| 图片 A/B 对比、参数回灌（S3-c 部分） | ❌ 未实现 |
 | 跨扫描目录合并视图（目前按目录分组） | ❌ 未实现 |
 | 文件内容变更 diff 预览 | ❌ 未实现 |
 
