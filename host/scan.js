@@ -7,12 +7,14 @@
 import { promises as fsp, readFileSync, statSync, createReadStream } from 'node:fs'
 import path from 'node:path'
 import { ASSET_CATEGORY, classifyAsset } from './classify.js'
-import { BASH_TOOLS, DEFAULT_SESSIONS_DIR, OUTPUT_TOOLS, VIDEO_EXTS, VIEW_IMAGE_EXTS, VIEW_TOOLS } from './constants.js'
+import { BASH_TOOLS, DEFAULT_SESSIONS_DIR, DSH_HOME, OUTPUT_TOOLS, VIDEO_EXTS, VIEW_IMAGE_EXTS, VIEW_TOOLS } from './constants.js'
 import { isInside, measureImage, readHead } from './fsutil.js'
 import { buildGroups } from './groups.js'
 import { collectAbsolutePaths, findSubSessionLogs, locateSessionDir, readSessionLogText } from './session.js'
 import { readHiddenList, resolveOptions } from './settings.js'
-import { buildSessionIndex } from './session-index.js'
+import { readLabels, LABEL_CATEGORIES } from './labels.js'
+import { readFrames } from './frames.js'
+import { buildSessionIndex, readSessionStates } from './session-index.js'
 
 export function extractAssetInfo(logText, sessionStartMs = 0) {
   const assets = new Map()
@@ -267,6 +269,16 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
   )))
   const skipSet = new Set(opts.skipDirs)
 
+  // 截帧登记（v0.14.3）：新截出来的 PNG 不在任何会话日志里，
+  // 靠这份只读登记把它挂回产出它的对话，否则会掉进「历史资产」组。
+  const frameByRel = new Map()
+  try {
+    const stored = await readFrames(opts.settingsFile)
+    for (const [rel, f] of Object.entries(stored.frames ?? {})) {
+      if (f !== null && typeof f === 'object') frameByRel.set(String(rel).toLowerCase(), f)
+    }
+  } catch { /* 读不到就不登记，不影响正常扫描 */ }
+
   // 当前对话范围：先解析会话日志（含子智能体会话），得到「本对话产出过的路径」
   let scopeInfo = { ok: true, reason: 'global', taskDirs: [], paths: [], relPaths: [], subSessions: 0 }
   let sessionRelSet = null
@@ -275,6 +287,15 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
     // 修法 B：用「精确相对路径」集合判定，而不是只靠第一层目录名。
     // 这样既能处理有子目录的情况，也能处理「文件直接躺在 root 根目录下」。
     sessionRelSet = new Set((scopeInfo.relPaths ?? []).map((p) => p.toLowerCase()))
+    // 会话日志缺失时 resolveSessionScope 可能不带分类表，补一个空的
+    if (!(scopeInfo.categoryByRel instanceof Map)) scopeInfo.categoryByRel = new Map()
+    // 本对话截出来的帧：让它通过范围过滤，并给一个明确标签
+    for (const [rel, f] of frameByRel) {
+      if (String(f.sessionId ?? '') === sessionId) {
+        sessionRelSet.add(rel)
+        scopeInfo.categoryByRel?.set(rel, ASSET_CATEGORY.INTERMEDIATE)
+      }
+    }
   }
 
   // 会话索引：建立「文件 → 所属对话 + 分类」的映射，供全局按对话分组用
@@ -401,10 +422,38 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
 
   const rootMissing = !anyRootExists
 
+  // v0.14.2：手动标签覆写优先于机器预判的产出状态。
+  // 覆写落在扫描阶段而不是客户端，分组计数 / 顶部筛选 / 组头统计才会一起跟着变。
+  let manualLabels = {}
+  try {
+    manualLabels = (await readLabels(opts.settingsFile)).labels ?? {}
+  } catch { /* 读不到就老老实实用机器标签，不阻断扫描 */ }
+
   // 给每个条目附加「分类」和「所属对话」
   for (const item of matches) {
     const abs = path.join(item.rootDir, ...item.relPath.split('/'))
-    const owner = ownerByAbs.get(abs)
+    const frame = frameByRel.get(item.relPath.toLowerCase())
+    // 帧来源元数据透传到卡片 / 反馈篮，草稿里才能写清「取自哪段视频的哪一帧」
+    if (frame !== undefined) {
+      item.frameOf = {
+        videoName: String(frame.videoName ?? ''),
+        videoRelPath: String(frame.videoRelPath ?? ''),
+        timecode: String(frame.timecode ?? ''),
+        frameMs: Number(frame.frameMs) || 0,
+      }
+    }
+    // 截帧不在会话日志里：ownerByAbs 查不到时，用登记里的会话信息补一个虚拟归属。
+    // 日志里已有归属的文件（例如视频本身）一律沿用原归属，不受影响。
+    const frameSid = String(frame?.sessionId ?? '')
+    const virtualOwner = frame !== undefined && frameSid !== ''
+      ? {
+          sessionId: frameSid,
+          title: String(frame.sessionTitle ?? '') || sessionIndex?.get(frameSid)?.title || '',
+          createdAt: Number(frame.sessionCreatedAt) || sessionIndex?.get(frameSid)?.createdAt || 0,
+          category: ASSET_CATEGORY.INTERMEDIATE,
+        }
+      : undefined
+    const owner = ownerByAbs.get(abs) ?? virtualOwner
     item.absPath = abs
     if (isSession) {
       item.category = (scopeInfo.categoryByRel?.get(item.relPath.toLowerCase())) ?? null
@@ -419,6 +468,15 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
       // 不能兜底成 input —— 那会把 4995 个历史文件全标成「输入」
       item.category = ASSET_CATEGORY.UNKNOWN
       item.sessionId = null
+    }
+
+    // 手动改过的标签覆盖机器预判，且刷新 / 重扫 / 重启都不会回退。
+    const manual = manualLabels[item.relPath]
+    if (manual !== undefined && LABEL_CATEGORIES.includes(manual?.category)) {
+      item.category = manual.category
+      item.categoryManual = true
+    } else {
+      item.categoryManual = false
     }
   }
 
@@ -449,6 +507,9 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
     item.height = measured?.height ?? null
   }))
 
+  // 会话状态只读判定：只给分组加标注，不改排序、不改显示范围（0.14.1 原样）
+  const sessionStates = isSession ? null : await readSessionStates(DSH_HOME)
+
   // 全量统计：供「全局按对话分组」使用（不受分页限制）
   const allItemsSummary = []
   if (!isSession) {
@@ -468,6 +529,8 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
         extension: item.extension,
         // 音视频类型（video / audio），客户端据此选 <video> 还是 <audio>
         ...(item.mediaType !== undefined ? { mediaType: item.mediaType } : {}),
+        // 截帧来源：反馈篮与草稿正文据此写清取自哪段视频的哪一帧
+        ...(item.frameOf !== undefined ? { frameOf: item.frameOf } : {}),
       })
     }
   }
@@ -503,7 +566,7 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
     rootMissing,
     scan: { directories, entries, capped },
     // 全局模式额外返回：按对话分组的数据（客户端做折叠展示用）
-    groups: isSession ? null : buildGroups(allItemsSummary, 120, sessionId),
+    groups: isSession ? null : buildGroups(allItemsSummary, 120, sessionId, sessionStates),
   }
 }
 
