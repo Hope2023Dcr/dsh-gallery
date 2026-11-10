@@ -1,240 +1,135 @@
 #!/usr/bin/env node
 /**
- * 产出画廊 —— 一键安装脚本
+ * dsh-gallery · 本地目录安装脚本（幂等、非交互、跨平台）
  *
- * 用法：
- *   node install.mjs                    # 自动找 DSH profile 并安装
- *   node install.mjs --profile desktop  # 指定 profile 名
- *   node install.mjs --dry-run          # 只看会做什么，不实际写入
+ *   node install.mjs                    # 自动选 profile 并安装
+ *   node install.mjs --profile desktop  # 指定 profile
+ *   node install.mjs --dry-run          # 只打印将要做什么，不写任何文件
  *
- * 它会做三件事：
- *   1. 按 package.json 的 files 白名单，把插件文件复制到
- *      <DSH_HOME>/profiles/<profile>/node_modules/dsh-gallery/
- *   2. 在 profile 的 package.json 的 bundles 数组里加入 "dsh-gallery"
- *   3. 提示你重启 DSH（Host 半部必须重启才加载）
- *
- * ⚠️ 为什么是白名单而不是整目录递归（S0 起）：
- *   仓库里还会有 src/、scripts/、tests/、docs/、packages/、.git 等开发文件，
- *   递归复制会把它们全装进用户机器。files 是唯一真源，install 与 npm pack 共用。
- *
- * 不依赖任何第三方包。
+ * 行为：定位 DSH_HOME（默认 ~/.dsh）→ 选 profile → 校验源文件 →
+ * 复制插件文件 → 在 <profile>/package.json 的 dsh.profile.bundles 注册 →
+ * 首次注册前备份 package.json。装完必须完全重启 DSH。
  */
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
+import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 
-const PLUGIN_NAME = 'dsh-gallery'
-const PKG_DIR_NAME = 'dsh-gallery'
-
-/** 安装后必须存在的文件（少一个插件就跑不起来） */
-export const REQUIRED = [
-  'package.json', 'index.js', 'client.js', 'session-index.js', 'cordis.patch.yml',
-  'host/http.js', 'host/constants.js', 'host/settings.js', 'host/scan.js',
-  'host/session.js', 'host/classify.js', 'host/groups.js', 'host/media.js',
-  'host/fsutil.js', 'host/session-index.js', 'host/protocol.js',
-  'host/marks.js', 'host/feedback-text.js',
-]
-
-const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-
-/**
- * 展开 package.json 的 files 白名单为具体文件路径列表。
- * 支持单段通配（如 locale/*.json、host/*.js），不支持 ** 递归 —— 发布目录是扁平的。
- * 返回 { files, missing, optionalMissing, patterns }
- *   missing         : 精确声明的文件不存在 → 必须报错
- *   optionalMissing : 通配目录尚不存在（如 S1 之前的 host/）→ 允许，静默跳过
- */
-export function collectFromWhitelist (root, patterns) {
-  const list = patterns ?? JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).files
-  if (!Array.isArray(list) || list.length === 0) {
-    throw new Error('package.json 缺少 files 白名单')
-  }
-
-  const picked = []
-  const missing = []
-  const optionalMissing = []
-
-  for (const raw of list) {
-    const p = String(raw).replace(/\\/g, '/')
-    if (!p.includes('*')) {
-      if (fs.existsSync(path.join(root, p))) picked.push(p)
-      else missing.push(p)
-      continue
-    }
-    const slash = p.lastIndexOf('/')
-    const dir = slash >= 0 ? p.slice(0, slash) : ''
-    const baseGlob = slash >= 0 ? p.slice(slash + 1) : p
-    const dirAbs = path.join(root, dir)
-    if (!fs.existsSync(dirAbs)) {
-      optionalMissing.push(p)
-      continue
-    }
-    const re = new RegExp('^' + baseGlob.split('*').map(escapeRe).join('.*') + '$')
-    const hits = fs.readdirSync(dirAbs)
-      .filter((name) => re.test(name) && fs.statSync(path.join(dirAbs, name)).isFile())
-      .map((name) => (dir ? `${dir}/${name}` : name))
-      .sort()
-    if (hits.length === 0) optionalMissing.push(p)
-    picked.push(...hits)
-  }
-
-  // package.json 通常不写进 files（npm 会自动带上），但 install 是「按 files 复制」，
-  // 不显式补上会导致安装目录缺清单文件、DSH 加载器直接找不到插件。
-  if (fs.existsSync(path.join(root, 'package.json')) && !picked.includes('package.json')) {
-    picked.push('package.json')
-  }
-
-  return {
-    files: [...new Set(picked)].sort(),
-    missing,
-    optionalMissing,
-    patterns: list,
-  }
+const SOURCE = path.dirname(fileURLToPath(import.meta.url))
+const argv = process.argv.slice(2)
+const dryRun = argv.includes('--dry-run')
+const flagValue = (name) => {
+  const i = argv.indexOf(name)
+  return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : null
 }
+const wantedProfile = flagValue('--profile')
 
-function fail (message, hint) {
-  console.error('\n✗ ' + message)
-  if (hint) console.error('  ' + hint)
+const fail = (message) => {
+  console.error('[dsh-gallery 安装失败] ' + message)
   process.exit(1)
 }
+const log = (message) => console.log((dryRun ? '[预演] ' : '') + message)
 
-function note (message) { console.log('  ' + message) }
-function step (n, message) { console.log(`\n[${n}] ${message}`) }
+const home = process.env.DSH_HOME
+  ? path.resolve(process.env.DSH_HOME)
+  : path.join(os.homedir(), '.dsh')
+const profilesDir = path.join(home, 'profiles')
 
-function main () {
-  const argv = process.argv.slice(2)
-  const dryRun = argv.includes('--dry-run')
-  const profileArgIndex = argv.indexOf('--profile')
-  const profileName = profileArgIndex >= 0 ? argv[profileArgIndex + 1] : null
+if (!fs.existsSync(profilesDir)) fail('找不到 profiles 目录：' + profilesDir)
+const profiles = fs.readdirSync(profilesDir, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => entry.name)
+if (profiles.length === 0) fail('profiles 目录是空的：' + profilesDir)
 
-  // ---------- 1. 定位 DSH_HOME ----------
-  step(1, '定位 DSH 主目录')
-  const home = os.homedir()
-  const dshHome = process.env.DSH_HOME ?? path.join(home, '.dsh')
-  if (!fs.existsSync(dshHome)) {
-    fail(`找不到 DSH 主目录：${dshHome}`,
-      '请确认 DSH 已安装并至少启动过一次；或用环境变量 DSH_HOME 指定主目录。')
-  }
-  note('DSH_HOME = ' + dshHome)
-
-  // ---------- 2. 选 profile ----------
-  step(2, '选择 profile')
-  const profilesDir = path.join(dshHome, 'profiles')
-  if (!fs.existsSync(profilesDir)) {
-    fail(`找不到 profiles 目录：${profilesDir}`, 'DSH 可能还没初始化，先启动一次再回来。')
-  }
-  const available = fs.readdirSync(profilesDir, { withFileTypes: true })
-    .filter((d) => d.isDirectory())
-    .map((d) => d.name)
-    .filter((name) => fs.existsSync(path.join(profilesDir, name, 'package.json')))
-  if (available.length === 0) {
-    fail('profiles 目录下没有可用的 profile（每个 profile 需要有 package.json）')
-  }
-
-  let chosen
-  if (profileName !== null) {
-    if (!available.includes(profileName)) {
-      fail(`profile "${profileName}" 不存在`, `可用的：${available.join(', ')}`)
-    }
-    chosen = profileName
-  } else {
-    chosen = available.includes('desktop') ? 'desktop' : available[0]
-    if (available.length > 1) {
-      note(`检测到多个 profile：${available.join(', ')}`)
-      note(`默认选 "${chosen}"（可用 --profile 指定其他）`)
-    }
-  }
-  note('使用 profile = ' + chosen)
-
-  const profileDir = path.join(profilesDir, chosen)
-  const targetDir = path.join(profileDir, 'node_modules', PKG_DIR_NAME)
-
-  // ---------- 3. 校验源文件（按白名单） ----------
-  step(3, '校验插件源文件（files 白名单）')
-  const here = path.dirname(fileURLToPath(import.meta.url))
-  let plan
-  try {
-    plan = collectFromWhitelist(here)
-  } catch (error) {
-    fail('无法读取 files 白名单：' + String(error?.message ?? error),
-      '请在插件根目录运行本脚本（package.json 所在目录）。')
-  }
-  if (plan.missing.length > 0) {
-    fail('白名单声明的文件缺失：' + plan.missing.join(', '))
-  }
-  const notInstalled = REQUIRED.filter((f) => !plan.files.includes(f))
-  if (notInstalled.length > 0) {
-    fail('必需文件不在白名单里：' + notInstalled.join(', '),
-      '请把它们加进 package.json 的 files，否则装完插件会加载失败。')
-  }
-  note(`${plan.patterns.length} 条白名单 → ${plan.files.length} 个文件`)
-  if (plan.optionalMissing.length > 0) {
-    note('本阶段未启用的目录（跳过）：' + plan.optionalMissing.join(', '))
-  }
-
-  // ---------- 4. 复制文件 ----------
-  step(4, '安装插件文件')
-  if (dryRun) {
-    note(`[dry-run] 将复制到：${targetDir}`)
-    for (const f of plan.files) note('  + ' + f)
-    note(`[dry-run] 共 ${plan.files.length} 个文件，未做任何修改`)
-  } else {
-    // 已存在则先清掉，避免旧文件残留（只动插件自己的安装目录）
-    if (fs.existsSync(targetDir)) {
-      fs.rmSync(targetDir, { recursive: true, force: true })
-      note('已移除旧版本')
-    }
-    for (const f of plan.files) {
-      const src = path.join(here, ...f.split('/'))
-      const dst = path.join(targetDir, ...f.split('/'))
-      fs.mkdirSync(path.dirname(dst), { recursive: true })
-      fs.copyFileSync(src, dst)
-    }
-    note(`已复制 ${plan.files.length} 个文件到：${targetDir}`)
-  }
-
-  // ---------- 5. 注册 bundle ----------
-  step(5, '在 profile 的 package.json 注册 bundle')
-  const profilePkgPath = path.join(profileDir, 'package.json')
-  let profilePkg
-  try {
-    profilePkg = JSON.parse(fs.readFileSync(profilePkgPath, 'utf8'))
-  } catch (error) {
-    fail('无法解析 profile 的 package.json：' + String(error?.message ?? error))
-  }
-  const bundles = Array.isArray(profilePkg.bundles) ? profilePkg.bundles : []
-  if (bundles.includes(PLUGIN_NAME)) {
-    note('已注册过，跳过')
-  } else if (dryRun) {
-    note(`[dry-run] 将把 "${PLUGIN_NAME}" 加入 bundles（未写入）`)
-  } else {
-    const backup = profilePkgPath + '.bak-dsh-gallery'
-    if (!fs.existsSync(backup)) {
-      fs.copyFileSync(profilePkgPath, backup)
-      note('已备份原文件 → ' + path.basename(backup))
-    }
-    profilePkg.bundles = [...bundles, PLUGIN_NAME]
-    fs.writeFileSync(profilePkgPath, JSON.stringify(profilePkg, null, 2) + '\n', 'utf8')
-    note(`已加入 bundles：${PLUGIN_NAME}`)
-  }
-
-  // ---------- 完成 ----------
-  console.log('')
-  if (dryRun) {
-    console.log('✓ 检查完成（dry-run，未做任何修改）')
-  } else {
-    console.log('✓ 安装完成')
-    console.log('')
-    console.log('⚠️  下一步必须重启 DSH 才会生效')
-    console.log('    （不是刷新页面 —— Host 半部只在进程启动时加载）')
-    console.log('')
-    console.log('重启后打开「产出画廊」面板，如果提示目录不存在，')
-    console.log('点面板里的 ⚙ 设置，填入你的产出目录即可（改完立即生效）。')
-  }
+const profile = wantedProfile
+  ?? (profiles.length === 1 ? profiles[0] : (profiles.includes('desktop') ? 'desktop' : profiles[0]))
+if (!profiles.includes(profile)) {
+  fail('profile「' + profile + '」不存在。可用：' + profiles.join('、'))
 }
 
-// 被 tests/ 直接 import 时不执行安装逻辑；只有作为 CLI 调用才跑 main()
-const invoked = process.argv[1] ? path.resolve(process.argv[1]) : ''
-const self = fileURLToPath(import.meta.url)
-if (invoked && invoked.toLowerCase() === self.toLowerCase()) main()
+const profileDir = path.join(profilesDir, profile)
+const profilePkgPath = path.join(profileDir, 'package.json')
+const targetDir = path.join(profileDir, 'node_modules', 'dsh-gallery')
+if (!fs.existsSync(profilePkgPath)) fail('profile 缺少 package.json：' + profilePkgPath)
+
+// 源侧必需文件
+const requiredFiles = [
+  'index.js', 'client.js', 'session-index.js', 'package.json',
+  'cordis.patch.yml', 'icon.svg', 'README.md', 'LICENSE', 'CHANGELOG.md',
+]
+for (const file of requiredFiles) {
+  if (!fs.existsSync(path.join(SOURCE, file))) fail('源文件缺失：' + file)
+}
+for (const dir of ['host', 'locale']) {
+  if (!fs.existsSync(path.join(SOURCE, dir))) fail('源目录缺失：' + dir + '/')
+}
+
+// 复制清单：根文件 + 整个 host/ + locale/ + 可选 docs/screenshots/
+const entries = [
+  ...requiredFiles.map((file) => ({ from: path.join(SOURCE, file), to: path.join(targetDir, file), kind: 'file' })),
+  { from: path.join(SOURCE, 'host'), to: path.join(targetDir, 'host'), kind: 'dir' },
+  { from: path.join(SOURCE, 'locale'), to: path.join(targetDir, 'locale'), kind: 'dir' },
+]
+const shots = path.join(SOURCE, 'docs', 'screenshots')
+if (fs.existsSync(shots)) {
+  entries.push({ from: shots, to: path.join(targetDir, 'docs', 'screenshots'), kind: 'dir' })
+}
+
+// 注册位置：dsh.profile.bundles（不是顶层 bundles）
+const profilePkg = JSON.parse(fs.readFileSync(profilePkgPath, 'utf8'))
+const bundles = profilePkg.dsh?.profile?.bundles
+const alreadyRegistered = Array.isArray(bundles) && bundles.includes('dsh-gallery')
+const backupPath = path.join(profileDir, 'package.json.bak-dsh-gallery')
+const dep = profilePkg.dependencies?.['dsh-gallery']
+
+log('DSH 主目录：' + home)
+log('profile：' + profile + '（' + profileDir + '）')
+log('安装目标：' + targetDir)
+log('复制：' + entries.length + ' 项（' + requiredFiles.join('、') + '、host/、locale/' + (fs.existsSync(shots) ? '、docs/screenshots/' : '') + '）')
+log('注册：' + (alreadyRegistered ? '已注册，跳过' : '写入 dsh.profile.bundles'))
+log('备份：' + (fs.existsSync(backupPath) ? '已存在，保留不覆盖' : '首次注册前备份 → ' + backupPath))
+
+if (dep && String(dep).startsWith('file:')) {
+  console.warn('[提醒] profile 依赖里 dsh-gallery 是 file: 本地路径（' + dep + '）。')
+  console.warn('       如果它指向的不是本脚本所在目录，重启 DSH 时包管理器可能把这里的文件覆盖掉。')
+  console.warn('       建议改成 npm 版本，或确认 file: 路径一致。')
+}
+
+if (dryRun) {
+  console.log('[预演结束] 未写入任何文件。')
+  process.exit(0)
+}
+
+function copyEntry(entry) {
+  if (entry.kind === 'file') {
+    fs.mkdirSync(path.dirname(entry.to), { recursive: true })
+    fs.copyFileSync(entry.from, entry.to)
+    return 1
+  }
+  let count = 0
+  fs.mkdirSync(entry.to, { recursive: true })
+  for (const item of fs.readdirSync(entry.from, { withFileTypes: true })) {
+    const from = path.join(entry.from, item.name)
+    const to = path.join(entry.to, item.name)
+    count += copyEntry({ from, to, kind: item.isDirectory() ? 'dir' : 'file' })
+  }
+  return count
+}
+
+// 先备份，再复制，最后注册 —— 任一步失败，原 package.json 都留有回退点
+if (!fs.existsSync(backupPath)) fs.copyFileSync(profilePkgPath, backupPath)
+
+let copied = 0
+for (const entry of entries) copied += copyEntry(entry)
+log('已复制 ' + copied + ' 个文件')
+
+if (!alreadyRegistered) {
+  profilePkg.dsh ??= {}
+  profilePkg.dsh.profile ??= {}
+  profilePkg.dsh.profile.bundles ??= []
+  profilePkg.dsh.profile.bundles.push('dsh-gallery')
+  fs.writeFileSync(profilePkgPath, JSON.stringify(profilePkg, null, 2) + '\n', 'utf8')
+  log('已写入 dsh.profile.bundles')
+}
+
+console.log('[dsh-gallery] 安装完成。请完全退出 DSH 再打开（刷新页面不够）。')
