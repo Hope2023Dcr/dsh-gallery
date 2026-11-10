@@ -19,8 +19,23 @@ import {
   validateRootCandidate, readSettingsPayload,
 } from './settings.js'
 import { scanGallery } from './scan.js'
+
+/**
+ * 列表请求的短缓存 + 并发去重（加载提速，不改变返回内容与分组顺序）。
+ *
+ * 客户端会自动刷新，切换对话又会再发一次；旧实现每次都真扫一遍，
+ * 多个请求叠在一起会把 Host CPU 占满，面板就一直停在「正在扫描…」。
+ * 4 秒内的相同请求直接复用，同一时刻的相同请求只跑一次。
+ */
+const LIST_CACHE_MS = 4000
+const listCache = new Map()
+const listInflight = new Map()
 import { resolveReadable, serveMedia, contentTypeFor } from './media.js'
 import { MARK_ACTIONS, readMarks, writeMarks, setMark, setMarksBatch, marksFilePath } from './marks.js'
+import { LABEL_CATEGORIES, readLabels, setLabel, setLabelsBatch, deleteLabels } from './labels.js'
+import {
+  registerFrame, deleteFrames, frameTimecode, makeFrameName,
+} from './frames.js'
 
 /** reveal 相关的排查日志（失败/异常时便于定位，不影响功能）。 */
 /**
@@ -253,7 +268,32 @@ export function registerOpsRoute(ctx, config) {
 
               const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
 
-              return json(await scanGallery(config, kind, scope, sessionId, body?.page))
+              // 配置 / 隐藏列表写在 settingsFile 里，它的 mtime 变了就让缓存失效。
+              // sessionId 必须在键里：切对话后不能复用上一会话的分组结果。
+              let settingsStamp = 0
+              try { settingsStamp = (await fsp.stat(resolved.settingsFile)).mtimeMs } catch { /* 文件还不存在 */ }
+              const cacheKey = JSON.stringify([
+                kind, scope, sessionId, body?.page ?? 1,
+                resolved.roots, resolved.windowHours, resolved.maxDepth,
+                resolved.maxItems, settingsStamp,
+              ])
+              const hit = listCache.get(cacheKey)
+              if (hit !== undefined && Date.now() - hit.at < LIST_CACHE_MS) return json(hit.value)
+              const inflight = listInflight.get(cacheKey)
+              if (inflight !== undefined) return json(await inflight)
+
+              const task = scanGallery(config, kind, scope, sessionId, body?.page)
+                .then((value) => {
+                  listCache.set(cacheKey, { at: Date.now(), value })
+                  if (listCache.size > 24) {
+                    const oldest = listCache.keys().next().value
+                    if (oldest !== undefined) listCache.delete(oldest)
+                  }
+                  return value
+                })
+                .finally(() => { listInflight.delete(cacheKey) })
+              listInflight.set(cacheKey, task)
+              return json(await task)
 
             } catch (error) {
 
@@ -503,6 +543,150 @@ export function registerOpsRoute(ctx, config) {
 
           // 在文件管理器中定位该文件（仅 Windows）
 
+          // ---- v0.14.2 手动标签覆写（持久，与反馈篮 marks 分开）----
+          if (op === 'getLabels') {
+            const stored = await readLabels(resolveOptions(config).settingsFile)
+            return json({ ok: true, labels: stored.labels })
+          }
+
+          if (op === 'setLabel') {
+            const relPath = String(body?.path ?? '')
+            if (relPath === '') {
+              return json({ ok: false, error: { code: 'bad-request', message: '缺少 path' } }, 400)
+            }
+            const label = body?.label
+            if (label !== null && label !== undefined &&
+                (typeof label !== 'object' || !LABEL_CATEGORIES.includes(label.category))) {
+              return json({ ok: false, error: { code: 'bad-request', message: 'category 不合法' } }, 400)
+            }
+            try {
+              const next = await setLabel(resolveOptions(config).settingsFile, relPath,
+                label === undefined ? null : label)
+              // 标签变了必须让下一次 list 立刻重扫，否则 4 秒缓存里还是旧角标
+              listCache.clear()
+              return json({ ok: true, labels: next })
+            } catch (error) {
+              return json({ ok: false, error: { code: 'labels-write-failed', message: String(error?.message ?? error) } }, 500)
+            }
+          }
+
+          if (op === 'setLabelsBatch') {
+            const updates = Array.isArray(body?.updates) ? body.updates : null
+            if (updates === null) {
+              return json({ ok: false, error: { code: 'bad-request', message: '缺少 updates 数组' } }, 400)
+            }
+            if (updates.length > 200) {
+              return json({ ok: false, error: { code: 'too-many', message: '单次最多 200 条' } }, 400)
+            }
+            for (const u of updates) {
+              const label = u?.label
+              if (label !== null && label !== undefined &&
+                  (typeof label !== 'object' || !LABEL_CATEGORIES.includes(label.category))) {
+                return json({ ok: false, error: { code: 'bad-request', message: 'category 不合法' } }, 400)
+              }
+            }
+            try {
+              const next = await setLabelsBatch(resolveOptions(config).settingsFile, updates)
+              listCache.clear()
+              return json({ ok: true, labels: next, applied: updates.length })
+            } catch (error) {
+              return json({ ok: false, error: { code: 'labels-write-failed', message: String(error?.message ?? error) } }, 500)
+            }
+          }
+
+          // ---- v0.14.3 视频截帧：直接写进当前对话资产，不再弹系统保存框 ----
+          if (op === 'saveFrame') {
+            const opts = resolveOptions(config)
+            const videoRel = String(body?.path ?? '').replace(/\\/g, '/')
+            const data = typeof body?.data === 'string' ? body.data : ''
+            const frameMs = Number(body?.frameMs)
+            if (videoRel === '' || data === '') {
+              return json({ ok: false, error: { code: 'bad-request', message: '缺少 path 或 data' } }, 400)
+            }
+            if (!Number.isFinite(frameMs) || frameMs < 0) {
+              return json({ ok: false, error: { code: 'bad-request', message: 'frameMs 不合法' } }, 400)
+            }
+
+            // 源视频必须真实存在于扫描目录内；同时拿到它所属的 root 以反算 relPath。
+            // 不能用 resolveUnderRoots（它取第一个匹配的 root），多目录时会串错。
+            let videoAbs = null
+            let ownerRoot = null
+            for (const root of opts.roots) {
+              if (typeof root !== 'string' || root === '') continue
+              const abs = path.resolve(root, videoRel)
+              if (!isInside(root, abs)) continue
+              try {
+                const st = await fsp.stat(abs)
+                if (st.isFile()) { videoAbs = abs; ownerRoot = root; break }
+              } catch { /* 换下一个 root */ }
+            }
+            if (videoAbs === null) {
+              return json({ ok: false, error: { code: 'video-not-found', message: '源视频不在扫描目录内' } }, 404)
+            }
+
+            const buf = Buffer.from(data, 'base64')
+            if (buf.length < 8 || buf.length > 24 * 1024 * 1024) {
+              return json({ ok: false, error: { code: 'bad-png', message: 'PNG 数据为空或超过 24 MB' } }, 400)
+            }
+            // PNG 魔数：不允许把任意 base64 写进资产目录
+            if (!(buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47)) {
+              return json({ ok: false, error: { code: 'bad-png', message: '数据不是 PNG' } }, 400)
+            }
+
+            const dir = path.dirname(videoAbs)
+            const videoName = path.basename(videoAbs)
+            let name = makeFrameName(videoName, frameMs)
+            let abs = path.join(dir, name)
+            // 同一帧重复截：不覆盖已有文件，依次加 -2 / -3 …
+            let n = 2
+            while (n <= 99) {
+              let exists = true
+              try { await fsp.access(abs) } catch { exists = false }
+              if (!exists) break
+              name = makeFrameName(videoName, frameMs, `-${n}`)
+              abs = path.join(dir, name)
+              n += 1
+            }
+            if (!isInside(ownerRoot, abs)) {
+              return json({ ok: false, error: { code: 'outside-roots', message: '目标路径越出扫描目录' } }, 400)
+            }
+
+            // 原子写：先落到 .tmp 再改名，避免扫描读到半截 PNG
+            const tmp = `${abs}.tmp-${process.pid}-${Date.now().toString(36)}`
+            try {
+              await fsp.mkdir(dir, { recursive: true })
+              await fsp.writeFile(tmp, buf)
+              await fsp.rename(tmp, abs)
+            } catch (error) {
+              try { await fsp.rm(tmp, { force: true }) } catch { /* 忽略 */ }
+              return json({ ok: false, error: { code: 'frame-write-failed', message: String(error?.message ?? error) } }, 500)
+            }
+
+            const relPath = path.relative(ownerRoot, abs).split(path.sep).join('/')
+            const timecode = frameTimecode(frameMs)
+            try {
+              await registerFrame(opts.settingsFile, {
+                relPath,
+                sessionId: String(body?.sessionId ?? ''),
+                sessionTitle: String(body?.sessionTitle ?? ''),
+                sessionCreatedAt: Number(body?.sessionCreatedAt) || 0,
+                videoRelPath: videoRel,
+                videoName,
+                frameMs: Math.round(frameMs),
+                timecode,
+              })
+            } catch (error) {
+              return json({ ok: false, error: { code: 'frame-register-failed', message: String(error?.message ?? error) } }, 500)
+            }
+
+            // 新资产要立刻出现在列表里，不能等 4 秒缓存过期
+            listCache.clear()
+            return json({
+              ok: true, relPath, absPath: abs, name, timecode,
+              frameMs: Math.round(frameMs), videoName,
+            })
+          }
+
           // ---- 标记（S3-a）----
           if (op === 'getMarks') {
             const settingsFile = resolveOptions(config).settingsFile
@@ -690,6 +874,12 @@ export function registerOpsRoute(ctx, config) {
                   },
                 }, 500)
               }
+            }
+
+            // 文件删了，手动标签覆写与截帧登记一并清掉（失败不影响删除结果）
+            if (deleted.length > 0) {
+              try { await deleteLabels(settingsFile, deleted) } catch { /* 忽略 */ }
+              try { await deleteFrames(settingsFile, deleted) } catch { /* 忽略 */ }
             }
 
             return json({
@@ -969,6 +1159,9 @@ export function registerOpsRoute(ctx, config) {
                 await fsp.writeFile(opts.settingsFile, JSON.stringify({ ...current, hidden: [...hidden] }, null, 2), 'utf8')
 
               }
+
+              // 单文件删除：同步清掉截帧登记，避免残留孤儿记录
+              try { await deleteFrames(opts.settingsFile, [rel]) } catch { /* 忽略 */ }
 
               return json({ ok: true, deleted: found.absolute })
 
