@@ -45,6 +45,11 @@ export const MARK_ACTIONS = [
   'redo-one-dim',
   'regenerate-selected',
   'set-reference',
+  // v0.14.2：手动改标签产生的三条反馈语义。
+  // 旧 6 个动作仍兼容老 marks 数据，但界面上不再提供入口（表态层已下线）。
+  'finalize-asset',
+  'reject-delivery',
+  'set-label',
 ]
 
 const MARKS_FILENAME = 'dsh-gallery-marks.json'
