@@ -16,8 +16,16 @@
 import { promises as fsp } from 'node:fs'
 import path from 'node:path'
 
-/** 会话索引缓存：键是 sessionsDir，值是 { key, index }。 */
-const sessionIndexCache = new Map()
+/**
+ * 单个会话日志的解析缓存：logPath → { key, entry }。
+ *
+ * 旧版用「所有日志里最新的 mtime」当整表缓存键，只要当前对话还在写日志，
+ * 这个键每次都变 → 每 5 秒自动刷新都把 100 MB 日志全量解压一遍（实测 3.6 秒）。
+ * 改成按日志逐条缓存后，活跃会话只重解它自己那一个日志（约几十毫秒）。
+ */
+const sessionEntryCache = new Map()
+/** 当前缓存对应的扫描目录指纹；用户改了根目录就整体失效。 */
+let indexRootsKey = ''
 
 /**
  * 扫出一个会话目录里的全部会话（含子会话）。
@@ -112,20 +120,33 @@ function extractSessionMeta(logText) {
  */
 export async function buildSessionIndex(sessionsDir, opts, deps) {
   const { readSessionLogText, extractAssetInfo } = deps
-
-  // 缓存键：会话目录的 mtime + 当前会话数
-  let dirKey
   try {
+    // 列目录 + stat 115 个日志文件很便宜（约 10 ms），每次都做；
+    // 贵的「解压 + 逐行解析」只发生在 mtime/size 变了的那些日志上。
     const allDirs = await listSessionDirs(sessionsDir)
-    dirKey = `${allDirs.length}|${allDirs.reduce((a, d) => Math.max(a, d.logMtime), 0)}`
-    const cached = sessionIndexCache.get(sessionsDir)
-    if (cached !== undefined && cached.key === dirKey) return cached.index
-
+    // 扫描目录变了（面板里改 root）→ 旧缓存里的文件归属是按旧目录算的，必须全部重算
+    const rootsKey = (opts.roots ?? []).map((r) => path.resolve(r).toLowerCase()).join('|')
+    if (rootsKey !== indexRootsKey) {
+      sessionEntryCache.clear()
+      indexRootsKey = rootsKey
+    }
     const index = new Map()
+    const livePaths = new Set()
 
     for (const d of allDirs) {
+      livePaths.add(d.logPath)
+      const key = `${d.logMtime}|${d.logSize}`
+      const cached = sessionEntryCache.get(d.logPath)
+      if (cached !== undefined && cached.key === key) {
+        if (cached.entry !== null) index.set(d.sessionId, cached.entry)
+        continue
+      }
+
       const logText = await readSessionLogText(d.logPath)
-      if (logText === '') continue
+      if (logText === '') {
+        sessionEntryCache.set(d.logPath, { key, entry: null })
+        continue
+      }
 
       const meta = extractSessionMeta(logText)
       const title = extractSessionTitle(logText)
@@ -150,9 +171,12 @@ export async function buildSessionIndex(sessionsDir, opts, deps) {
         }
       }
 
-      if (files.size === 0) continue
+      if (files.size === 0) {
+        sessionEntryCache.set(d.logPath, { key, entry: null })
+        continue
+      }
 
-      index.set(d.sessionId, {
+      const entry = {
         sessionId: d.sessionId,
         title,
         createdAt: meta.createdAt,
@@ -161,10 +185,15 @@ export async function buildSessionIndex(sessionsDir, opts, deps) {
         files,
         maxMtime,
         logMtime: d.logMtime,
-      })
+      }
+      index.set(d.sessionId, entry)
+      sessionEntryCache.set(d.logPath, { key, entry })
     }
 
-    sessionIndexCache.set(sessionsDir, { key: dirKey, index })
+    // 日志目录被删掉时把对应缓存也清掉，避免常驻进程里无限堆积
+    for (const p of sessionEntryCache.keys()) {
+      if (!livePaths.has(p)) sessionEntryCache.delete(p)
+    }
     return index
   } catch {
     return new Map()
@@ -183,5 +212,66 @@ function isInsidePath(root, abs) {
  * 清空会话索引缓存（配置变化时调用）。
  */
 export function clearSessionIndexCache() {
-  sessionIndexCache.clear()
+  sessionEntryCache.clear()
+  indexRootsKey = ''
+}
+
+/**
+ * 会话状态注册表 —— 宿主官方字段，不是私有会话日志。
+ *
+ * 文件：<DSH_HOME>/storages/workspace.json
+ *   · global.archivedSessionIds  —— 宿主「归档会话」写这里（宿主 zod schema 实证）
+ *   · tables.workspaces[*].sessionIds —— 每个工作区挂载的少量会话，**不是全量会话表**；
+ *     本机实测仅 15 个，而会话日志有 115 个，因此它只能读、绝不能用来推断「已删除」。
+ *
+ * 为什么需要它：画廊是按会话日志分组的，日志目录不会因为归档而消失，
+ * 于是「资产还在、对话已归档」的分组需要一个明确标注。
+ * 这里只做只读判定：不写宿主任何文件，也不改变分组原有的时间排序。
+ */
+const sessionStateCache = new Map()
+
+/** @returns {{ok:boolean, archived:Set<string>, known:Set<string>}} */
+export async function readSessionStates(dshHome) {
+  const file = path.join(dshHome, 'storages', 'workspace.json')
+  try {
+    const st = await fsp.stat(file)
+    const key = `${st.mtimeMs}|${st.size}`
+    const cached = sessionStateCache.get(file)
+    if (cached !== undefined && cached.key === key) return cached.states
+    const raw = JSON.parse(await fsp.readFile(file, 'utf8'))
+    const archived = new Set(
+      Array.isArray(raw?.global?.archivedSessionIds) ? raw.global.archivedSessionIds : [],
+    )
+    const known = new Set()
+    for (const w of Object.values(raw?.tables?.workspaces ?? {})) {
+      if (Array.isArray(w?.sessionIds)) for (const id of w.sessionIds) known.add(id)
+    }
+    const states = { ok: true, archived, known }
+    sessionStateCache.set(file, { key, states })
+    return states
+  } catch {
+    // 读不到就全部当 active：标注功能降级，但绝不影响扫描
+    return { ok: false, archived: new Set(), known: new Set() }
+  }
+}
+
+/**
+ * 单个会话的状态。
+ *   active     —— 默认；没有反证就当可打开，绝不预先禁用「打开对话」
+ *   archived   —— 命中宿主官方 global.archivedSessionIds（唯一可信的归档证据）
+ *   unassigned —— 历史资产，本来就查不到归属会话，不加标注
+ *
+ * ⚠️ 2026-11-10 修复（老板报的 bug）：
+ *   旧版把「不在 tables.workspaces[*].sessionIds 里」直接判成 deleted，
+ *   但本机实测该注册表只有 15 个会话，而会话日志有 115 个 —— 左侧列表里
+ *   正常开着的会话几乎全被误标成「会话已删除」，连「打开对话」都被禁用。
+ *   宿主没有 deletedSessionIds 这类官方字段，删除状态无法离线可靠推断，
+ *   因此这里只保留官方归档字段；真正打不开的交给客户端点击时实测标注。
+ *
+ * 只用于「标注」，绝不参与分组排序。
+ */
+export function stateOfSession(sessionId, states) {
+  if (sessionId === null || sessionId === undefined || sessionId === '') return 'unassigned'
+  if (states?.archived?.has(sessionId)) return 'archived'
+  return 'active'
 }
