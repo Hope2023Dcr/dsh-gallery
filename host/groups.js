@@ -3,8 +3,12 @@
  *
  * S1 拆分自 index.js（行为零变化）。
  */
+import { stateOfSession } from './session-index.js'
 
-export function buildGroups(summary, maxPerGroup = 120, currentSessionId = '') {
+/**
+ * @param states - readSessionStates() 的结果；只用于给分组加状态标注，不参与排序。
+ */
+export function buildGroups(summary, maxPerGroup = 120, currentSessionId = '', states = null) {
   if (!Array.isArray(summary) || summary.length === 0) return []
 
   const groups = new Map()
@@ -31,6 +35,8 @@ export function buildGroups(summary, maxPerGroup = 120, currentSessionId = '') {
       // 客户端卡片要靠这两个字段判断渲染类型（v0.10.1）
       extension: item.extension ?? ('.' + item.relPath.split('/').pop().split('.').pop().toLowerCase()),
       ...(item.mediaType !== undefined ? { mediaType: item.mediaType } : {}),
+      // 截帧来源（v0.14.3）：反馈篮据此显示「取自《视频》00-01-00-500 帧」
+      ...(item.frameOf !== undefined ? { frameOf: item.frameOf } : {}),
     })
     if (item.sessionId === null && item.mtime > g.createdAt) g.createdAt = item.mtime
   }
@@ -44,11 +50,15 @@ export function buildGroups(summary, maxPerGroup = 120, currentSessionId = '') {
     }
     // 只回传前 maxPerGroup 条明细（客户端滚动到底再按需请求）
     const returned = g.files.slice(0, maxPerGroup)
+    // 当前打开的会话：客户端据此置顶并默认展开（0.14.1 原行为，不动）
+    const isCurrent = currentSessionId !== '' && g.sessionId === currentSessionId
     out.push({
       sessionId: g.sessionId,
       isHistory: g.sessionId === null,
-      // 当前打开的会话：客户端据此置顶并默认展开
-      isCurrent: currentSessionId !== '' && g.sessionId === currentSessionId,
+      isCurrent,
+      // 只作展示：归档 / 已删除时客户端取消「打开对话」并改成状态标注。
+      // 当前对话永远算 active，避免注册表尚未落盘时被误标成已删除。
+      sessionState: isCurrent ? 'active' : stateOfSession(g.sessionId, states),
       title: g.title,
       createdAt: g.createdAt,
       fileCount: g.files.length,
