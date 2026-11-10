@@ -22,6 +22,10 @@ export const ACTIONS = [
   'redo-one-dim',
   'regenerate-selected',
   'set-reference',
+  // v0.14.2 手动调整标签的三条反馈语义（旧 6 个保留以兼容历史 marks）
+  'finalize-asset',
+  'reject-delivery',
+  'set-label',
 ]
 
 /** 动作 → 中文动词（生成草稿正文用）。 */
@@ -32,6 +36,9 @@ export const ACTION_LABELS_ZH = {
   'redo-one-dim': '单维重做',
   'regenerate-selected': '选择性重生成',
   'set-reference': '设为参照',
+  'finalize-asset': '终止枚举，以此图为定稿',
+  'reject-delivery': '交付不合格',
+  'set-label': '调整产出标签',
 }
 
 /** 动作 → 英文动词。 */
@@ -42,6 +49,9 @@ export const ACTION_LABELS_EN = {
   'redo-one-dim': 'redo one dimension',
   'regenerate-selected': 'regenerate',
   'set-reference': 'set as reference',
+  'finalize-asset': 'Stop enumerating; this asset is final',
+  'reject-delivery': 'Delivery rejected',
+  'set-label': 'Adjust asset label',
 }
 
 /** 契约版本。检查项会核对。 */
@@ -83,6 +93,15 @@ export function makeItem(item) {
   }
   if (item?.region !== undefined && item.region !== null) out.region = item.region
   if (item?.params !== undefined && item.params !== null) out.params = item.params
+  // v0.14.3 截帧来源：随草稿一起带出，模型才知道反馈针对的是哪一帧
+  if (item?.frameOf !== undefined && item?.frameOf !== null && typeof item.frameOf === 'object') {
+    out.frameOf = {
+      videoName: String(item.frameOf.videoName ?? ''),
+      videoRelPath: String(item.frameOf.videoRelPath ?? ''),
+      timecode: String(item.frameOf.timecode ?? ''),
+      frameMs: Number(item.frameOf.frameMs) || 0,
+    }
+  }
   return out
 }
 
@@ -153,6 +172,12 @@ export function renderFeedbackText(feedback, options) {
       : (labels[item.action] ?? item.action)
     lines.push(`Annotation ${n}：${verb} —— ${name}`)
     lines.push(`${locale === 'en' ? 'Path' : '路径'}：${item.relPath}`)
+    if (item.frameOf !== undefined && item.frameOf !== null) {
+      const f = item.frameOf
+      lines.push(locale === 'en'
+        ? `Frame source: taken from "${f.videoName}" at ${f.timecode} (${f.frameMs} ms)`
+        : `帧来源：取自视频《${f.videoName}》${f.timecode}（第 ${f.frameMs} 毫秒）`)
+    }
     if (item.reason !== undefined) {
       lines.push(`${locale === 'en' ? 'Reason' : '理由'}：${item.reason}`)
     }
