@@ -119,13 +119,15 @@ function normalizeAnnotation(a) {
     }
     /** 单图请求超时，避免一张卡死的图拖住整面板。 */
     const RAW_TIMEOUT_MS = 15000
+    /** 列表请求超时：宿主忙时给「重试」入口，不永远停在「正在扫描…」。 */
+    const HOST_TIMEOUT_MS = 12000
     /** 同一时刻最多几个缩略图在解码。 */
     const MAX_CONCURRENT = 4
     /** 查看器缩放上限与单次滚轮步进。 */
     const MAX_ZOOM = 8
     const ZOOM_STEP = 0.35
     /** 自动刷新间隔（毫秒）。 */
-    const AUTO_REFRESH_MS = 5000
+    const AUTO_REFRESH_MS = 15000
     /** 文本预览最大字符数。 */
     const MAX_TEXT_CHARS = 200000
     const NS = 'dshGallery'
@@ -166,6 +168,30 @@ function normalizeAnnotation(a) {
       catLegendInput: '素材',
       catLegendIntermediate: '过程稿',
       catLegendUnknown: '未归类',
+      // v0.14.2 手动标签：表态层下线后的替代入口
+      labelEdit: '改标签',
+      labelEditHint: '手动调整这张图的产出标签；改过的标签刷新 / 重启都保留',
+      labelDialogTitle: '调整产出标签',
+      labelDialogBatchTitle: '批量调整产出标签',
+      labelCurrent: '当前标签',
+      labelNew: '改为',
+      labelAuto: '自动判定',
+      labelManual: '手动',
+      labelCatFinal: '定稿',
+      labelCatInput: '素材',
+      labelCatIntermediate: '过程稿',
+      labelCatUnknown: '未归类',
+      labelDirection: '调整方向（可选）',
+      labelDirectionPlaceholder: '例如：门头往左挪、配色偏冷，其余不变',
+      labelAddToBasket: '同时加入反馈篮',
+      labelAddToBasketHint: '取消勾选则只改标签、不生成反馈；反馈仍需人工审核后发送',
+      labelReset: '恢复自动判定',
+      labelApply: '应用',
+      labelBatch: '批量改标签',
+      labelSaved: '标签已更新',
+      labelSavedNoFeedback: '标签已更新（未加入反馈篮）',
+      labelCtxReset: '恢复自动标签',
+      catFilterFinal: '定稿',
       annotEnter: '标注',
       annotExit: '退出标注',
       annotNotePrompt: '这块要改什么？（可留空）',
@@ -178,7 +204,7 @@ function normalizeAnnotation(a) {
       annotStartTag: '再点一下定终点',
       batchModeEnter: '批量选择',
       batchModeExit: '退出批量',
-      batchModeEnterHint: '批量模式：直接点卡片即可选中/取消（此时点卡片不会打开大图），选好后统一表态',
+      batchModeEnterHint: '批量模式：直接点卡片即可选中/取消（此时点卡片不会打开大图），选好后批量改标签',
       batchModeExitHint: '退出批量模式并清空已选',
       cardConfirm: '✓ 定稿',
       cardConfirmed: '✓ 已定稿',
@@ -190,6 +216,7 @@ function normalizeAnnotation(a) {
       catFilterArchive: '◇ 留档',
       filterShowHint: '点击显示「{label}」',
       filterHideHint: '点击隐藏「{label}」',
+      filterEmptyHint: '当前筛选下没有可显示的文件，点上方标签可重新显示',
       confirmBadgeLabel: '已定稿',
       confirmBadgeHint: '这张已由人定为「已定稿」（判断已锁住，刷新/重启都保留）',
       verdictBadgeDeliver: '已定稿',
@@ -232,7 +259,7 @@ function normalizeAnnotation(a) {
       scanModeExit: '退出批量',
       shownOfTotal: '已显示 {shown} / 共 {total}',
 
-      catLegendHint: '角标分两层：预判阶段（机器猜的，灰底）与人的结论（你定的，彩底）。一旦表态，卡片和筛选都按结论走',
+      catLegendHint: '产出状态角标：素材 / 过程稿 / 定稿 / 未归类。手动改过的以手动为准，刷新、重启都保留',
       // ===== 全局按对话分组 =====
       groupCount: '{count} 个',
       groupFinal: '成稿 {n}',
@@ -242,6 +269,19 @@ function normalizeAnnotation(a) {
       groupTruncated: '仅显示最近 {shown} 个，共 {total} 个',
       groupHistoryTitle: '历史资产',
       groupCurrentBadge: '当前对话',
+      // 资产 → 会话（01）与归档/删除标注（02）
+      groupOpenSession: '打开对话',
+      groupOpenTip: '切换到「{title}」——这批资产所属的对话',
+      groupOpenDone: '已切到该对话',
+      groupOpenMissed: '列表里没找到，已复制会话 ID',
+      groupOpenArchived: '会话已归档，不能直接打开',
+      groupStateArchived: '已归档',
+      groupStateDeleted: '会话已删除',
+      groupStateCannotReopen: '无法重建对话',
+      groupStateHintArchived: '宿主标记该对话已归档；仍可点「打开对话」尝试切回，打不开会自动改标「无法重建对话」。',
+      groupStateHintDeleted: '会话已删除 · 无法重建对话，只保留资产。',
+      groupStateRebuildHint: '列表里找不到该对话，无法重建对话，只保留资产。',
+      listTimeout: '扫描超时了，点「重试」再来一次（宿主正忙时会这样）',
       groupHistoryHint: '这些文件在会话记录里查不到归属对话',
       groupUnassigned: '未归属对话',
       groupFiles: '{n} 个文件',
@@ -333,10 +373,11 @@ function normalizeAnnotation(a) {
       feedbackForeignWarnShort: '含其他会话的条目，已禁用提交',
       feedbackEdit: '编辑',
       // 框选批注（归到「反馈」这一侧：说明文字进反馈篮、随草稿发出）
-      feedbackClearHint: '清空篮子里的全部条目：表态与批注一起清掉（只改标记，不删任何文件）',
+      feedbackClearHint: '清空篮子里的全部条目：反馈条目与批注一起清（已改的标签不受影响，也不删文件）',
       feedbackAnnotTag: '批注',
       feedbackAnnotRegion: '区域 左{x}% 上{y}% · 宽{w}% 高{h}%',
       feedbackAnnotNoNote: '（未填说明，按框选区域改）',
+      feedbackFrameFrom: '取自《{name}》{timecode} 帧',
       feedbackAnnotHint: '{n} 条框选批注会随反馈一起发出，序号与草稿里的 Annotation N 一一对应',
       feedbackEditTitle: '编辑：{name}',
       feedbackReasonLabel: '理由（可选）',
@@ -366,8 +407,10 @@ function normalizeAnnotation(a) {
       mediaTooBigHint: '该文件 {size}，超过面板内播放上限。用系统播放器打开可立即拖动查看。',
       mediaBlobReady: '已载入，可拖动进度条',
       mediaGrabFrame: '截取当前帧',
-      mediaGrabFrameHint: '把当前播放位置的画面存成 PNG 图片',
+      mediaGrabFrameHint: '把当前播放位置存成 PNG，自动放进当前对话资产，不用选保存位置',
       mediaGrabFrameOk: '已保存：{name}',
+      mediaGrabFrameSaving: '正在保存截帧…',
+      mediaGrabFrameSaved: '已存入当前对话资产：{name}（第 {timecode} 帧）',
       mediaGrabFrameFailed: '截帧失败：{message}',
       mediaGrabFrameNoVideo: '只有视频可以截帧',
       mediaNoPreview: '浏览器无法解码该格式',
@@ -442,6 +485,30 @@ function normalizeAnnotation(a) {
       catLegendInput: 'Source',
       catLegendIntermediate: 'WIP',
       catLegendUnknown: 'Unclassified',
+      // v0.14.2 manual labels (replaces the retired verdict layer)
+      labelEdit: 'Edit label',
+      labelEditHint: 'Override the detected asset stage; manual labels survive refresh and restart',
+      labelDialogTitle: 'Adjust asset label',
+      labelDialogBatchTitle: 'Adjust labels in batch',
+      labelCurrent: 'Current',
+      labelNew: 'Change to',
+      labelAuto: 'Auto-detected',
+      labelManual: 'Manual',
+      labelCatFinal: 'Final',
+      labelCatInput: 'Source',
+      labelCatIntermediate: 'WIP',
+      labelCatUnknown: 'Unclassified',
+      labelDirection: 'Direction (optional)',
+      labelDirectionPlaceholder: 'e.g. move the sign left, cooler palette, keep the rest',
+      labelAddToBasket: 'Also add to feedback basket',
+      labelAddToBasketHint: 'Uncheck to only change the label; feedback still needs your review before sending',
+      labelReset: 'Back to auto-detected',
+      labelApply: 'Apply',
+      labelBatch: 'Edit labels in batch',
+      labelSaved: 'Label updated',
+      labelSavedNoFeedback: 'Label updated (no feedback added)',
+      labelCtxReset: 'Reset to auto label',
+      catFilterFinal: 'Final',
       annotEnter: 'Annotate',
       annotExit: 'Exit annotate',
       annotNotePrompt: 'What should change here? (optional)',
@@ -454,7 +521,7 @@ function normalizeAnnotation(a) {
       annotStartTag: 'Click again to set the end',
       batchModeEnter: 'Batch select',
       batchModeExit: 'Exit batch',
-      batchModeEnterHint: 'Batch mode: click any card to select/deselect (clicking no longer opens the viewer), then apply one verdict to all',
+      batchModeEnterHint: 'Batch mode: click any card to select/deselect (clicking no longer opens the viewer), then edit labels in batch',
       batchModeExitHint: 'Leave batch mode and clear the selection',
       cardConfirm: '✓ Finalize',
       cardConfirmed: '✓ Finalized',
@@ -466,6 +533,7 @@ function normalizeAnnotation(a) {
       catFilterArchive: '◇ Archive',
       filterShowHint: 'Click to show "{label}"',
       filterHideHint: 'Click to hide "{label}"',
+      filterEmptyHint: 'Nothing to show under the current filters. Click a label above to show it again.',
       confirmBadgeLabel: 'Finalized',
       confirmBadgeHint: 'A human finalized this (the decision persists across refresh and restart)',
       verdictBadgeDeliver: 'Finalized',
@@ -508,7 +576,7 @@ function normalizeAnnotation(a) {
       scanModeExit: 'Exit selection',
       shownOfTotal: '{shown} of {total} shown',
 
-      catLegendHint: 'Two layers: stage (machine-guessed, grey badge) and verdict (yours, colored badge). Once you set a verdict, cards and filters follow it',
+      catLegendHint: 'Asset stage: source / WIP / final / unclassified. Manual overrides win and persist across restarts',
       // Grouped by conversation (global view)
       groupCount: '{count} files',
       groupFinal: 'Draft {n}',
@@ -518,6 +586,19 @@ function normalizeAnnotation(a) {
       groupTruncated: 'Showing latest {shown} of {total}',
       groupHistoryTitle: 'Older assets',
       groupCurrentBadge: 'This chat',
+      // Assets to chat (01) and archived / deleted badges (02)
+      groupOpenSession: 'Open chat',
+      groupOpenTip: 'Switch to the chat that owns these assets: {title}',
+      groupOpenDone: 'Switched',
+      groupOpenMissed: 'Not in the list — session ID copied',
+      groupOpenArchived: 'Archived chat cannot be opened',
+      groupStateArchived: 'Archived',
+      groupStateDeleted: 'Chat deleted',
+      groupStateCannotReopen: 'Chat cannot be rebuilt',
+      groupStateHintArchived: 'The host marks this chat as archived. You can still try "Open chat"; if it fails, it will be marked as unrebuildable.',
+      groupStateHintDeleted: 'Chat deleted · cannot be rebuilt; assets are kept as-is.',
+      groupStateRebuildHint: 'Chat not found in the list and cannot be rebuilt; assets are kept as-is.',
+      listTimeout: 'Scan timed out — tap Retry (the host may be busy)',
       groupHistoryHint: 'These files have no conversation recorded in the session logs',
       groupUnassigned: 'No conversation',
       groupFiles: '{n} files',
@@ -607,10 +688,11 @@ function normalizeAnnotation(a) {
       feedbackForeignWarnShort: 'Contains items from another session — submit disabled',
       feedbackEdit: 'Edit',
       // Boxed notes (feedback side: the note text goes into the basket and the draft)
-      feedbackClearHint: 'Clear every item in the basket, verdicts and notes alike (marks only — no files touched)',
+      feedbackClearHint: 'Clear every feedback item and annotation (labels stay; no files touched)',
       feedbackAnnotTag: 'Note',
       feedbackAnnotRegion: 'region left {x}% top {y}% · {w}%×{h}%',
       feedbackAnnotNoNote: '(no note — change the boxed area)',
+      feedbackFrameFrom: 'From "{name}" at frame {timecode}',
       feedbackAnnotHint: '{n} boxed note(s) will be sent with this feedback, numbered to match `Annotation N` in the draft',
       feedbackEditTitle: 'Edit: {name}',
       feedbackReasonLabel: 'Reason (optional)',
@@ -640,8 +722,10 @@ function normalizeAnnotation(a) {
       mediaTooBigHint: 'This file is {size}, over the in-panel limit. Open it in the system player to seek right away.',
       mediaBlobReady: 'Loaded — seeking available',
       mediaGrabFrame: 'Save current frame',
-      mediaGrabFrameHint: 'Save the frame at the current play position as a PNG',
+      mediaGrabFrameHint: 'Save the current frame as PNG into this chat assets (no file dialog)',
       mediaGrabFrameOk: 'Saved: {name}',
+      mediaGrabFrameSaving: 'Saving frame...',
+      mediaGrabFrameSaved: 'Saved to this chat: {name} (frame {timecode})',
       mediaGrabFrameFailed: 'Frame grab failed: {message}',
       mediaGrabFrameNoVideo: 'Only video can be grabbed',
       mediaNoPreview: 'The browser cannot decode this format',
@@ -721,15 +805,45 @@ function normalizeAnnotation(a) {
 
     /** POST 到 Host 私有路由，统一把失败转成可展示的错误。 */
     async function callHost(op, payload, signal) {
-      const response = await fetch(ROUTE, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ op, ...(payload ?? {}) }),
-        signal,
-      })
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      return response.json()
+      // 宿主忙（例如切进一个超长对话）时 fetch 可能一直挂着；旧实现没有超时，
+      // 面板就永远停在「正在扫描…」。列表给 12 秒硬上限，其它操作给 60 秒，
+      // 避免误伤删除 / 批处理这类本来就慢的请求。
+      const timeout = new AbortController()
+      const timer = setTimeout(() => timeout.abort(), op === 'list' ? HOST_TIMEOUT_MS : 60000)
+      let onExternalAbort = null
+      let merged
+      if (typeof AbortSignal.any === 'function') {
+        merged = signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal
+      } else {
+        merged = timeout.signal
+        onExternalAbort = () => timeout.abort()
+        if (signal) {
+          if (signal.aborted) timeout.abort()
+          else signal.addEventListener('abort', onExternalAbort, { once: true })
+        }
+      }
+      try {
+        const response = await fetch(ROUTE, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ op, ...(payload ?? {}) }),
+          signal: merged,
+        })
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        return await response.json()
+      } catch (error) {
+        // 组件卸载造成的取消仍按 AbortError 交给上层忽略；只有自己的超时转成可读错误
+        if (timeout.signal.aborted && !signal?.aborted) {
+          const err = new Error('request timeout')
+          err.code = 'gallery-timeout'
+          throw err
+        }
+        throw error
+      } finally {
+        clearTimeout(timer)
+        if (onExternalAbort !== null && signal) signal.removeEventListener('abort', onExternalAbort)
+      }
     }
 
     /**
@@ -1174,8 +1288,8 @@ function normalizeAnnotation(a) {
   pointer-events: none;
   z-index: 6;
 }
-.dg-cardWrap[data-gallery-bucket="finalConfirmed"]::after { border-color: #4a9d5f; }
-.dg-cardWrap[data-gallery-bucket="finalPending"]::after   { border-color: #1A936F; border-style: dashed; }
+.dg-cardWrap[data-gallery-bucket="final"]::after { border-color: #4a9d5f; }
+/* v0.14.2：表态层下线，「已确认 / 待确认」两态合并为单一「定稿」 */
 .dg-cardWrap[data-gallery-bucket="revise"]::after         { border-color: #d4693c; }
 .dg-cardWrap[data-gallery-bucket="archive"]::after        { border-color: #6f8fb5; }
 .dg-cardWrap[data-gallery-bucket="input"]::after          { border-color: #8A8F99; }
@@ -1293,6 +1407,108 @@ function normalizeAnnotation(a) {
   background: var(--dsw-alias-brand-primary);
 }
 .dg-groupCurrent .dg-groupTitle { font-weight: 700; }
+
+/* ---------- v0.14.2 手动标签：卡片入口 + 调整弹窗 ---------- */
+/* 沿用表态按钮原来的右上角位置，不新增角标，避免与左上角的阶段角标打架。 */
+.dg-labelBtn {
+  position: absolute; top: 4px; right: 4px; z-index: 3;
+  min-width: 22px; height: 22px; padding: 0 6px;
+  border-radius: 6px; border: 1px solid rgba(255,255,255,.45);
+  background: rgba(20,20,20,.72); color: #fff;
+  font-size: 11px; line-height: 20px; cursor: pointer; opacity: .55;
+}
+.dg-cardWrap:hover .dg-labelBtn { opacity: 1; }
+.dg-labelBtn:hover { border-color: #fff; transform: scale(1.06); }
+.dg-labelBtnManual { background: #8a6520; border-color: #e2b968; opacity: .95; }
+.dg-cardSelectable .dg-labelBtn { display: none; }
+
+.dg-labelLayer {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.55);
+}
+/* 弹窗内一律写死色值：宿主主题变量在这一层解析不稳，
+   实测「取消 / 应用」和未选中的标签按钮会糊进背景里看不清。 */
+.dg-labelDialog {
+  width: min(420px, 92vw); max-height: 86vh; overflow: auto;
+  padding: 16px; border-radius: 10px;
+  background: #262b33;
+  color: #f2f5f8;
+  box-shadow: 0 12px 40px rgba(0,0,0,.6);
+}
+.dg-labelDialog .dg-labelHead,
+.dg-labelDialog .dg-labelRow,
+.dg-labelDialog .dg-labelCheck { color: #f2f5f8; }
+.dg-labelHead { font-size: 14px; font-weight: 700; margin-bottom: 10px; }
+.dg-labelRow { margin: 10px 0; font-size: 12px; }
+.dg-labelChoices { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.dg-labelChoice {
+  padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
+  background: #3a4451; border: 1px solid #8b9aab; color: #f2f5f8; font-weight: 600;
+}
+.dg-labelChoice:hover { background: #4b5867; border-color: #d2dce7; }
+.dg-labelChoiceOn,
+.dg-labelChoiceOn:hover {
+  background: #2f8f57; border-color: #8ce0b0; color: #fff;
+  box-shadow: 0 0 0 1px rgba(140,224,176,.35);
+}
+.dg-labelTextarea { width: 100%; box-sizing: border-box; min-height: 62px; resize: vertical; }
+/* 宿主 .dg-input 是白底，在深色弹窗里要压过去 */
+.dg-labelDialog .dg-input {
+  background: #1c2129; color: #f2f5f8; border: 1px solid #6d7c8d;
+}
+.dg-labelDialog .dg-input::placeholder { color: #9aa8b8; opacity: 1; }
+.dg-labelCheck { display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; }
+.dg-labelActions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; flex-wrap: wrap; }
+/* 取消 / 恢复自动 / 应用：不依赖宿主 dg-btn 的主题色 */
+.dg-labelActions .dg-btn {
+  background: #3a4451; border: 1px solid #8b9aab; color: #f2f5f8; font-weight: 600;
+}
+.dg-labelActions .dg-btn:hover { background: #4b5867; border-color: #d2dce7; color: #fff; }
+.dg-labelActions .dg-primaryBtn,
+.dg-labelActions .dg-primaryBtn:hover {
+  background: #2f8f57; border-color: #8ce0b0; color: #fff; font-weight: 700;
+  box-shadow: 0 0 0 1px rgba(140,224,176,.3);
+}
+.dg-labelActions .dg-btn:disabled { opacity: .6; }
+.dg-labelHint { font-size: 11px; color: #c4ced9; line-height: 1.5; }
+.dg-groupStateBadge {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l1);
+}
+.dg-groupStateBadge-warn {
+  color: var(--dsw-alias-label-primary);
+  background: color-mix(in srgb, #E8A33D 16%, var(--dsw-alias-bg-layer-2));
+  border-color: color-mix(in srgb, #E8A33D 40%, transparent);
+}
+.dg-groupStateHint { border-top: 0; }
+.dg-groupActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 7px 11px;
+  background: var(--dsw-alias-bg-layer-1);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+.dg-groupOpenWrap { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.dg-openSession { flex: 0 0 auto; }
+.dg-groupOpenNote {
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+}
 .dg-groupDate {
   flex: 0 0 auto;
   font-size: 11px;
@@ -2272,7 +2488,7 @@ function normalizeAnnotation(a) {
  *  5. 逐条用 `Annotation N：` 编号，便于模型逐条回应（参考 dsh-quote-annotate-pro 契约）。
  */
 
-/** 首版 6 个动作。值即契约里的 action 字符串，不要随意改（已写进 marks 文件）。 */
+/** 动作契约。值即写进 marks 文件的 action 字符串，不要随意改（兼容历史数据）。 */
 const ACTIONS = [
   'approve',
   'reject',
@@ -2280,6 +2496,10 @@ const ACTIONS = [
   'redo-one-dim',
   'regenerate-selected',
   'set-reference',
+  // v0.14.2 手动调整标签的三条反馈语义（旧 6 个保留以兼容历史 marks）
+  'finalize-asset',
+  'reject-delivery',
+  'set-label',
 ]
 
 /** 动作 → 中文动词（生成草稿正文用）。 */
@@ -2290,6 +2510,9 @@ const ACTION_LABELS_ZH = {
   'redo-one-dim': '单维重做',
   'regenerate-selected': '选择性重生成',
   'set-reference': '设为参照',
+  'finalize-asset': '终止枚举，以此图为定稿',
+  'reject-delivery': '交付不合格',
+  'set-label': '调整产出标签',
 }
 
 /** 动作 → 英文动词。 */
@@ -2300,6 +2523,9 @@ const ACTION_LABELS_EN = {
   'redo-one-dim': 'redo one dimension',
   'regenerate-selected': 'regenerate',
   'set-reference': 'set as reference',
+  'finalize-asset': 'Stop enumerating; this asset is final',
+  'reject-delivery': 'Delivery rejected',
+  'set-label': 'Adjust asset label',
 }
 
 /** 契约版本。检查项会核对。 */
@@ -2341,6 +2567,15 @@ function makeItem(item) {
   }
   if (item?.region !== undefined && item.region !== null) out.region = item.region
   if (item?.params !== undefined && item.params !== null) out.params = item.params
+  // v0.14.3 截帧来源：随草稿一起带出，模型才知道反馈针对的是哪一帧
+  if (item?.frameOf !== undefined && item?.frameOf !== null && typeof item.frameOf === 'object') {
+    out.frameOf = {
+      videoName: String(item.frameOf.videoName ?? ''),
+      videoRelPath: String(item.frameOf.videoRelPath ?? ''),
+      timecode: String(item.frameOf.timecode ?? ''),
+      frameMs: Number(item.frameOf.frameMs) || 0,
+    }
+  }
   return out
 }
 
@@ -2411,6 +2646,12 @@ function renderFeedbackText(feedback, options) {
       : (labels[item.action] ?? item.action)
     lines.push(`Annotation ${n}：${verb} —— ${name}`)
     lines.push(`${locale === 'en' ? 'Path' : '路径'}：${item.relPath}`)
+    if (item.frameOf !== undefined && item.frameOf !== null) {
+      const f = item.frameOf
+      lines.push(locale === 'en'
+        ? `Frame source: taken from "${f.videoName}" at ${f.timecode} (${f.frameMs} ms)`
+        : `帧来源：取自视频《${f.videoName}》${f.timecode}（第 ${f.frameMs} 毫秒）`)
+    }
     if (item.reason !== undefined) {
       lines.push(`${locale === 'en' ? 'Reason' : '理由'}：${item.reason}`)
     }
@@ -2488,6 +2729,10 @@ function serializeFeedback(feedback) {
       { id: 'redo-one-dim', labelZh: '单维重做', labelEn: 'Redo one dim', icon: '↻' },
       { id: 'regenerate-selected', labelZh: '选择性重生成', labelEn: 'Regenerate', icon: '⟳' },
       { id: 'set-reference', labelZh: '设为参照', labelEn: 'Set reference', icon: '◎' },
+      // v0.14.2 手动改标签进反馈篮后的三种显示（旧 6 个保留兼容历史数据）
+      { id: 'finalize-asset', labelZh: '终止枚举·定为定稿', labelEn: 'Stop & finalize', icon: '★' },
+      { id: 'reject-delivery', labelZh: '交付不合格', labelEn: 'Delivery rejected', icon: '✕' },
+      { id: 'set-label', labelZh: '调整标签', labelEn: 'Adjust label', icon: '✎' },
     ]
 
     /**
@@ -2741,6 +2986,8 @@ function serializeFeedback(feedback) {
             changeOnly: mark.changeOnly,
             keep: mark.keep,
             preserve: mark.preserve,
+            // 截帧来源随草稿带出（v0.14.3）
+            frameOf: it.frameOf,
           })
         }
         const annots = Array.isArray(it.annotations) ? it.annotations : []
@@ -2753,6 +3000,7 @@ function serializeFeedback(feedback) {
             action: mark?.action === 'reject' ? 'reject' : 'redo-one-dim',
             reason: note === '' ? undefined : note,
             region: { x: a.x, y: a.y, w: a.w, h: a.h },
+            frameOf: it.frameOf,
           })
         }
       }
@@ -2927,6 +3175,14 @@ function serializeFeedback(feedback) {
                       h('span', { className: 'dg-feedbackNo', key: 'n' }, String(idx + 1)),
                       h('span', { className: 'dg-feedbackAction dg-feedbackActionAnnot', key: 'a' }, t('feedbackAnnotTag')),
                       h('span', { className: 'dg-feedbackName', key: 'name', title: it.relPath }, fileName),
+                      // 截帧条目：写明来自哪段视频的哪一帧，避免多条反馈混淆
+                      it.frameOf !== undefined && it.frameOf !== null
+                        ? h('span', { className: 'dg-feedbackDim', key: 'frame', 'data-gallery-feedback-frame': it.frameOf.timecode },
+                            format(t('feedbackFrameFrom'), {
+                              name: it.frameOf.videoName ?? '',
+                              timecode: it.frameOf.timecode ?? '',
+                            }))
+                        : null,
                       h('span', { className: 'dg-feedbackDim dg-feedbackRegion', key: 'r' },
                         format(t('feedbackAnnotRegion'), { x: pct(a.x), y: pct(a.y), w: pct(a.w), h: pct(a.h) })),
                       h('span', { className: 'dg-feedbackNote', key: 'note' },
@@ -2957,6 +3213,14 @@ function serializeFeedback(feedback) {
                     h('span', { className: 'dg-feedbackNo', key: 'n' }, String(idx + 1)),
                     h('span', { className: 'dg-feedbackAction', key: 'a' }, label),
                     h('span', { className: 'dg-feedbackName', key: 'name', title: it.relPath }, fileName),
+                      // 截帧条目：写明来自哪段视频的哪一帧，避免多条反馈混淆
+                      it.frameOf !== undefined && it.frameOf !== null
+                        ? h('span', { className: 'dg-feedbackDim', key: 'frame', 'data-gallery-feedback-frame': it.frameOf.timecode },
+                            format(t('feedbackFrameFrom'), {
+                              name: it.frameOf.videoName ?? '',
+                              timecode: it.frameOf.timecode ?? '',
+                            }))
+                        : null,
                     (it.mark?.changeOnly !== undefined && it.mark.changeOnly.length > 0)
                       ? h('span', { className: 'dg-feedbackDim', key: 'co' },
                           `${t('feedbackChangeOnly')}：${it.mark.changeOnly.join('/')}`)
@@ -3140,33 +3404,116 @@ function serializeFeedback(feedback) {
         entry('reveal', t('ctxReveal'), '📂', () => actions.onReveal()),
         entry('copy', t('ctxCopy'), '⧉', () => actions.onCopy()),
         entry('delete', t('ctxDelete'), '🗑', () => actions.onDelete(), true),
-        // ---- 反馈标记（S3-a）：6 个动作，选中后进反馈篮，不直接发送 ----
-        actions.onMark !== undefined
-          ? h('div', { className: 'dg-ctxDivider', key: 'markDivider' }, t('ctxMarkSection'))
+        // ---- v0.14.2 手动标签：表态层已下线，只留「改标签 / 恢复自动」两个入口 ----
+        actions.onEditLabel !== undefined
+          ? h('div', { className: 'dg-ctxDivider', key: 'labelDivider' }, t('labelEdit'))
           : null,
-        actions.onMark !== undefined
-          ? entry('mark-approve', t('ctxMarkApprove'), '✓', () => actions.onMark('approve'))
+        actions.onEditLabel !== undefined
+          ? entry('label-edit', t('labelEdit'), '✎', () => actions.onEditLabel())
           : null,
-        actions.onMark !== undefined
-          ? entry('mark-reject', t('ctxMarkReject'), '✕', () => actions.onMark('reject'))
-          : null,
-        actions.onMark !== undefined
-          ? entry('mark-finalize', t('ctxMarkFinalize'), '★', () => actions.onMark('finalize'))
-          : null,
-        // v0.13.7：已确认的卡片给出「取消确认」，退回待确认
-        actions.onUnconfirm !== undefined && actions.confirmed === true
-          ? entry('mark-unconfirm', t('ctxMarkUnconfirm'), '☆', () => actions.onUnconfirm())
-          : null,
-        actions.onMark !== undefined
-          ? entry('mark-redo', t('ctxMarkRedo'), '↻', () => actions.onMark('redo-one-dim'))
-          : null,
-        actions.onMark !== undefined
-          ? entry('mark-regen', t('ctxMarkRegen'), '⟳', () => actions.onMark('regenerate-selected'))
-          : null,
-        actions.onMark !== undefined
-          ? entry('mark-ref', t('ctxMarkReference'), '◎', () => actions.onMark('set-reference'))
+        actions.onResetLabel !== undefined
+          ? entry('label-reset', t('labelCtxReset'), '↺', () => actions.onResetLabel())
           : null,
       ]))
+    }
+
+    /**
+     * v0.14.2 手动调整产出标签弹窗。
+     *
+     * 三件事一次做完，但决定权全在人：
+     *   ① 选新标签（素材 / 过程稿 / 定稿）
+     *   ② 可选填「调整方向」
+     *   ③ 可选「同时加入反馈篮」——默认勾上，可取消
+     * 弹窗绝不发送任何消息；反馈只进篮子，等人审核合并后再发。
+     */
+    function LabelDialog({ t, item, batchCount, currentCategory, isManual,
+                           onCancel, onApply, onReset }) {
+      const [next, setNext] = React.useState(
+        ['input', 'intermediate', 'final'].includes(currentCategory) ? currentCategory : 'final',
+      )
+      const [direction, setDirection] = React.useState('')
+      const [addToBasket, setAddToBasket] = React.useState(true)
+
+      React.useEffect(() => {
+        const onKey = (event) => {
+          if (event.key === 'Escape') { event.preventDefault(); onCancel() }
+        }
+        window.addEventListener('keydown', onKey)
+        return () => window.removeEventListener('keydown', onKey)
+      }, [onCancel])
+
+      const catName = (c) => c === 'final' ? t('labelCatFinal')
+        : c === 'input' ? t('labelCatInput')
+          : c === 'intermediate' ? t('labelCatIntermediate') : t('labelCatUnknown')
+      const isBatch = Number(batchCount) > 1
+      const choices = [
+        { id: 'final', label: t('labelCatFinal') },
+        { id: 'intermediate', label: t('labelCatIntermediate') },
+        { id: 'input', label: t('labelCatInput') },
+      ]
+
+      return h('div', {
+        className: 'dg-labelLayer', key: 'labelLayer', onClick: onCancel,
+      }, [
+        h('div', {
+          className: 'dg-labelDialog', key: 'dlg',
+          'data-gallery-label-dialog': true,
+          onClick: (event) => event.stopPropagation(),
+        }, [
+          h('div', { className: 'dg-labelHead', key: 'head' },
+            isBatch ? `${t('labelDialogBatchTitle')} · ${batchCount}` : t('labelDialogTitle')),
+          h('div', { className: 'dg-labelRow', key: 'file' },
+            isBatch ? format(t('batchBarTitle'), { n: batchCount }) : (item?.name ?? '')),
+          h('div', { className: 'dg-labelRow', key: 'cur' },
+            `${t('labelCurrent')}：${catName(currentCategory)}（${isManual ? t('labelManual') : t('labelAuto')}）`),
+          h('div', { className: 'dg-labelRow', key: 'new' }, [
+            h('span', { key: 'l' }, t('labelNew')),
+            h('div', { className: 'dg-labelChoices', key: 'cs' },
+              choices.map((c) => h('button', {
+                type: 'button', key: c.id,
+                className: `dg-labelChoice${next === c.id ? ' dg-labelChoiceOn' : ''}`,
+                'data-gallery-label-choice': c.id,
+                'data-gallery-label-choice-on': next === c.id ? '1' : '0',
+                onClick: () => setNext(c.id),
+              }, c.label))),
+          ]),
+          h('label', { className: 'dg-labelRow', key: 'dir' }, [
+            h('div', { key: 'l' }, t('labelDirection')),
+            h('textarea', {
+              className: 'dg-input dg-labelTextarea', key: 'in', rows: 2,
+              value: direction, placeholder: t('labelDirectionPlaceholder'),
+              'data-gallery-label-direction': true,
+              onChange: (event) => setDirection(event.target.value),
+            }),
+          ]),
+          h('label', { className: 'dg-labelCheck', key: 'chk' }, [
+            h('input', {
+              type: 'checkbox', key: 'cb', checked: addToBasket,
+              'data-gallery-label-add-basket': addToBasket ? '1' : '0',
+              onChange: (event) => setAddToBasket(event.target.checked),
+            }),
+            h('span', { key: 's' }, t('labelAddToBasket')),
+          ]),
+          h('div', { className: 'dg-labelHint', key: 'hint' }, t('labelAddToBasketHint')),
+          h('div', { className: 'dg-labelActions', key: 'acts' }, [
+            isManual && !isBatch
+              ? h('button', {
+                  type: 'button', className: 'dg-btn', key: 'reset',
+                  'data-gallery-label-reset': true,
+                  onClick: () => onReset(),
+                }, t('labelReset'))
+              : null,
+            h('button', {
+              type: 'button', className: 'dg-btn', key: 'cancel', onClick: onCancel,
+            }, t('cancel')),
+            h('button', {
+              type: 'button', className: 'dg-btn dg-primaryBtn', key: 'apply',
+              'data-gallery-label-apply': true,
+              onClick: () => onApply({ category: next, direction: direction.trim(), addToBasket }),
+            }, t('labelApply')),
+          ]),
+        ]),
+      ])
     }
 
     /** 删除确认弹窗：删除不可逆，必须二次确认。 */
@@ -3378,7 +3725,7 @@ function serializeFeedback(feedback) {
      *
      * 因此不再需要 blob 方案，也不再需要 60MB 分档 —— 任意大小都能播。
      */
-    function MediaPlayer({ item, t, onClose }) {
+    function MediaPlayer({ item, t, onClose, sessionId, sessionTitle, sessionCreatedAt, onSaved }) {
       const isVideo = item.mediaType === 'video'
       const videoRef = React.useRef(null)
       const blobUrlRef = React.useRef(null)
@@ -3484,9 +3831,14 @@ function serializeFeedback(feedback) {
       }, [item.relPath, t])
 
       /**
-       * 截取当前帧存成 PNG。
-       * 同一来源（同协议同端口）才能 canvas toBlob，否则 canvas 被 taint。
-       * 我们的媒体路由与页面同源，所以可用。
+       * 截取当前帧 → 交给 Host 直接写进「当前对话资产」（v0.14.3）。
+       *
+       * 旧实现用 <a download> 触发浏览器下载：弹系统保存框、文件落在「下载」目录，
+       * 画廊扫描不到，也就没法对这一帧框选批注、写进反馈篮。
+       * 现在只把 PNG 的 base64 交给 Host，由它写到源视频同目录（扫描范围内），
+       * 并登记「来源视频 + 帧时间 + 所属对话」，刷新后仍在当前对话分组里。
+       *
+       * 同源要求不变：媒体路由与页面同源，canvas 才不会被 taint。
        */
       const grabFrame = React.useCallback(() => {
         const v = videoRef.current
@@ -3505,32 +3857,45 @@ function serializeFeedback(feedback) {
           if (c2d === null) throw new Error('no 2d context')
           c2d.drawImage(v, 0, 0, w, h)
 
-          const sec = Math.floor(v.currentTime || 0)
-          const hh = String(Math.floor(sec / 3600)).padStart(2, '0')
-          const mm = String(Math.floor((sec % 3600) / 60)).padStart(2, '0')
-          const ss = String(sec % 60).padStart(2, '0')
-          const base = (item.name ?? 'frame').replace(/\.[^.]+$/, '')
-          const fname = `${base}_${hh}-${mm}-${ss}.png`
+          // 精确到毫秒：同一秒内连截多帧也能分清先后
+          const frameMs = Math.max(0, Math.round((v.currentTime || 0) * 1000))
+          setGrabNotice({ kind: 'ok', text: t('mediaGrabFrameSaving') })
 
-          canvas.toBlob((blob) => {
+          canvas.toBlob(async (blob) => {
             if (blob === null) {
               setGrabNotice({ kind: 'failed', text: format(t('mediaGrabFrameFailed'), { message: 'toBlob null' }) })
               return
             }
-            const u = URL.createObjectURL(blob)
-            const a = document.createElement('a')
-            a.href = u
-            a.download = fname
-            document.body.appendChild(a)
-            a.click()
-            document.body.removeChild(a)
-            setTimeout(() => URL.revokeObjectURL(u), 1000)
-            setGrabNotice({ kind: 'ok', text: format(t('mediaGrabFrameOk'), { name: fname }) })
+            try {
+              const dataUrl = await new Promise((resolve, reject) => {
+                const fr = new FileReader()
+                fr.onload = () => resolve(String(fr.result))
+                fr.onerror = () => reject(fr.error ?? new Error('FileReader failed'))
+                fr.readAsDataURL(blob)
+              })
+              const payload = await callHost('saveFrame', {
+                path: item.relPath,
+                data: dataUrl.slice(dataUrl.indexOf(',') + 1),
+                frameMs,
+                sessionId: sessionId ?? '',
+                sessionTitle: sessionTitle ?? '',
+                sessionCreatedAt: sessionCreatedAt ?? 0,
+              })
+              if (payload?.ok === false) throw new Error(payload?.error?.message ?? 'saveFrame failed')
+              setGrabNotice({
+                kind: 'ok',
+                text: format(t('mediaGrabFrameSaved'), { name: payload?.name ?? '', timecode: payload?.timecode ?? '' }),
+              })
+              // 立刻重扫：新资产出现在当前对话组，可马上点开批注 / 进反馈篮
+              if (typeof onSaved === 'function') onSaved(payload)
+            } catch (error) {
+              setGrabNotice({ kind: 'failed', text: format(t('mediaGrabFrameFailed'), { message: String(error?.message ?? error) }) })
+            }
           }, 'image/png')
         } catch (error) {
           setGrabNotice({ kind: 'failed', text: format(t('mediaGrabFrameFailed'), { message: String(error?.message ?? error) }) })
         }
-      }, [item.name, t])
+      }, [item.relPath, sessionId, sessionTitle, sessionCreatedAt, onSaved, t])
 
       React.useEffect(() => {
         if (grabNotice === null) return undefined
@@ -5068,6 +5433,165 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
       ])
     }
 
+    /**
+     * 资产 → 会话窗口（01，纯 DOM 路线）。
+     *
+     * 宿主会话列表是渐进渲染（watermark）：不活跃的旧会话行不在 DOM 里。
+     * 宿主自己提供 `overflow:*`（展开其余会话）与 `workspace:*`（展开折叠工作区），
+     * 找不到目标时先替用户展开，等 React 更新后再找，最后点目标行。
+     * 只操作宿主公开 DOM：不 inject 任何服务、不碰私有 RPC、不发消息。
+     * @returns {Promise<{ok:boolean, reason?:string, expanded?:number}>}
+     */
+    async function openSessionById(sessionId) {
+      const id = String(sessionId ?? '')
+      if (id === '' || id === '__history__') return { ok: false, reason: 'no-id' }
+      const wanted = 'session:' + id
+      const allRows = () => Array.from(document.querySelectorAll('[data-row-key]'))
+      const findRow = () => allRows().find((el) => el.getAttribute('data-row-key') === wanted) ?? null
+      const tick = () => new Promise((resolve) => setTimeout(resolve, 120))
+      // 每轮最多展开一个入口，16 轮封顶（宿主行为变化时不空转）
+      for (let round = 0; round < 16; round += 1) {
+        const row = findRow()
+        if (row !== null) {
+          // 行在就点，能不能切过去由点击结果说话。
+          // 旧版一见 aria-description 就判「归档、禁止打开」，但宿主会给普通行也挂描述，
+          // 于是能打开的对话被误标成打不开（老板 2026-11-10 反馈的 bug）。
+          try { row.scrollIntoView({ block: 'nearest' }) } catch { /* 滚动失败不影响打开 */ }
+          row.click()
+          return { ok: true, expanded: round }
+        }
+        const overflow = allRows().find((el) =>
+          (el.getAttribute('data-row-key') || '').startsWith('overflow:'))
+        if (overflow !== undefined) { overflow.click(); await tick(); continue }
+        const folded = allRows().find((el) =>
+          (el.getAttribute('data-row-key') || '').startsWith('workspace:')
+          && el.getAttribute('aria-expanded') === 'false')
+        if (folded !== undefined) { folded.click(); await tick(); continue }
+        break
+      }
+      return { ok: false, reason: 'not-found' }
+    }
+
+    /**
+     * 会话状态标注（02）——只标注，不排序、不改变分组显示范围，
+     * 也不取消「打开对话」入口：能不能切回以点击实测为准。
+     */
+    const GROUP_STATE_LABEL = {
+      archived: ['groupStateArchived', 'groupStateHintArchived'],
+    }
+
+    /** 归一化左侧会话标题：去掉尾部「(2)」「3 天前」这类宿主附加文字。 */
+    function normalizeSessionTitle(raw) {
+      return String(raw ?? '')
+        .replace(/\s+/g, ' ')
+        .replace(/[（(]\s*\d+\s*[)）]\s*$/, '')
+        .replace(/\s*\d+\s*(天|小时|分钟|周|个月|年)前\s*$/, '')
+        .trim()
+        .toLowerCase()
+    }
+
+    /**
+     * 左侧会话列表此刻的快照：会话 ID + 可见标题。
+     *
+     * 宿主是渐进渲染，折叠在「其余会话」里的行不在 DOM，光靠 ID 查行会漏判；
+     * 所以连标题一起收，并按归一化名比对（画廊的「Chief (2)」≈ 左侧的「Chief」）。
+     */
+    function readSidebarSessions() {
+      const ids = new Set()
+      const titles = new Set()
+      try {
+        for (const el of document.querySelectorAll('[data-row-key]')) {
+          const key = el.getAttribute('data-row-key') || ''
+          if (key.startsWith('session:')) ids.add(key.slice('session:'.length))
+          for (const raw of [el.getAttribute('title'), el.getAttribute('aria-label'), (el.textContent || '').trim()]) {
+            const norm = normalizeSessionTitle(String(raw ?? '').slice(0, 80))
+            if (norm !== '' && norm.length <= 80) titles.add(norm)
+          }
+        }
+      } catch { /* 读不到就没有快照，交给实测裁决 */ }
+      return { ids, titles }
+    }
+
+    /** 这个对话此刻是否还出现在左侧列表里（同 ID 或同名，含带序号的旧会话）。 */
+    function sessionVisibleInSidebar(group, sidebar) {
+      if (sidebar === null || sidebar === undefined) return false
+      const sid = String(group.sessionId ?? '')
+      if (sid !== '' && sidebar.ids.has(sid)) return true
+      const title = normalizeSessionTitle(group.title ?? '')
+      if (title === '') return false
+      if (sidebar.titles.has(title)) return true
+      // 行文本常带「3 天前」「📌」等尾巴，做一次前缀兜底
+      for (const t of sidebar.titles) {
+        if (t.startsWith(title) || title.startsWith(t)) return true
+      }
+      return false
+    }
+
+    /**
+     * 状态标注（02）：只标注、不排序、不裁剪，且绝不顶替「实测能否打开」。
+     *
+     * 裁决顺序（老板 2026-11-10 定的口径）：
+     *   ① 点过「打开对话」且成功 → 一律不标
+     *   ② 左侧列表里还看得见这个对话 → 一律不标（宁可少标，保证能跳回去）
+     *   ③ 实测打不开 → 标「无法重建对话」
+     *   ④ 宿主官方归档字段命中、且左侧确实找不到 → 只标「已归档」，仍保留打开入口
+     */
+    function groupStateBadge(group, t, openResult, sidebar) {
+      if (group.isCurrent === true || group.isHistory === true) return null
+      if (openResult === 'ok') return null
+      if (sessionVisibleInSidebar(group, sidebar)) return null
+      if (openResult === 'failed') {
+        return {
+          label: t('groupStateCannotReopen'),
+          hint: t('groupStateRebuildHint'),
+          className: 'dg-groupStateBadge dg-groupStateBadge-warn',
+          state: 'unreachable',
+        }
+      }
+      const entry = GROUP_STATE_LABEL[group.sessionState]
+      if (entry === undefined) return null
+      return {
+        label: t(entry[0]),
+        hint: t(entry[1]),
+        className: 'dg-groupStateBadge',
+        state: group.sessionState,
+      }
+    }
+
+    /** 分组展开后的「打开对话」按钮：成功/失败都给一句可见反馈，不弹窗。 */
+    function GroupOpenButton({ t, sessionId, title, onResult }) {
+      const [note, setNote] = React.useState('')
+      const timerRef = React.useRef(null)
+      React.useEffect(() => () => {
+        if (timerRef.current !== null) clearTimeout(timerRef.current)
+      }, [])
+      const show = (text) => {
+        setNote(text)
+        if (timerRef.current !== null) clearTimeout(timerRef.current)
+        timerRef.current = setTimeout(() => setNote(''), 3200)
+      }
+      const onClick = async () => {
+        const r = await openSessionById(sessionId)
+        onResult?.(sessionId, r)
+        if (r.ok) show(t('groupOpenDone'))
+        else if (r.reason === 'archived') show(t('groupOpenArchived'))
+        else {
+          await copyText(sessionId)
+          show(t('groupOpenMissed'))
+        }
+      }
+      return h('span', { className: 'dg-groupOpenWrap' }, [
+        h('button', {
+          type: 'button',
+          className: 'dg-btn dg-btnSmall dg-openSession',
+          'data-gallery-open-session': sessionId,
+          title: format(t('groupOpenTip'), { title: title || sessionId }),
+          onClick,
+        }, t('groupOpenSession')),
+        note === '' ? null : h('span', { className: 'dg-groupOpenNote', key: 'n' }, note),
+      ])
+    }
+
     /** 画廊正文：Header（刷新）+ 网格 + 面板内放大。 */
 
     function GalleryBody(props) {
@@ -5099,11 +5623,25 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
       const [settingsOpen, setSettingsOpen] = React.useState(false)
       // 全局分组：哪些组是展开的（键是 sessionId 或 '__history__'）
       const [openGroups, setOpenGroups] = React.useState(new Set())
+      /**
+       * 「打开对话」的实测结论：sid → 'ok' | 'failed'。
+       * 它比 Host 的归档字段优先级更高：点得开就撤掉一切标注，点不开才标无法重建。
+       */
+      const [openResults, setOpenResults] = React.useState(() => new Map())
+      const reportOpenResult = React.useCallback((sid, r) => {
+        setOpenResults((prev) => {
+          const nextState = r.ok === true ? 'ok' : 'failed'
+          if (prev.get(sid) === nextState) return prev
+          const next = new Map(prev)
+          next.set(sid, nextState)
+          return next
+        })
+      }, [])
       // 分组默认展开只做一次：当前对话组优先，没有则展开第一个。
       // 用 ref 记住「已初始化」，否则用户手动收起后每次渲染又被强制展开。
       const groupsInitRef = React.useRef(false)
-      // 全局分组：哪些组显示了中间产物
-      const [showInterim, setShowInterim] = React.useState({})
+      // v0.14.3：组内「隐藏 / 显示中间产物」按钮已移除。
+      // 过程稿的显隐只由顶部「过程稿」开关决定，不再有第二套开关。
       /**
        * 分类显隐开关（v0.13.7）。
        *
@@ -5111,17 +5649,15 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
        * 理由：用户若忘了自己关过哪一类，会以为文件丢了 —— 每次从全显示开始最不容易误解。
        *
        * 键：
-       *   finalConfirmed  —— 最终交付·已确认（确认态，见 3.2）
-       *   finalPending    —— 最终交付·待确认
+       *   final       —— 定稿
+       *   input / intermediate / unknown —— 素材 / 过程稿 / 未归类（手动覆写后按新标签归类）
        *   input           —— 输入素材
        *   intermediate    —— 中间产物（与组内开关同源）
        *   unknown         —— 未归类
        */
+      // v0.14.2：表态层下线，只剩 4 个原生标签（定稿 / 素材 / 过程稿 / 未归类）
       const [categoryFilter, setCategoryFilter] = React.useState({
-        finalConfirmed: true,
-        finalPending: true,
-        revise: true,
-        archive: true,
+        final: true,
         input: true,
         intermediate: true,
         unknown: true,
@@ -5148,16 +5684,17 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
           return next
         })
       }, [])
-      const toggleInterim = React.useCallback((key) => {
-        setShowInterim((prev) => ({ ...prev, [key]: !prev[key] }))
-      }, [])
+      // 组内中间产物开关已并入顶部分类筛选（v0.14.3）。
       // 右键菜单：{ item, absPath, x, y }
       const [ctxMenu, setCtxMenu] = React.useState(null)
       // 删除确认：{ item, busy }
       const [deleteTarget, setDeleteTarget] = React.useState(null)
-      // ---- 反馈标记（S3-a）----
-      // marks: { [relPath]: { action, reason?, changeOnly?, keep? } }
+      // ---- v0.14.2：反馈篮条目（marks，一次性）与手动标签（labels，持久）分开 ----
+      // 两者绝不能共用一份：从反馈篮删掉一条，不该把已经定好的标签一起撤销。
       const [marks, setMarks] = React.useState({})
+      const [labels, setLabels] = React.useState({})
+      // 改标签弹窗：null | { item, paths, category }
+      const [labelDialog, setLabelDialog] = React.useState(null)
       // 反馈篮是否打开
       const [basketOpen, setBasketOpen] = React.useState(false)
       // 编辑中的条目（null 表示不编辑）
@@ -5166,60 +5703,38 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
       const bodyScrollRef = React.useRef(null)
       const savedScrollRef = React.useRef(null)
 
-      // 首次挂载时拉取已有标记（持久化在 dsh-gallery-marks.json）
+      // 首次挂载：分别拉反馈条目与手动标签覆写
       React.useEffect(() => {
         let alive = true
         callHost('getMarks', {})
           .then((payload) => {
-            if (!alive) return
-            if (payload?.ok === false) return
-            if (payload !== null && typeof payload.marks === 'object' && payload.marks !== null) {
-              setMarks(payload.marks)
-            }
+            if (!alive || payload?.ok === false) return
+            if (payload?.marks !== null && typeof payload?.marks === 'object') setMarks(payload.marks)
           })
           .catch((error) => console.warn('dsh-gallery: getMarks 失败', error))
+        callHost('getLabels', {})
+          .then((payload) => {
+            if (!alive || payload?.ok === false) return
+            if (payload?.labels !== null && typeof payload?.labels === 'object') setLabels(payload.labels)
+          })
+          .catch((error) => console.warn('dsh-gallery: getLabels 失败', error))
         return () => { alive = false }
       }, [])
 
-      /**
-       * 给某卡片设标记 → 进反馈篮。
-       * 只改本地状态 + 落盘 marks，**绝不发送任何消息**。
-       */
-      /**
-       * 卡片的「确认态」—— 唯一真源是 marks 里的 confirmed 字段（v0.13.7）。
-       *
-       * **数据边界（最要紧）**：确认态只读标记文件，绝不读 / 写自动分类。
-       * 分类是机器猜的、会随 5 秒刷新变；判断是人给的、必须留得住。
-       */
-      const verdictOf = React.useCallback((relPath) => {
-        const m = marks[relPath]
-        if (m === undefined) return 'none'
-        if (m.verdict === 'revise' || m.verdict === 'archive') return m.verdict
-        if (m.verdict === 'deliver' || m.confirmed === true) return 'deliver'
-        return 'none'
-      }, [marks])
-
-      const isConfirmed = React.useCallback((relPath) => {
-        return verdictOf(relPath) === 'deliver'
-      }, [verdictOf])
+      /** 手动标签覆写：只读独立 labels 文件，与反馈篮条目互不影响。 */
+      const manualLabelOf = React.useCallback((relPath) => labels[relPath] ?? null, [labels])
 
       /**
-       * 卡片的分类分组（用于顶部开关筛选）：
-       *   finalConfirmed / finalPending / input / intermediate / unknown
-       *
-       * 注意「最终交付」拆两态：靠确认态区分，不靠自动分类的 final。
-       * 一张 final 的卡片若没确认 → finalPending；确认了 → finalConfirmed。
+       * 顶部分类开关用的分组键。
+       * v0.14.2：表态层下线；Host 扫描时已把手动标签覆写进 file.category，
+       * 所以这里只按最终标签走，不再有「确认 / 要重做 / 留档」这些桶。
        */
       const bucketOf = React.useCallback((file) => {
-        const v = verdictOf(file.relPath)
-        if (v === 'deliver') return 'finalConfirmed'
-        if (v === 'revise') return 'revise'
-        if (v === 'archive') return 'archive'
-        if (file.category === 'final') return 'finalPending'
+        if (file.category === 'final') return 'final'
         if (file.category === 'input') return 'input'
         if (file.category === 'intermediate') return 'intermediate'
         return 'unknown'
-      }, [verdictOf])
+      }, [])
 
       /** 切一个分类的显隐。 */
       const toggleCategory = React.useCallback((key) => {
@@ -5236,67 +5751,105 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
         })
       }, [])
 
-      /** 批量表态 / 清标记（只改标记，不碰磁盘）。action: deliver | revise | archive | none | clear */
-      const batchMark = React.useCallback(async (action) => {
+      /** 打开单张「改标签」弹窗。 */
+      const openLabelDialog = React.useCallback((item) => {
+        setLabelDialog({ item, paths: [item.relPath], category: item.category ?? 'unknown' })
+      }, [])
+
+      /** 批量改标签：把当前选中的卡片一起交给同一个弹窗。 */
+      const openBatchLabelDialog = React.useCallback(() => {
         const paths = [...selected]
         if (paths.length === 0) return
-        const updates = paths.map((p) => ({
-          path: p,
-          mark: action === 'clear'
-            ? null
-            : (() => {
-                const cur = marks[p]
-                if (action === 'none') {
-                  if (cur === undefined) return null
-                  const next = { ...cur }
-                  delete next.confirmed
-                  delete next.verdict
-                  const rest = Object.keys(next).filter((k) => k !== 'action' && k !== 'markedAt')
-                  if (next.action === 'finalize' && rest.length === 0) return null
-                  return next
-                }
-                const next = { ...(cur ?? { action: 'finalize' }), verdict: action }
-                if (action === 'deliver') next.confirmed = true
-                else delete next.confirmed
-                return next
-              })(),
-        }))
-        // 本地先行（乐观更新）
-        setMarks((prev) => {
-          const next = { ...prev }
-          for (const u of updates) {
-            if (u.mark === null) delete next[u.path]
-            else next[u.path] = u.mark
+        const flat = Array.isArray(data?.items) ? data.items : []
+        const grouped = Array.isArray(data?.groups)
+          ? data.groups.flatMap((gr) => Array.isArray(gr.files) ? gr.files : [])
+          : []
+        const first = flat.find((it) => it.relPath === paths[0])
+          ?? grouped.find((it) => it.relPath === paths[0])
+        setLabelDialog({ item: first ?? null, paths, category: first?.category ?? 'unknown' })
+      }, [selected])
+
+      /**
+       * 手动改标签的主逻辑（v0.14.2）。
+       *
+       * ① 写 labels（持久）→ Host 清列表缓存 → 重扫，角标 / 筛选 / 分组统计一起跟着变；
+       * ② 可选写一条反馈进篮子（一次性），按 from→to 选语义：
+       *      过程稿 → 定稿  = 「终止枚举，以此图为定稿」
+       *      定稿 → 其它    = 「交付不合格」+ 调整方向
+       *      其它           = 「调整产出标签」+ from→to + 调整方向
+       * 全程**不发送任何消息**；反馈由人在篮子里审核合并后手动发。
+       */
+      const applyLabelChange = React.useCallback(async ({ category, direction, addToBasket }) => {
+        const dlg = labelDialog
+        if (dlg === null || !['input', 'intermediate', 'final'].includes(category)) return
+        const catName = (c) => c === 'final' ? t('labelCatFinal')
+          : c === 'input' ? t('labelCatInput')
+            : c === 'intermediate' ? t('labelCatIntermediate') : t('labelCatUnknown')
+        // 全局分组视图的卡片在 groups[].files 里，不能只查平铺的 data.items
+        const flat = Array.isArray(data?.items) ? data.items : []
+        const grouped = Array.isArray(data?.groups)
+          ? data.groups.flatMap((gr) => Array.isArray(gr.files) ? gr.files : [])
+          : []
+        const findItem = (rp) => flat.find((it) => it.relPath === rp)
+          ?? grouped.find((it) => it.relPath === rp)
+
+        const labelUpdates = []
+        const markUpdates = []
+        for (const relPath of dlg.paths) {
+          const from = findItem(relPath)?.category ?? dlg.category ?? 'unknown'
+          labelUpdates.push({ path: relPath, label: { category, from } })
+          if (!addToBasket) continue
+          let action = 'set-label'
+          if (from === 'intermediate' && category === 'final') action = 'finalize-asset'
+          else if (from === 'final' && category !== 'final') action = 'reject-delivery'
+          let reason = ''
+          if (action === 'reject-delivery') reason = direction
+          else if (action === 'set-label') {
+            reason = `${t('labelEdit')}：${catName(from)} → ${catName(category)}`
+            if (direction !== '') reason += `；${t('labelDirection')}：${direction}`
           }
+          markUpdates.push({
+            path: relPath,
+            mark: {
+              action, category, from,
+              ...(reason !== '' ? { reason } : {}),
+              markedAt: Date.now(),
+            },
+          })
+        }
+
+        // 乐观更新：标签覆写与反馈条目先落到本地
+        setLabels((prev) => {
+          const next = { ...prev }
+          for (const u of labelUpdates) next[u.path] = u.label
           return next
         })
-        try {
-          const payload = await callHost('marksBatch', { updates })
-          if (payload?.ok === false) throw new Error(payload?.error?.message ?? t('errorTitle'))
-          if (payload?.marks !== undefined) setMarks(payload.marks)
-        } catch (error) {
-          console.warn('dsh-gallery: 批量标记失败', error)
+        if (markUpdates.length > 0) {
+          setMarks((prev) => {
+            const next = { ...prev }
+            for (const u of markUpdates) next[u.path] = u.mark
+            return next
+          })
+          setBasketOpen(true)
         }
+        try {
+          const lp = await callHost('setLabelsBatch', { updates: labelUpdates })
+          if (lp?.ok === false) throw new Error(lp?.error?.message ?? t('errorTitle'))
+          if (lp?.labels !== undefined) setLabels(lp.labels)
+          if (markUpdates.length > 0) {
+            const mp = await callHost('marksBatch', { updates: markUpdates })
+            if (mp?.ok === false) throw new Error(mp?.error?.message ?? t('errorTitle'))
+            if (mp?.marks !== undefined) setMarks(mp.marks)
+          }
+        } catch (error) {
+          console.warn('dsh-gallery: 改标签落盘失败', error)
+        }
+        setLabelDialog(null)
         setSelected(new Set())
-      }, [selected, marks, t])
-
-      const doMark = React.useCallback(async (item, action, extra) => {
-        /**
-         * v0.13.7：`finalize` = 「定为最终版」要写成**持久确认态**。
-         *
-         * confirmed 字段是唯一真源：存进 marks 文件，刷新 / 重扫 / 切会话 / 重启都在。
-         * **绝不回写自动分类** —— 分类是机器猜的会变，判断是人给的必须留得住。
-         */
-        const mark = { action, ...(extra ?? {}), ...(action === 'finalize' ? { confirmed: true, verdict: 'deliver' } : {}) }
-        setMarks((prev) => ({ ...prev, [item.relPath]: mark }))
-        setBasketOpen(true)
-        try {
-          const payload = await callHost('marks', { path: item.relPath, mark })
-          if (payload?.ok === false) throw new Error(payload?.error?.message ?? t('errorTitle'))
-        } catch (error) {
-          console.warn('dsh-gallery: 标记落盘失败', error)
-        }
-      }, [t])
+        setBatchMode(false)
+        // refresh 定义在本函数之后：不放进依赖数组，实际调用时早已初始化
+        void refresh()
+      }, [labelDialog, t])
 
       /**
        * 更新一条标记的附加字段（理由 / 只改 / 锁死）。
@@ -5319,69 +5872,29 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
         }
       }, [])
 
-      /** 取消确认（v0.13.7）：把 confirmed 去掉，退回「待确认」。 */
-      const unconfirmOne = React.useCallback(async (relPath) => {
-        const cur = marks[relPath]
-        if (cur === undefined) return
-        const next = { ...cur }
-        delete next.confirmed
-        delete next.verdict
-        const cleaned = (next.action === 'finalize' &&
-          Object.keys(next).filter((k) => k !== 'action' && k !== 'markedAt').length === 0)
-          ? null
-          : next
-        setMarks((prev) => {
-          const n = { ...prev }
-          if (cleaned === null) delete n[relPath]
-          else n[relPath] = cleaned
-          return n
+      /** 恢复自动判定：只删 labels 覆写，不动反馈篮里的任何条目。 */
+      const resetLabels = React.useCallback(async () => {
+        const dlg = labelDialog
+        if (dlg === null) return
+        const paths = dlg.paths
+        setLabels((prev) => {
+          const next = { ...prev }
+          for (const p of paths) delete next[p]
+          return next
         })
         try {
-          await callHost('marks', { path: relPath, mark: cleaned })
+          await callHost('setLabelsBatch', {
+            updates: paths.map((p) => ({ path: p, label: null })),
+          })
         } catch (error) {
-          console.warn('dsh-gallery: 取消确认失败', error)
+          console.warn('dsh-gallery: 恢复自动标签失败', error)
         }
-      }, [marks])
+        setLabelDialog(null)
+        void refresh()
+      }, [labelDialog])
 
-      /**
-       * 卡片上的「确认交付 / 取消确认」（v0.14.1）。
-       * 单张表态：只写 marks 文件，既不打开反馈篮，也不发送任何消息。
-       * 与右键「定为最终版」共用同一份 confirmed 真源，刷新/切视图/重启都在。
-       */
-      const setVerdictOne = React.useCallback(async (relPath, verdict) => {
-        const cur = marks[relPath]
-        let next
-        if (verdict === 'none') {
-          if (cur === undefined) return
-          const rest = { ...cur }
-          delete rest.confirmed
-          delete rest.verdict
-          const onlyFinalize = rest.action === 'finalize' &&
-            Object.keys(rest).filter((k) => k !== 'action' && k !== 'markedAt').length === 0
-          next = onlyFinalize ? null : rest
-        } else {
-          next = { ...(cur ?? { action: 'finalize' }), verdict }
-          if (verdict === 'deliver') next.confirmed = true
-          else delete next.confirmed
-        }
-        setMarks((prev) => {
-          const n = { ...prev }
-          if (next === null) delete n[relPath]
-          else n[relPath] = next
-          return n
-        })
-        try {
-          const payload = await callHost('marks', { path: relPath, mark: next })
-          if (payload?.ok === false) throw new Error(payload?.error?.message ?? t('errorTitle'))
-        } catch (error) {
-          console.warn('dsh-gallery: 单张表态落盘失败', error)
-        }
-      }, [marks, t])
-
-      /** 卡片主按钮：已定稿 ↔ 清除表态。 */
-      const toggleConfirmOne = React.useCallback((relPath) => {
-        return setVerdictOne(relPath, verdictOf(relPath) === 'deliver' ? 'none' : 'deliver')
-      }, [setVerdictOne, verdictOf])
+      // v0.14.2：表态层的「确认 / 取消确认 / 单张表态」回调已整体移除，
+      // 人的判断现在直接落在标签上（labels 覆写），表达走反馈篮。
 
       /** 加一条批注（v0.14.0）。 */
       const addAnnotation = React.useCallback((item, annot) => {
@@ -5579,7 +6092,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
           setView({ status: 'ready', data: await load(undefined, kind, scope, page) })
         } catch (error) {
           if (error?.name === 'AbortError') return
-          setView({ status: 'failed', message: String(error?.message ?? error) })
+          setView({ status: 'failed', message: error?.code === 'gallery-timeout' ? t('listTimeout') : String(error?.message ?? error) })
         } finally {
           setRefreshing(false)
         }
@@ -5593,7 +6106,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
             if (alive) setView({ status: 'ready', data })
           })
           .catch((error) => {
-            if (alive && error?.name !== 'AbortError') setView({ status: 'failed', message: String(error?.message ?? error) })
+            if (alive && error?.name !== 'AbortError') setView({ status: 'failed', message: error?.code === 'gallery-timeout' ? t('listTimeout') : String(error?.message ?? error) })
           })
         return () => {
           alive = false
@@ -5633,6 +6146,15 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
 
       const data = view.status === 'ready' ? view.data : null
       const items = data?.items ?? []
+      /**
+       * 顶部分类筛选后的可见条目（v0.14.3）。
+       * 「当前对话」等非分组视图此前直接渲染 items，点了「定稿 / 素材 / 过程稿」
+       * 只有按钮变色、卡片不动 —— 这里统一按开关裁一遍，两个视图行为一致。
+       * items 本身保持全量：分类计数、反馈篮、批量操作不随筛选丢失。
+       */
+      const visibleItems = React.useMemo(
+        () => items.filter((it) => categoryFilter[bucketOf(it)] !== false),
+        [items, categoryFilter, bucketOf])
       // 右键菜单的回调要在不重建依赖的前提下读到最新的列表，所以同步到 ref
       const itemsRef = React.useRef(items)
       itemsRef.current = items
@@ -5697,7 +6219,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
           h('span', { className: 'dg-sub', key: 'sub' },
             data === null
               ? (view.status === 'failed' ? t('errorTitle') : t('loading'))
-              : format(t('subCount'), { shown: items.length, total: data.total })),
+              : format(t('subCount'), { shown: visibleItems.length, total: data.total })),
         ]),
         scopeSwitch,
         // 图片 / 文件 / 音视频 三画廊切换（v0.10.1）
@@ -5770,29 +6292,20 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
        * v0.13.7：确认态计数来自 marks，不来自自动分类。
        */
       const catCounts = React.useMemo(() => {
-        const c = { finalConfirmed: 0, finalPending: 0, revise: 0, archive: 0, input: 0, intermediate: 0, unknown: 0 }
+        // v0.14.2：只数 4 个原生标签，表态层已下线
+        const c = { final: 0, input: 0, intermediate: 0, unknown: 0 }
         for (const it of items) {
           const b = bucketOf(it)
           if (Object.prototype.hasOwnProperty.call(c, b)) c[b] += 1
         }
         return c
       }, [items, bucketOf])
-      const confirmedCount = catCounts.finalConfirmed
-      const pendingCount = catCounts.finalPending
+      const finalCount = catCounts.final
       const inputCount = catCounts.input
       const interimCount = catCounts.intermediate
       const unknownCount = catCounts.unknown
 
-      /** 按当前开关过滤后的可见文件数（供「已显示 N / 共 M」）。 */
-      const visibleStats = React.useMemo(() => {
-        let shown = 0
-        let total = 0
-        for (const it of items) {
-          total += 1
-          if (categoryFilter[bucketOf(it)] !== false) shown += 1
-        }
-        return { shown, total }
-      }, [items, categoryFilter, bucketOf])
+      // 「已显示 N / 共 M」直接取 visibleItems.length（定义见上方），不再另算一遍。
 
       const hasUnknown = data !== null && Array.isArray(data.groups) &&
         data.groups.some((gr) => (gr.counts?.unknown ?? 0) > 0)
@@ -5825,15 +6338,9 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
 
       const legend = data !== null && items.length > 0
         ? h('div', { className: 'dg-legend', key: 'legend', 'data-gallery-filterbar': true }, [
-            // 最终交付 · 已确认
-            filterToggle('finalConfirmed', t('catFilterFinalConfirmed'),
-              'dg-legendSwatch-final', confirmedCount, true),
-            // 成稿 · 待定
-            filterToggle('finalPending', t('catFilterFinalPending'),
-              'dg-legendSwatch-final dg-legendSwatchPending', pendingCount, true),
-            // 人的结论（高于自动分类）
-            filterToggle('revise', t('catFilterRevise'), 'dg-legendSwatch-revise', catCounts.revise, true),
-            filterToggle('archive', t('catFilterArchive'), 'dg-legendSwatch-archive', catCounts.archive, true),
+            // v0.14.2：只留原生标签四个开关；手动改过的标签 Host 已覆写，直接按新标签归类
+            filterToggle('final', t('catFilterFinal'),
+              'dg-legendSwatch-final', finalCount, true),
             filterToggle('input', t('catLegendInput'), 'dg-legendSwatch-input', inputCount, true),
             filterToggle('intermediate', t('catLegendIntermediate'), 'dg-legendSwatch-intermediate', interimCount, true),
             hasUnknown
@@ -5851,35 +6358,18 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
         ? h('div', { className: 'dg-batchBar', key: 'batchBar', 'data-gallery-batch-bar': true }, [
             h('span', { className: 'dg-batchCount', key: 'n' }, format(t('batchBarTitle'), { n: selectedCount })),
             h('div', { className: 'dg-batchOps', key: 'ops' }, [
+              // v0.14.2：批量表态整体换成「批量改标签」，语义与单张弹窗完全一致
               h('button', {
-                type: 'button', className: 'dg-btn dg-btnSmall', key: 'confirm',
-                'data-gallery-batch-confirm': true,
-                title: t('batchHintConfirm'),
-                onClick: () => { void batchMark('deliver') },
-              }, t('batchConfirm')),
-              h('button', {
-                type: 'button', className: 'dg-btn dg-btnSmall', key: 'revise',
-                'data-gallery-batch-revise': true,
-                title: t('batchHintRevise'),
-                onClick: () => { void batchMark('revise') },
-              }, t('batchSetRevise')),
-              h('button', {
-                type: 'button', className: 'dg-btn dg-btnSmall', key: 'archive',
-                'data-gallery-batch-archive': true,
-                title: t('batchHintArchive'),
-                onClick: () => { void batchMark('archive') },
-              }, t('batchSetArchive')),
-              h('button', {
-                type: 'button', className: 'dg-btn dg-btnSmall', key: 'unconfirm',
-                'data-gallery-batch-unconfirm': true,
-                title: t('batchHintClearVerdict'),
-                onClick: () => { void batchMark('none') },
-              }, t('batchUnconfirm')),
+                type: 'button', className: 'dg-btn dg-btnSmall dg-primaryBtn', key: 'label',
+                'data-gallery-batch-label': true,
+                title: t('labelEditHint'),
+                onClick: () => openBatchLabelDialog(),
+              }, t('labelBatch')),
               h('button', {
                 type: 'button', className: 'dg-btn dg-btnSmall', key: 'clearmark',
                 'data-gallery-batch-clear': true,
                 title: t('batchHintClearMark'),
-                onClick: () => { void batchMark('clear') },
+                onClick: () => { void clearMarks(); setSelected(new Set()) },
               }, t('batchClearMark')),
               h('button', {
                 type: 'button', className: 'dg-btn dg-btnSmall', key: 'clearSel',
@@ -6049,27 +6539,20 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
         // 全局模式 + 有分组数据 → 按对话分组渲染（可折叠）
         const useGroups = scope === 'global' && Array.isArray(data.groups) && data.groups.length > 0
 
-        /** 卡片包装层（v0.14.1）：确认角标 + 单张表态入口 + 批量多选框。
-         *  分组视图与「当前对话」视图共用，避免后者没有表态入口。 */
+        /** 卡片包装层（v0.14.2）：手动标签入口 + 批量多选框。表态层已下线。 */
         const wrapCard = (node, item, key) => {
-          const verdict = verdictOf(item.relPath)
           const bucket = bucketOf(item)
           const checked = selected.has(item.relPath)
           const showCheckbox = selectMode || checked
-          const badgeLabel = verdict === 'deliver'
-            ? t('verdictBadgeDeliver')
-            : verdict === 'revise'
-              ? t('verdictBadgeRevise')
-              : verdict === 'archive'
-                ? t('verdictBadgeArchive')
-                : null
+          const manual = manualLabelOf(item.relPath)
+          const isManual = manual !== null && manual !== undefined
           return h('div', {
             className: `dg-cardWrap${checked ? ' dg-cardChecked' : ''}${selectMode ? ' dg-cardSelectable' : ''}`,
             key: key + ':wrap',
             'data-gallery-card-wrap': item.relPath,
-            'data-gallery-confirmed': verdict === 'deliver' ? '1' : '0',
-            'data-gallery-verdict': verdict,
             'data-gallery-bucket': bucket,
+            'data-gallery-label-manual': isManual ? '1' : '0',
+            'data-gallery-category': item.category || '',
             /**
              * 批量模式下整张卡片都能点（v0.14.3）：
              * 点卡片任意位置 = 选中/取消，不再打开大图 / 侧栏预览 / 播放器。
@@ -6081,7 +6564,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
               ? (event) => {
                   const target = event.target
                   if (target !== null && target !== undefined && typeof target.closest === 'function') {
-                    if (target.closest('[data-gallery-verdict-set],[data-gallery-card-check]') !== null) return
+                    if (target.closest('[data-gallery-label-edit],[data-gallery-card-check]') !== null) return
                   }
                   event.preventDefault()
                   event.stopPropagation()
@@ -6090,51 +6573,18 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
               : undefined,
           }, [
             node,
-            // 人的结论角标：一旦表态，右上角「机器预判」角标由 CSS 隐去，只留这一枚
-            badgeLabel === null
-              ? null
-              : h('div', {
-                  className: `dg-verdictBadge dg-verdict-${verdict}`,
-                  key: 'badge',
-                  'data-gallery-verdict-badge': verdict,
-                  title: t('verdictBadgeHint'),
-                }, badgeLabel),
-            // 三种表态：再点一次同一个 = 清除表态
-            h('div', { className: 'dg-verdictOps', key: 'verdictOps', 'data-gallery-verdict-ops': verdict }, [
-              h('button', {
-                type: 'button', key: 'deliver',
-                className: `dg-verdictBtn dg-verdictBtn-deliver${verdict === 'deliver' ? ' dg-verdictOn' : ''}`,
-                'data-gallery-verdict-set': 'deliver',
-                'data-gallery-verdict-active': verdict === 'deliver' ? '1' : '0',
-                title: t('verdictDeliverHint'),
-                onClick: (e) => {
-                  e.stopPropagation(); e.preventDefault()
-                  void setVerdictOne(item.relPath, verdict === 'deliver' ? 'none' : 'deliver')
-                },
-              }, '✓'),
-              h('button', {
-                type: 'button', key: 'revise',
-                className: `dg-verdictBtn dg-verdictBtn-revise${verdict === 'revise' ? ' dg-verdictOn' : ''}`,
-                'data-gallery-verdict-set': 'revise',
-                'data-gallery-verdict-active': verdict === 'revise' ? '1' : '0',
-                title: t('verdictReviseHint'),
-                onClick: (e) => {
-                  e.stopPropagation(); e.preventDefault()
-                  void setVerdictOne(item.relPath, verdict === 'revise' ? 'none' : 'revise')
-                },
-              }, '↩'),
-              h('button', {
-                type: 'button', key: 'archive',
-                className: `dg-verdictBtn dg-verdictBtn-archive${verdict === 'archive' ? ' dg-verdictOn' : ''}`,
-                'data-gallery-verdict-set': 'archive',
-                'data-gallery-verdict-active': verdict === 'archive' ? '1' : '0',
-                title: t('verdictArchiveHint'),
-                onClick: (e) => {
-                  e.stopPropagation(); e.preventDefault()
-                  void setVerdictOne(item.relPath, verdict === 'archive' ? 'none' : 'archive')
-                },
-              }, '◇'),
-            ]),
+            // 右上「改标签」：手动设定过的用琥珀色区分，hover 时完全显现。
+            // 不再放独立角标，避免和卡片左上角的阶段角标抢位置。
+            h('button', {
+              type: 'button', key: 'labelEdit',
+              className: `dg-labelBtn${isManual ? ' dg-labelBtnManual' : ''}`,
+              'data-gallery-label-edit': item.relPath,
+              title: t('labelEditHint'),
+              onClick: (e) => {
+                e.stopPropagation(); e.preventDefault()
+                openLabelDialog(item)
+              },
+            }, '✎'),
             // 多选框（批量模式下常显，或已选中时显示）
             showCheckbox
               ? h('button', {
@@ -6218,32 +6668,17 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
             }), item, `${groupKey}:${item.relPath}`)
           }
 
+          // 左侧会话列表快照只取一次：宿主渐进渲染，折叠行不在 DOM，
+          // 因此按「ID + 归一化标题」双重判定，而不是逐组查行是否存在。
+          const sidebarSnapshot = readSidebarSessions()
           const groupNodes = data.groups.map((group, gi) => {
             const groupKey = group.sessionId ?? '__history__'
             const isOpen = openGroups.has(groupKey)
-            // 组内中间产物的显隐：
-            //   - 当前对话：**默认显示**（用户刚做完的就是要看过程，可选收起）
-            //   - 其他对话 / 历史资产：**默认隐藏**（避免别人调试图淹没列表）
-            // 用户手动切换后，以 showInterim 里记录的为准（true=显示 / false=隐藏）。
-            // 组内「显示中间产物」与顶部「中间产物」开关**同源**（v0.13.7）：
-            //   顶部开关关掉 → 全局都不显示中间产物；
-            //   顶部开着 + 组内开关 → 由组内决定（默认当前对话显示、历史隐藏）。
-            // 不搞两套打架的开关。
-            const interimDefault = group.isCurrent === true
-            const stored = showInterim[groupKey]
-            const groupWantsIntermediate = stored === undefined ? interimDefault : stored
-            const globalAllowsIntermediate = categoryFilter.intermediate !== false
-            const showIntermediate = groupWantsIntermediate && globalAllowsIntermediate
-
-            // 分类开关过滤：按 bucketOf 判断该文件属哪一类，再查开关
-            const visibleFiles = group.files.filter((f) => {
-              const bucket = bucketOf(f)
-              if (categoryFilter[bucket] === false) return false
-              // 中间产物额外受组内开关控制（上面已算好）
-              if (bucket === 'intermediate' && !showIntermediate) return false
-              return true
-            })
-            const hiddenCount = group.files.length - visibleFiles.length
+            // v0.14.3：过程稿显隐只认顶部「过程稿」开关，组内不再第二套开关。
+            // 顶部开 → 所有组的过程稿都显示；顶部关 → 全部隐藏。
+            // 分类开关过滤：按 bucketOf 判断该文件属哪一类，再查开关。
+            const visibleFiles = group.files.filter(
+              (f) => categoryFilter[bucketOf(f)] !== false)
 
             const chips = []
             if (group.counts.final > 0) {
@@ -6260,6 +6695,12 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
             }
 
             const headKey = group.sessionId ?? '__history__'
+            // 状态徽标：折叠时也能看见；只标注、不排序、不裁剪分组。
+            const stateBadge = groupStateBadge(group, t, openResults.get(headKey), sidebarSnapshot)
+            // 「打开对话」一律保留：标注只是提示，不能顶替实测。
+            // 带「已归档」徽标的组也能点，点得开就自动撤标，点不开才改标无法重建。
+            const canOpenSession = !group.isHistory && group.isCurrent !== true && !!group.sessionId
+            // v0.14.3：组内「隐藏 / 显示中间产物」按钮已去掉，统一用顶部筛选。
             return h('div', {
               className: `dg-group${group.isHistory ? ' dg-groupHistory' : ''}${group.isCurrent ? ' dg-groupCurrent' : ''}`,
               key: `g:${headKey}`,
@@ -6277,6 +6718,14 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
                 group.isCurrent === true
                   ? h('span', { className: 'dg-groupCurrentBadge', key: 'cur', 'data-gallery-current-badge': true }, t('groupCurrentBadge'))
                   : null,
+                stateBadge === null
+                  ? null
+                  : h('span', {
+                      className: stateBadge.className,
+                      key: 'st',
+                      'data-gallery-session-state': stateBadge.state,
+                      title: stateBadge.hint,
+                    }, stateBadge.label),
                 h('span', { className: 'dg-groupTitle', key: 't' },
                   group.isHistory ? t('groupHistoryTitle') : (group.title || t('groupUnassigned'))),
                 h('span', { className: 'dg-groupDate', key: 'd' },
@@ -6288,19 +6737,15 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
                     group.isHistory
                       ? h('div', { className: 'dg-groupHint', key: 'hint' }, t('groupHistoryHint'))
                       : null,
-                    // 只有该组确实存在中间产物时才给切换按钮：
-                    // 否则「显示中间产物」点了也没东西可显示，按钮是死的。
-                    (group.counts.intermediate ?? 0) > 0
-                      ? h('div', { className: 'dg-groupHint', key: 'toggle' }, [
-                          h('button', {
-                            type: 'button',
-                            className: 'dg-btn dg-btnSmall',
-                            'data-gallery-toggle-interim': headKey,
-                            'data-gallery-interim-shown': showIntermediate ? '1' : '0',
-                            onClick: () => toggleInterim(headKey),
-                          }, showIntermediate
-                            ? format(t('groupHideIntermediate'), { n: group.counts.intermediate })
-                            : format(t('groupShowIntermediate'), { n: hiddenCount })),
+                    stateBadge === null
+                      ? null
+                      : h('div', { className: 'dg-groupHint dg-groupStateHint', key: 'stateHint' }, stateBadge.hint),
+                    canOpenSession
+                      ? h('div', { className: 'dg-groupActions', key: 'actions' }, [
+                          h(GroupOpenButton, {
+                            key: 'open', t, sessionId: group.sessionId,
+                            title: group.title, onResult: reportOpenResult,
+                          }),
                         ])
                       : null,
                     h('div', { className: 'dg-groupBody', key: 'body' }, [
@@ -6339,7 +6784,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
           ])
         } else {
         // 音视频：卡片直接播放（不走图片查看器）
-      const mediaGridChildren = items.map((item) => wrapCard(h(MediaCard, {
+      const mediaGridChildren = visibleItems.map((item) => wrapCard(h(MediaCard, {
         key: item.relPath,
         item,
         t,
@@ -6349,7 +6794,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
         onContextMenu: openContextMenu,
       }), item, item.relPath))
 
-      const gridChildren = items.map((item) => wrapCard(kind === 'file'
+      const gridChildren = visibleItems.map((item) => wrapCard(kind === 'file'
           ? h(FileCard, {
               key: item.relPath,
               item,
@@ -6374,7 +6819,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
               t,
               limiter: limiter.current,
               onContextMenu: openContextMenu,
-              onOpen: (opened, anchorEl) => openViewer(items.indexOf(opened), anchorEl, items),
+              onOpen: (opened, anchorEl) => openViewer(visibleItems.indexOf(opened), anchorEl, visibleItems),
             }), item, item.relPath))
         // 网格区外面包一层定位容器，右侧放滚动辅助列（无滚轮场景用）
         body = h('div', { className: 'dg-bodyWrap', key: 'bodyWrap' }, [
@@ -6384,7 +6829,9 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
             'data-gallery-body': true,
             ref: bodyScrollRef,
           }, [
-            h('div', { className: `dg-grid${kind === 'file' ? ' dg-fileGrid' : ''}${kind === 'media' ? ' dg-mediaGrid' : ''}`, key: 'grid' }, kind === 'media' ? mediaGridChildren : gridChildren),
+            (visibleItems.length > 0
+              ? h('div', { className: `dg-grid${kind === 'file' ? ' dg-fileGrid' : ''}${kind === 'media' ? ' dg-mediaGrid' : ''}`, key: 'grid' }, kind === 'media' ? mediaGridChildren : gridChildren)
+              : h('div', { className: 'dg-groupEmpty', key: 'filterEmpty' }, t('filterEmptyHint'))),
             data.scan.capped
               ? h('div', { className: 'dg-more', key: 'capped' }, t('capped'))
               : null,
@@ -6442,11 +6889,20 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
         : null
 
       // 音视频播放器层（v0.10.1）
+      // 截帧要挂到当前对话：把当前组标题 / 创建时间一并传下去登记
       const mediaLayer = mediaPlaying !== null
         ? h(MediaPlayer, {
             key: 'mediaPlayer',
             item: mediaPlaying,
             t,
+            sessionId: sessionId ?? '',
+            sessionTitle: Array.isArray(data?.groups)
+              ? (data.groups.find((g) => g.isCurrent)?.title ?? '')
+              : '',
+            sessionCreatedAt: Array.isArray(data?.groups)
+              ? (data.groups.find((g) => g.isCurrent)?.createdAt ?? 0)
+              : 0,
+            onSaved: () => { void refresh() },
             onClose: () => setMediaPlaying(null),
           })
         : null
@@ -6480,6 +6936,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
           relPath,
           category: found?.category ?? 'unknown',
           sessionId: found?.sessionId,
+          frameOf: found?.frameOf,
           mark: marks[relPath],
           annotations: Array.isArray(annotations[relPath]) ? annotations[relPath] : [],
         }
@@ -6507,6 +6964,23 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
           })
         : null
 
+      // v0.14.2 改标签弹窗：单张与批量共用，应用后才落盘 + 重扫
+      const labelLayer = labelDialog !== null
+        ? h(LabelDialog, {
+            key: 'labelLayer',
+            t,
+            item: labelDialog.item,
+            batchCount: labelDialog.paths.length,
+            currentCategory: labelDialog.category,
+            isManual: labelDialog.paths.length === 1
+              ? manualLabelOf(labelDialog.paths[0]) !== null
+              : false,
+            onCancel: () => setLabelDialog(null),
+            onApply: (payload) => { void applyLabelChange(payload) },
+            onReset: () => { void resetLabels() },
+          })
+        : null
+
       // 右键菜单
       const ctxLayer = ctxMenu !== null
         ? h(ContextMenu, {
@@ -6525,14 +6999,28 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
               onReveal: () => { void doReveal(ctxMenu.item) },
               onCopy: () => { void copyText(ctxMenu.absPath) },
               onDelete: () => setDeleteTarget({ item: ctxMenu.item, busy: false }),
-              // 6 个反馈动作（S3-a）：选中即进反馈篮，不发送
-              confirmed: verdictOf(ctxMenu.item.relPath) === 'deliver',
-              onUnconfirm: () => { void setVerdictOne(ctxMenu.item.relPath, 'none') },
-              onMark: (action) => {
+              // v0.14.2：改标签 / 恢复自动，表态层已下线
+              onEditLabel: () => {
                 const target = ctxMenu.item
                 closeContextMenu()
-                void doMark(target, action)
+                openLabelDialog(target)
               },
+              ...(manualLabelOf(ctxMenu.item.relPath) !== null
+                ? {
+                    onResetLabel: () => {
+                      const rp = ctxMenu.item.relPath
+                      closeContextMenu()
+                      setLabels((prev) => {
+                        const n = { ...prev }
+                        delete n[rp]
+                        return n
+                      })
+                      void callHost('setLabelsBatch', { updates: [{ path: rp, label: null }] })
+                        .then(() => { void refresh() })
+                        .catch((e) => console.warn('dsh-gallery: 恢复自动标签失败', e))
+                    },
+                  }
+                : {}),
             },
           })
         : null
@@ -6564,6 +7052,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
         ctxLayer,
         confirmLayer,
         feedbackLayer,
+        labelLayer,
       ])
     }
 
