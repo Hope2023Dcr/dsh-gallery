@@ -2,11 +2,23 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [0.14.3] - 2026-11-10（本地候选，未发布）
+## [0.14.4] - 2026-11-11（发布材料已备，交 DSH 推送）
+
+**主题：批注框跟随图片缩放平移 + 标注态中键拖动平移。**
+
+> 发布前线上 npm latest / tag 仍是 0.14.3；本版随 0.14.4 推送（npm + tag v0.14.4 + 补建 Release）。
+> 推送后以线上实测为准，详见 [LOCAL-RELEASE.md](LOCAL-RELEASE.md) 与 `G:/DSH产出/2026-11-11-releases/给DSH的发布指令.md`。
+
+- **修 bug（老板 22:49 反馈）**：批注 SVG 原先覆盖整个预览容器且不带变换，图片却是 `object-fit:contain` 居中后单独 `translate/scale` —— 两套坐标系，1:1 圈就可能错位、放大拖图后框完全不跟随。现在量出图片真实布局盒（`offsetLeft/Top/Width/Height`，`ResizeObserver` 跟随窗口与原图切换），SVG 贴着这个盒子并复用与 `<img>` 逐字相同的 `translate(pan) scale(zoom)` 与 120ms 过渡；`toNorm` 仍取变换后的 `getBoundingClientRect()`，所以放大后新圈的框也落在原图同一处。
+- **弹窗不被拖走**：批注列表与说明编辑框留在无 transform 的 `dg-annotWrap`，不随图片放大 / 平移跑出视野。
+- **标注态中键平移**（老板 23:15 需求，撤回上一版「画框 / 移动」按钮切换）：标注层 `onPointerDown` 过去对所有按键一律 `stopPropagation`，把中键吞掉，标注时挪不动图。现在中键(1) 放行给查看器原生拖拽平移（查看器本就支持中键 + 拦浏览器自动滚动），左键仍画框；平移进行中标注层不插手，已画框与图共用同一组 pan/zoom 自然跟随；中键拖动时光标切抓握，1:1 拖不动则不误导；标注按钮悬停提示中键用法。
+- **自检**：语法全过、回归 **38/38**（`tests/annot-zoom.test.mjs` 5 条几何 + `tests/annot-middle-pan.test.mjs` 8 条中键路由 / 光标 / 边界 / CRLF）。
+
+## [0.14.3] - 2026-11-10（已发布 22:03）
 
 **主题：截帧自动归入当前对话资产 + 会话状态标注二次修复。**
 
-> 基于 npm 0.14.1 发布包，只在本机安装验证；线上 npm / tag / 线上 README 未动。
+> 基于 npm 0.14.1 发布包。线上 npm latest / tag / GitHub README 均已同步；包 SHA1 `91881fca…`。
 > 详见 [LOCAL-RELEASE.md](LOCAL-RELEASE.md)。
 
 - **视频截帧不再自选保存位置**：播放器「📷 截取当前帧」把 PNG 交给 Host 直接写到源视频同目录（画廊扫描范围内），不再弹系统保存框、不再落到「下载」目录。文件名 `<视频名>_帧_<HH-MM-SS-mmm>.png`，精确到毫秒；同一帧重截自动加 `-2`。
