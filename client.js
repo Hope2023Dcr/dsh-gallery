@@ -87,6 +87,45 @@ function normalizeAnnotation(a) {
   }
 }
 
+/**
+ * 批注层几何（v0.14.4）：SVG 与 <img> 共用同一布局盒、同一组 translate/scale。
+ * 图片按 object-fit:contain 居中后，实际显示盒往往小于预览容器；旧版 SVG 覆盖整个
+ * 容器且不带变换，1:1 就可能错位，放大后更彻底脱框。抽成纯函数便于离线钉死契约。
+ */
+function annotationSvgStyle(imgBox, pan, zoom, transition) {
+  return {
+    position: 'absolute',
+    left: `${imgBox.left}px`,
+    top: `${imgBox.top}px`,
+    width: `${imgBox.width}px`,
+    height: `${imgBox.height}px`,
+    transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+    transformOrigin: '50% 50%',
+    transition,
+  }
+}
+
+/**
+ * 标注态「按下要不要拦冒泡 / 交给谁」的判定（v0.14.4）。
+ * 查看器本身就支持中键拖拽平移；标注层过去对所有按键一律 stopPropagation，
+ * 把中键吞掉，导致标注时挪不动图。现在：中键放行给查看器平移，左键留给画框。
+ */
+function annotationPointerRouting(active, button) {
+  // 未激活：不拦（图片 pointerEvents:none，事件本就落到查看器）
+  if (!active) return 'pass'
+  // 中键(1)：放行给查看器的中键拖拽平移，框跟着图走（已画框与图共用 pan/zoom）
+  if (button === 1) return 'pan'
+  // 左键(0)及其余：拦住，交给标注层画框；顺带防止弹窗输入被查看器拖图抢走
+  return 'draw'
+}
+
+/** 标注层 SVG 的光标：中键平移进行中显示抓握，否则画框态为十字。 */
+function annotationSvgCursor(active, dragging, zoom) {
+  if (!active) return 'default'
+  if (dragging && zoom > 1) return 'grabbing'
+  return 'crosshair'
+}
+
 
     /** tab 类型的身份；也是正文与标题在 keyed slot 里的 key。 */
     const KIND = 'gallery'
@@ -194,6 +233,7 @@ function normalizeAnnotation(a) {
       catFilterFinal: '定稿',
       annotEnter: '标注',
       annotExit: '退出标注',
+      annotPanHint: '按住鼠标中键拖动可平移图片（放大后生效），已画框会跟着走',
       annotNotePrompt: '这块要改什么？（可留空）',
       annotNotePlaceholder: '例如：沙发位置偏了 / 色调太暖',
       annotNoNote: '（无说明）',
@@ -511,6 +551,7 @@ function normalizeAnnotation(a) {
       catFilterFinal: 'Final',
       annotEnter: 'Annotate',
       annotExit: 'Exit annotate',
+      annotPanHint: 'Hold the middle mouse button to pan (works when zoomed in); drawn boxes follow the image',
       annotNotePrompt: 'What should change here? (optional)',
       annotNotePlaceholder: 'e.g. sofa position is off / color is too warm',
       annotNoNote: '(no note)',
@@ -2348,6 +2389,8 @@ function normalizeAnnotation(a) {
 
 /* ---------- v0.14.0：框选批注层 ---------- */
 
+/* annotWrap 故意不带 transform —— 批注列表/编辑弹窗挂在这一层，不能被图片缩放拖走。
+   变换只作用在里面的 svg 上，且必须与 img 的 translate/scale 取值完全一致（v0.14.4）。 */
 .dg-annotWrap { position: absolute; inset: 0; }
 .dg-annotSvg { position: absolute; inset: 0; width: 100%; height: 100%; }
 .dg-annotSvg.dg-annotActive { background: rgba(74, 124, 255, 0.04); }
@@ -4262,6 +4305,9 @@ ${absPath}
       const [pan, setPan] = React.useState({ x: 0, y: 0 })
       const [dragging, setDragging] = React.useState(false)
       const bodyRef = React.useRef(null)
+      const imgRef = React.useRef(null)
+      /** 图片在预览容器里的真实布局盒（不含 transform）；批注层据此对齐，1:1 也不跑偏。 */
+      const [imgBox, setImgBox] = React.useState(null)
       const dragRef = React.useRef(null)
       // 上一次拖动是否真的产生了位移（用于区分「拖图」和「单击关闭」）
       const lastDragMoved = React.useRef(false)
@@ -4406,7 +4452,33 @@ ${absPath}
         setPan({ x: 0, y: 0 })
         setDragging(false)
         dragRef.current = null
+        setImgBox(null)
       }, [item.relPath])
+
+      /**
+       * 量出图片在容器里的真实布局盒。offsetWidth/Height 不含 transform，
+       * 正是批注 SVG 该贴的基准 —— 图片按 object-fit:contain 居中后往往小于容器，
+       * 拿容器当基准，1:1 圈的位置就会和画面错开。
+       * 窗口缩放、原图/预览切换、换图都会改变盒子，监听容器尺寸并重新量。
+       */
+      const measureImgBox = React.useCallback(() => {
+        const img = imgRef.current
+        if (img === null || state.status !== 'ready' || isText) { setImgBox(null); return }
+        const width = img.offsetWidth
+        const height = img.offsetHeight
+        if (width <= 0 || height <= 0) return
+        // offsetLeft/Top 相对 offsetParent；img 直接挂在 position:relative 的 dg-viewerBody 下
+        setImgBox({ left: img.offsetLeft, top: img.offsetTop, width, height })
+      }, [state.status, isText])
+
+      React.useLayoutEffect(() => {
+        measureImgBox()
+        const body = bodyRef.current
+        if (body === null || typeof ResizeObserver === 'undefined') return undefined
+        const ro = new ResizeObserver(() => measureImgBox())
+        ro.observe(body)
+        return () => ro.disconnect()
+      }, [measureImgBox, item.relPath, originalMode, original.status])
 
       // 滚轮缩放：以鼠标位置为中心，避免放大后目标跑出视野（仅图片模式）。
       // 文本预览用原生滚动，不拦截滚轮。
@@ -4761,7 +4833,7 @@ ${absPath}
             key: 'annot',
             'data-gallery-annot-toggle': true,
             'aria-pressed': annotActive,
-            title: annotActive ? t('annotExit') : t('annotEnter'),
+            title: annotActive ? `${t('annotExit')} · ${t('annotPanHint')}` : t('annotEnter'),
             onClick: (event) => {
               event.stopPropagation()
               setAnnotActive((v) => !v)
@@ -4812,6 +4884,8 @@ ${absPath}
                         alt: item.name,
                         decoding: 'async',
                         draggable: false,
+                        ref: imgRef,
+                        onLoad: measureImgBox,
                         style: {
                           transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
                           transition: dragRef.current === null ? 'transform 120ms ease-out' : 'none',
@@ -4819,14 +4893,19 @@ ${absPath}
                           pointerEvents: 'none',
                         },
                       }),
-                      // 批注层：只在图片（非文本）时出现，且随 zoom 一起变换
-                      h(AnnotationLayer, {
+                      // 批注层贴着图片真实布局盒，与图片共用同一组 zoom/pan。
+                      // imgBox 还没量出来（图片未布局）时不画框，免得拿容器当基准错位。
+                      imgBox === null ? null : h(AnnotationLayer, {
                         key: 'annot',
                         t,
                         annotations: annotsOfCurrent,
                         active: annotActive,
+                        dragging,
                         frameMs: null,
-                        stageRef: bodyRef,
+                        zoom,
+                        pan,
+                        imgBox,
+                        transformTransition: dragRef.current === null ? 'transform 120ms ease-out' : 'none',
                         onAdd: (a) => { onAddAnnotation?.(item, a) },
                         onRemove: (id) => { onRemoveAnnotation?.(item, id) },
                       }),
@@ -4881,9 +4960,16 @@ ${absPath}
  * v0.14.2 修：
  *   ⑤ 弹窗开着时第二处按不下：改为一按下就先把当前草稿存档，可连续圈多处
  *   ⑥ 只认「按住拖拽」：补「点两下」定义矩形（点起点 → 点终点），两种习惯都能用
+ *
+ * v0.14.4 本地热修：
+ *   ⑦ SVG 原先覆盖整个预览容器且不带 transform，图片却是 contain 居中后单独
+ *      translate/scale —— 两套坐标系，1:1 就可能错位、放大后彻底不跟随。
+ *      现在 SVG 的布局盒对齐图片真实显示盒（imgBox），并复用同一组 zoom/pan；
+ *      批注列表与编辑弹窗仍留在外层 dg-annotWrap（无 transform），
+ *      不会被放大、也不会被平移拖出视野。
  */
 
-function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, stageRef }) {
+function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, frameMs, zoom, pan, imgBox, transformTransition }) {
   const [draft, setDraft] = React.useState(null)
   const [editing, setEditing] = React.useState(null)
   /** 已点下第一下、等第二下定终点时的起点（归一化坐标）。 */
@@ -4947,7 +5033,9 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
   }
 
   const onPointerDown = (event) => {
-    if (!active) return
+    // 中键(1)放行给查看器的原生拖拽平移；左键留给画框（v0.14.4 标注态中键移动）。
+    // 若继续对所有按键 stopPropagation，中键会被吞、标注时挪不动图。
+    if (annotationPointerRouting(active, event.button) !== 'draw') return
     // 放大状态下查看器会在 pointerdown 里 setPointerCapture；这里必须拦住冒泡，
     // 否则弹窗内的输入框/按钮会被「拖图」逻辑抢走，表现为点击无反应。
     event.stopPropagation()
@@ -4978,6 +5066,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
   }
 
   const onPointerMove = (event) => {
+    // 中键平移进行中：标注层一律不插手，让查看器独占指针（双保险，主保险是中键不再拦冒泡）
+    if (dragging) return
     if (!active || draft === null || editing !== null) return
     event.stopPropagation()
     const p = toNorm(event)
@@ -4987,6 +5077,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
   }
 
   const finishDraft = (event) => {
+    if (dragging) return
     if (draft === null || editing !== null) return
     event.preventDefault()
     event.stopPropagation()
@@ -5163,9 +5254,12 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, frameMs, sta
       // 不设 viewBox：坐标本来就是百分比（相对 SVG 视口），去掉 viewBox 后
       // 线宽与字号按屏幕像素计算，否则 12 号字会被放大成几十像素、盖住整张图。
       style: {
-        position: 'absolute', inset: 0, width: '100%', height: '100%',
+        // 贴着图片真实布局盒，并用与 <img> 完全相同的 translate/scale。
+        // toNorm 取 getBoundingClientRect() 拿到的是变换后的盒子，
+        // 归一化坐标依旧落在原图同一位置；1:1 不偏、放大平移不脱框。
+        ...annotationSvgStyle(imgBox, pan, zoom, transformTransition),
         pointerEvents: active ? 'auto' : 'none',
-        cursor: active ? 'crosshair' : 'default',
+        cursor: annotationSvgCursor(active, dragging, zoom),
       },
       onPointerDown,
       onPointerMove,
