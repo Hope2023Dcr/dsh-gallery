@@ -8,19 +8,20 @@
 > 视频音频能在面板里直接播放并拖进度条，
 > **让你在任务进行中就能看到产出、当场校验，而不是结束后才发现做错了。**
 >
-> 📌 **当前版本 `0.14.3`（2026-11-10 发布）**：实时看见、当场校验、就地处置已可用。
+> 📌 **当前版本 `0.14.4`（2026-11-11 发布）**：实时看见、当场校验、就地处置已可用。
 > 判断只保留两层——原生产出标签（素材 / 过程稿 / 定稿 / 未归类，**可手动改、改过就一直生效**）与反馈篮（人工审核合并发送）。
 > **表态定性层与「自动递便条」决策包已下线**：前者多余，后者会绕过反馈栏刻意设的人工闸门。详见 [判断分两层](#判断分两层标签--反馈v0142)。
 > 视频「📷 截取当前帧」**自动存进当前对话资产**，文件名写清取自哪一帧，可直接框选批注进反馈篮；
 > 「当前对话」与「全局资产」的分类筛选行为一致，组内不再有第二套「隐藏中间产物」开关。
+> 图上**批注框跟随缩放平移**（放大后圈选仍落在原图同一处）；**标注态按住鼠标中键拖动**即可平移图片、已画框跟着走。
 
-[![Version](https://img.shields.io/badge/version-0.14.3-blue.svg)](#)
+[![Version](https://img.shields.io/badge/version-0.14.4-blue.svg)](#)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](#技术说明给想改代码的人)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#兼容性)
 [![DSH plugin](https://img.shields.io/badge/DSH-plugin-blueviolet.svg)](#)
 
-**关键词**：DeepSeek Harness 插件 · DSH plugin · 产出画廊 · output gallery · 图片画廊 · image gallery · 文件预览 · file preview · **音视频画廊 · media gallery · 视频预览 · video preview** · 侧边栏面板 · sidebar panel · Agent 产出管理 · output artifacts · **产出标签 · asset label · 手动改标签 · manual label · 反馈篮 · feedback basket · 批注 · annotation · region selection · 截帧 · frame capture · 批量处置 · batch actions**
+**关键词**：DeepSeek Harness 插件 · DSH plugin · 产出画廊 · output gallery · 图片画廊 · image gallery · 文件预览 · file preview · **音视频画廊 · media gallery · 视频预览 · video preview** · 侧边栏面板 · sidebar panel · Agent 产出管理 · output artifacts · **产出标签 · asset label · 手动改标签 · manual label · 反馈篮 · feedback basket · 批注 · annotation · region selection · 截帧 · frame capture · 批注跟随 · annotation follow · 中键平移 · middle mouse pan · 批量处置 · batch actions**
 
 ### 界面一览
 
@@ -37,6 +38,10 @@
 **③ 截帧入库**：视频「截取当前帧」自动存进当前对话，文件名带毫秒时间码，可框选批注并带帧来源进反馈篮。
 
 ![截帧入库与反馈篮](docs/screenshots/03-frame-feedback.png)
+
+**④ 标注跟随**：放大 / 平移后已画的框贴着图面走、不脱框；标注态按住鼠标中键拖动平移，左键仍用于画框。
+
+![标注框跟随缩放平移与中键移动](docs/screenshots/04-annot-follow.png)
 
 ---
 
@@ -87,7 +92,7 @@
 |---|---|
 | **自动刷新** | 每 5 秒轮询，查看大图时自动暂停，不打断 |
 | **缩略图** | 客户端 canvas 压缩到 200px（不是原图直塞），并发闸门 4，进入视口才加载 |
-| **放大查看** | 滚轮缩放（最大 8×，**以光标位置为中心**）、左键或中键拖动平移 |
+| **放大查看** | 滚轮缩放（最大 8×，**以光标位置为中心**）、左键或中键拖动平移；标注态左键留给画框，改按**中键**平移 |
 | **看原图** | 缩略图右键「查看原图」直接按原图像素打开；查看器内切换原图/预览（底部按钮、右键、`O` 键），**切换时保留缩放与位置**；按需加载并显示进度，不预加载 |
 | **音视频画廊** | 视频/音频独立第三栏；视频首帧缩略图（进入视口才抽帧）；点击面板内播放（原生 `<video>`/`<audio>`，支持拖动进度条）；体积上限 200 MB 可调 |
 | **右侧控制列** | 放大后出现 `▲` / `▼` 按钮 + 轨道 + 滑块，**没有鼠标也能操作** |
@@ -243,8 +248,8 @@ github:Hope2023Dcr/dsh-gallery
 > git+https://github.com/Hope2023Dcr/dsh-gallery.git#260a8dadfb39b393fdb8e85b182dd1f871e3ea43
 > ```
 
-> 上面那个 commit 是 **v0.14.1** 的历史基线（表态层当时还在）。v0.14.3 发布后可用
-> `git+https://github.com/Hope2023Dcr/dsh-gallery.git#v0.14.3` 锁定版本。
+> 上面那个 commit 是 **v0.14.1** 的历史基线（表态层当时还在）。v0.14.4 发布后可用
+> `git+https://github.com/Hope2023Dcr/dsh-gallery.git#v0.14.4` 锁定版本。
 > **更推荐直接用 npm**（`npm i dsh-gallery`）—— 版本号跟着 `latest` 走，不用每次手工核对哈希。
 
 > ⚠️ 这种方式需要**能访问 GitHub**。DSH 的「国内镜像」只代理 npm 包，不代替 GitHub 下载。
@@ -380,8 +385,9 @@ config:
    而不是猜成某个类别。这类文件多来自早期对话或手动拷入。
 7. **批注只在内存里。** 重开面板 / 刷新 / 重启 DSH 会清空（手动标签是落盘的，不受影响）。
    批注属于「这一轮要对 Agent 说的话」，用完即弃，所以没做落盘。
-8. **批注框不跟随缩放平移。** 放大并拖动图片后，已画的框不会跟着画面移动。
-   需要精确框选时，在 `1:1` 显示下圈。
+8. **批注框自 v0.14.4 起跟随缩放平移**，放大后圈选也落在原图同一处，不再只能 `1:1` 下圈。
+   **标注态下按住鼠标中键拖动可平移图片**（放大后生效），已画框跟着走；左键仍用于画框。
+   一个视觉细节：框线用 `non-scaling-stroke` 固定为屏幕像素宽，放大很多倍时框会比画面内容显得细。
 
 ---
 
@@ -560,7 +566,7 @@ Annotation 1：按框选区域修改 —— 后视图.png
 | 反馈篮多动作 + 零自动发送 | ✅ 已实现 |
 | 批量改标签 / 批量处置；删磁盘入口已停用 | ✅ 已实现（少一个不可逆入口） |
 | **批注落盘（重启 / 刷新不丢）** | ❌ 只存内存 |
-| **批注跟随图片缩放平移** | ❌ 现在建议 1:1 下圈 |
+| **批注跟随图片缩放平移；标注态中键移动不脱框** | ✅ **v0.14.4**（1:1 与放大都对齐，中键平移框跟随） |
 | **按标签导出交付清单 / 驱动下一轮** | ❌ 未做（第 4 段的核心） |
 | 版本历史（同一文件跨 turn 的修改点） | ❌ 未做 |
 | A/B 对比 / 参数回灌 | ❌ 未做 |
