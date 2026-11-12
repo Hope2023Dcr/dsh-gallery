@@ -1,4 +1,4 @@
-# 产出画廊：右侧栏「产出画廊」tab 的 Host 半部（扫描 + /api 路由）。
+# 产出台：右侧栏「产出台」tab 的 Host 半部（扫描 + /api 路由）。
 # 浏览器半部由 package.json 的 dsh.client 清单发现，并通过 ./client 导出。
 #
 # ⚠️ 顶层必须是「数组」，首项是 - insert:。写成对象（insert: 直接顶格）会导致 patch 无法加载，
