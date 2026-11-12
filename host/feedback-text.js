@@ -102,6 +102,24 @@ export function makeItem(item) {
       frameMs: Number(item.frameOf.frameMs) || 0,
     }
   }
+  // v0.14.5 遮罩来源：由本条框选区域生成的 RGBA 遮罩资产，路径只随草稿带出
+  // v0.14.6 右键多边形：把外接框 / 顶点像素坐标 / 面积一并带出，供 Agent 精确回填。
+  if (item?.maskOf !== undefined && item?.maskOf !== null && typeof item.maskOf === 'object') {
+    out.maskOf = {
+      relPath: String(item.maskOf.relPath ?? ''),
+      sourceName: String(item.maskOf.sourceName ?? ''),
+      region: item.maskOf.region ?? null,
+      polygon: Array.isArray(item.maskOf.polygon) ? item.maskOf.polygon : null,
+      polygonPx: Array.isArray(item.maskOf.polygonPx) ? item.maskOf.polygonPx : null,
+      bboxPx: Array.isArray(item.maskOf.bboxPx) ? item.maskOf.bboxPx : null,
+      areaPx: Number(item.maskOf.areaPx) || 0,
+      imageWidth: Number(item.maskOf.imageWidth) || 0,
+      imageHeight: Number(item.maskOf.imageHeight) || 0,
+      // v0.14.7 彩色填充预览图：只用于目视核对，工作流仍用主 alpha 遮罩
+      overlayRelPath: String(item.maskOf.overlayRelPath ?? ''),
+      fillColor: String(item.maskOf.fillColor ?? ''),
+    }
+  }
   return out
 }
 
@@ -155,7 +173,7 @@ export function renderFeedbackText(feedback, options) {
     lines.push('Reply item by item using the `Annotation N:` prefix, so each decision maps to one annotation.')
     lines.push('')
   } else {
-    lines.push(`【产出画廊反馈 · 共 ${items.length} 条】`)
+    lines.push(`【产出台反馈 · 共 ${items.length} 条】`)
     lines.push('')
     lines.push('请按 `Annotation 1：`、`Annotation 2：` … 逐条回应，让每条决定都对应到一个批注。')
     lines.push('')
@@ -177,6 +195,31 @@ export function renderFeedbackText(feedback, options) {
       lines.push(locale === 'en'
         ? `Frame source: taken from "${f.videoName}" at ${f.timecode} (${f.frameMs} ms)`
         : `帧来源：取自视频《${f.videoName}》${f.timecode}（第 ${f.frameMs} 毫秒）`)
+    }
+    // 遮罩来源是「资产路径 + 编码说明」，不是自动指令：模型拿到后自行上传 / 回填 image 输入
+    if (item.maskOf !== undefined && item.maskOf !== null && String(item.maskOf.relPath ?? '') !== '') {
+      lines.push(locale === 'en'
+        ? `Mask source: ${item.maskOf.relPath} — RGBA mask from this box; alpha=0 inside the box, so ComfyUI LoadImage MASK (1 - alpha/255) marks only the area to inpaint`
+        : `遮罩来源：${item.maskOf.relPath} —— 由本条框选区域生成的 RGBA 遮罩，框内 alpha=0，ComfyUI LoadImage 的 MASK 输出（1 - alpha/255）即待重绘区域；可用于局部重绘 / 移除流回填 image 输入`)
+      const mp = item.maskOf
+      // v0.14.7 彩色填充预览图：只供人核对选区位置，别拿去回填工作流
+      if (String(mp.overlayRelPath ?? '') !== '') {
+        const fillName = { green: '绿', red: '红', blue: '蓝' }[String(mp.fillColor ?? '')] ?? '绿'
+        lines.push(locale === 'en'
+          ? `Mask preview: ${mp.overlayRelPath} — original image with a solid semi-transparent fill over the selection; visual check only, hand the RGBA mask above to the workflow`
+          : `遮罩预览：${mp.overlayRelPath} —— 原图上叠加${fillName}色半透明填充，仅用于目视核对选区位置；工作流请用上面的 RGBA 遮罩`)
+      }
+      if (Array.isArray(mp.polygonPx) && mp.polygonPx.length > 0) {
+        const b = Array.isArray(mp.bboxPx) ? mp.bboxPx : [0, 0, 0, 0]
+        const size = `${Number(mp.imageWidth) || 0}×${Number(mp.imageHeight) || 0}`
+        const verts = JSON.stringify(mp.polygonPx)
+        lines.push(locale === 'en'
+          ? `Mask region: ${size}px source · ${mp.polygonPx.length} vertices · bbox (${b[0]},${b[1]})-(${b[2]},${b[3]}) · ~${Number(mp.areaPx) || 0}px · vertex pixels ${verts}`
+          : `遮罩区域：原图 ${size}px · ${mp.polygonPx.length} 个顶点 · 外接框 (${b[0]},${b[1]})-(${b[2]},${b[3]}) · 面积约 ${Number(mp.areaPx) || 0}px · 顶点像素坐标 ${verts}`)
+        lines.push(locale === 'en'
+          ? 'Mask handoff: upload it, then replace the target workflow image input; use ONE short target phrase (e.g. change "X" to "Y", keep the original lettering), do not expand into a whole-word rewrite with extra constraints'
+          : '遮罩回填：上传后替换目标工作流的 image 入参；提示词用单目标短句（例如：将图中的「X」，改为「Y」，保持原有字体色调），不要扩写成整词替换加约束')
+      }
     }
     if (item.reason !== undefined) {
       lines.push(`${locale === 'en' ? 'Reason' : '理由'}：${item.reason}`)
