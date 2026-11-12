@@ -126,6 +126,335 @@ function annotationSvgCursor(active, dragging, zoom) {
   return 'crosshair'
 }
 
+/**
+ * 遮罩编码契约（v0.14.5 本机 MVP）—— 本机实证，不是推测：
+ *   ComfyUI 官方 LoadImage 与本机孤海 LoadImageGoohai 的 MASK 输出都是 `1 - alpha/255`。
+ *   所以「框内 alpha=0、框外 alpha=255」的普通 RGBA PNG 直接就是可用遮罩，
+ *   RGB 必须保留原图像素（LoadImage 的 IMAGE 输出仍拿它做局部重绘）。
+ *   这与 clipspace-painted-* 涂鸦遮罩等价，但不必复刻 ComfyUI 画布交互。
+ *
+ * 注意：遮罩是**新资产**（同视频截帧，落盘并登记到当前对话），不是批注；
+ * 批注依旧只存内存。导出的路径只进反馈草稿，零自动发送、插件零外部请求。
+ */
+
+/** 原图像素上限：超过拒绝生成，避免超大图卡死前端（host 另有 24 MB 兜底）。 */
+const MASK_MAX_PIXELS = 24000000
+
+/** 归一化框选批注 → 原图像素矩形（clamp + 至少 1px，不越界）。 */
+function maskPixelRect(annotation, width, height) {
+  const w = Math.max(1, Math.round(Number(width) || 0))
+  const h = Math.max(1, Math.round(Number(height) || 0))
+  const x = clamp01(annotation?.x)
+  const y = clamp01(annotation?.y)
+  let nw = clamp01(annotation?.w)
+  let nh = clamp01(annotation?.h)
+  if (nw > 0 && x + nw > 1) nw = 1 - x
+  if (nh > 0 && y + nh > 1) nh = 1 - y
+  const x0 = Math.min(w - 1, Math.max(0, Math.round(x * w)))
+  const y0 = Math.min(h - 1, Math.max(0, Math.round(y * h)))
+  const x1 = Math.min(w, Math.max(x0 + 1, Math.round((x + nw) * w)))
+  const y1 = Math.min(h, Math.max(y0 + 1, Math.round((y + nh) * h)))
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0, width: w, height: h }
+}
+
+/** 单像素 alpha：框内 0（mask=1 待重绘），框外 255（mask=0 保留）。 */
+function maskAlphaAt(px, py, rect) {
+  const inside = px >= rect.x && px < rect.x + rect.w && py >= rect.y && py < rect.y + rect.h
+  return inside ? 0 : 255
+}
+
+/* ------------------------------------------------------------------ *
+ * v0.14.6 右键多点选区（老板 2026-11-12 拍板）：
+ *   标记态下左键仍是矩形批注，右键逐点点击 4–20 个顶点，闭合成实心多边形。
+ *   实测口径（见验证报告第九节）：必须是「实心、贴合目标外接框」的块，
+ *   描笔画的镂空线框 / 椭圆 / 大矩形都会出白底；多边形天然实心且面积可量。
+ * ------------------------------------------------------------------ */
+const POLYGON_LIMITS = { min: 4, max: 20, closeRadius: 0.02, minArea: 0.0001 }
+
+/* ------------------------------------------------------------------ *
+ * 选区纯色半透明填充（v0.14.7 引入；老板 2026-11-12 20:22 再定版）：
+ *   填充 0.4 / 轮廓 0.7，界面选区与「填充预览图」共用红 / 绿 / 蓝三色；
+ *   导出的主 alpha 遮罩仍是「RGB 原图 + alpha 二值」，ComfyUI 链路一点不动。
+ *   轮廓视觉宽度统一 1.5px：界面 SVG 用 non-scaling-stroke 直接画 1.5px；
+ *   导出预览图按「DSH 缩到 200px 长边后仍留 1.5px」反推线宽 —— 固定 2px
+ *   描边缩完会消失，过宽的边线又会糊住选区，两端共用同一个基准常量。
+ * ------------------------------------------------------------------ */
+const MASK_FILL_COLORS = Object.freeze({
+  green: { rgb: [94, 214, 150], label: '绿' },
+  red: { rgb: [239, 68, 68], label: '红' },
+  blue: { rgb: [59, 130, 246], label: '蓝' },
+})
+const MASK_FILL_KEYS = Object.keys(MASK_FILL_COLORS)
+const MASK_FILL_ALPHA = 0.4
+const MASK_STROKE_ALPHA = 0.7
+/** 轮廓视觉宽度基准（px）：界面直接画，导出预览图按缩略图比例反推。 */
+const MASK_STROKE_PX = 1.5
+
+/** 未知颜色一律回落绿色，避免脏值写进文件名 / 元数据。 */
+function maskFillColor(key) {
+  return Object.prototype.hasOwnProperty.call(MASK_FILL_COLORS, key)
+    ? MASK_FILL_COLORS[key] : MASK_FILL_COLORS.green
+}
+
+function maskFillRgba(key, alpha = MASK_FILL_ALPHA) {
+  const [r, g, b] = maskFillColor(key).rgb
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+/**
+ * 预览图轮廓线宽：以「DSH 缩略图长边 200px 时描边仍约 1.5px」反推，
+ * 夹在 6–40px，避免小图线条消失、超大图线条糊成一片。纯函数，测试跑真身。
+ */
+function maskStrokeWidth(width, height) {
+  const w = Math.max(1, Number(width) || 0)
+  const h = Math.max(1, Number(height) || 0)
+  const scale = Math.max(w, h) / 200
+  return Math.max(6, Math.min(40, Math.round(MASK_STROKE_PX * scale)))
+}
+
+/** 预览层的填充 / 轮廓描述（纯函数，测试直接跑真身）：多边形优先，矩形回落。 */
+function maskOverlayPath(rect, polygonPx, colorKey) {
+  const hasPolygon = Array.isArray(polygonPx) && polygonPx.length >= 3
+  return {
+    key: Object.prototype.hasOwnProperty.call(MASK_FILL_COLORS, colorKey) ? colorKey : 'green',
+    label: maskFillColor(colorKey).label,
+    rgba: maskFillRgba(colorKey, MASK_FILL_ALPHA),
+    strokeRgba: maskFillRgba(colorKey, MASK_STROKE_ALPHA),
+    strokeWidth: maskStrokeWidth(rect?.width, rect?.height),
+    points: hasPolygon ? polygonPx : null,
+    rect: hasPolygon ? null : { x: rect.x, y: rect.y, w: rect.w, h: rect.h },
+  }
+}
+
+/** 顶点数组的归一外接框；points 既接受 [{x,y}] 也接受 [[x,y]]。 */
+function polygonBBox(points) {
+  const xs = points.map((p) => clamp01(Array.isArray(p) ? p[0] : p?.x))
+  const ys = points.map((p) => clamp01(Array.isArray(p) ? p[1] : p?.y))
+  const x0 = Math.min(...xs)
+  const y0 = Math.min(...ys)
+  const x1 = Math.max(...xs)
+  const y1 = Math.max(...ys)
+  return { x: x0, y: y0, w: clamp01(x1 - x0), h: clamp01(y1 - y0) }
+}
+
+/** 鞋带公式：归一化面积，用来挡掉「点成一条线」的退化选区。 */
+function polygonArea(points) {
+  let sum = 0
+  for (let i = 0, j = points.length - 1; i < points.length; j = i, i += 1) {
+    const xi = Array.isArray(points[i]) ? points[i][0] : points[i].x
+    const yi = Array.isArray(points[i]) ? points[i][1] : points[i].y
+    const xj = Array.isArray(points[j]) ? points[j][0] : points[j].x
+    const yj = Array.isArray(points[j]) ? points[j][1] : points[j].y
+    sum += (xj * yi) - (xi * yj)
+  }
+  return Math.abs(sum) / 2
+}
+
+/** 射线法（无 canvas 环境兜底，也用于离线断言钉死「多边形内 alpha=0」）。 */
+function pointInPolygon(px, py, points) {
+  let inside = false
+  for (let i = 0, j = points.length - 1; i < points.length; j = i, i += 1) {
+    const xi = points[i][0]
+    const yi = points[i][1]
+    const xj = points[j][0]
+    const yj = points[j][1]
+    const hit = ((yi > py) !== (yj > py))
+      && (px < (((xj - xi) * (py - yi)) / (yj - yi)) + xi)
+    if (hit) inside = !inside
+  }
+  return inside
+}
+
+/** 归一化顶点 → 原图像素顶点；点不合法或数量越界一律返回 null。 */
+function normalizePolygon(value, width, height) {
+  if (!Array.isArray(value) || value.length < POLYGON_LIMITS.min || value.length > POLYGON_LIMITS.max) return null
+  const w = Math.max(1, Math.round(Number(width) || 0))
+  const h = Math.max(1, Math.round(Number(height) || 0))
+  const pts = []
+  for (const p of value) {
+    const nx = Number(Array.isArray(p) ? p[0] : p?.x)
+    const ny = Number(Array.isArray(p) ? p[1] : p?.y)
+    if (!Number.isFinite(nx) || !Number.isFinite(ny)) return null
+    pts.push([clamp01(nx) * w, clamp01(ny) * h])
+  }
+  return pts
+}
+
+/**
+ * 多边形 → 全尺寸二值 alpha 层（0 = 待重绘，255 = 保留）。
+ * 优先用离屏 canvas 填充（浏览器自动处理自交、抗锯齿与非零环绕），
+ * 只在 bbox 子画布上读一次像素，避免全图再开一份 ImageData；
+ * 读回后按 >127 强制二值，保持与 ComfyUI `MASK = 1 - alpha/255` 的实证契约一致。
+ * Node / 无 canvas 环境退化为射线法，测试可直接跑真身。
+ */
+function polygonAlphaLayer(points, width, height) {
+  const w = Math.max(1, Math.round(Number(width) || 0))
+  const h = Math.max(1, Math.round(Number(height) || 0))
+  const out = new Uint8Array(w * h).fill(255)
+  const xs = points.map((p) => p[0])
+  const ys = points.map((p) => p[1])
+  const x0 = Math.max(0, Math.min(w - 1, Math.floor(Math.min(...xs))))
+  const y0 = Math.max(0, Math.min(h - 1, Math.floor(Math.min(...ys))))
+  const x1 = Math.min(w, Math.max(x0 + 1, Math.ceil(Math.max(...xs))))
+  const y1 = Math.min(h, Math.max(y0 + 1, Math.ceil(Math.max(...ys))))
+  const bw = x1 - x0
+  const bh = y1 - y0
+  let ctx = null
+  try {
+    if (typeof OffscreenCanvas === 'function') {
+      const canvas = new OffscreenCanvas(bw, bh)
+      ctx = canvas.getContext('2d', { willReadFrequently: true })
+    } else if (typeof document !== 'undefined') {
+      const canvas = document.createElement('canvas')
+      canvas.width = bw
+      canvas.height = bh
+      ctx = canvas.getContext('2d', { willReadFrequently: true })
+    }
+  } catch { ctx = null }
+  if (ctx !== null) {
+    ctx.fillStyle = '#000'
+    ctx.fillRect(0, 0, bw, bh)
+    ctx.fillStyle = '#fff'
+    ctx.beginPath()
+    ctx.moveTo(points[0][0] - x0, points[0][1] - y0)
+    for (let i = 1; i < points.length; i += 1) ctx.lineTo(points[i][0] - x0, points[i][1] - y0)
+    ctx.closePath()
+    ctx.fill()
+    const sub = ctx.getImageData(0, 0, bw, bh).data
+    for (let py = 0; py < bh; py += 1) {
+      for (let px = 0; px < bw; px += 1) {
+        if (sub[((py * bw) + px) * 4] > 127) out[((py + y0) * w) + (px + x0)] = 0
+      }
+    }
+  } else {
+    for (let py = y0; py < y1; py += 1) {
+      for (let px = x0; px < x1; px += 1) {
+        if (pointInPolygon(px + 0.5, py + 0.5, points)) out[(py * w) + px] = 0
+      }
+    }
+  }
+  return out
+}
+
+/* ------------------------------------------------------------------ *
+ * RGBA 主遮罩 PNG 编码器（v0.14.9 修复 canvas 预乘 alpha 丢 RGB）
+ *
+ * 本机实证：canvas 内部是预乘 alpha 存储，putImageData → convertToBlob 往返后，
+ * alpha=0 的选区内 RGB 会被清零（区内均值差 147.39），而 ComfyUI
+ * #369 LoadImageGoohai 的 IMAGE 输出需要原图 RGB。主遮罩必须直接从
+ * 「RGB 原图 + 只改过 alpha」的 ImageData 编 PNG，一次也不回写 canvas。
+ * ------------------------------------------------------------------ */
+
+/** CRC-32（IEEE 802.3），PNG chunk 校验用。 */
+function pngCrc32(bytes) {
+  let c = 0xffffffff
+  for (let i = 0; i < bytes.length; i += 1) {
+    c ^= bytes[i]
+    for (let k = 0; k < 8; k += 1) c = (c >>> 1) ^ (0xedb88320 & -(c & 1))
+  }
+  return (c ^ 0xffffffff) >>> 0
+}
+
+/** 组装一个 PNG chunk：长度 + 类型 + 数据 + CRC。 */
+function pngChunk(type, data) {
+  const out = new Uint8Array(12 + data.length)
+  const view = new DataView(out.buffer)
+  view.setUint32(0, data.length)
+  for (let i = 0; i < 4; i += 1) out[4 + i] = type.charCodeAt(i)
+  out.set(data, 8)
+  view.setUint32(8 + data.length, pngCrc32(out.subarray(4, 8 + data.length)))
+  return out
+}
+
+/** ImageData → PNG 扫描线：每行前置 filter=0，RGBA 四通道原样搬运。 */
+function pngScanlines(imageData, width, height) {
+  const src = imageData.data
+  const stride = width * 4
+  const out = new Uint8Array((stride + 1) * height)
+  let p = 0
+  for (let y = 0; y < height; y += 1) {
+    out[p] = 0
+    p += 1
+    out.set(src.subarray(y * stride, (y + 1) * stride), p)
+    p += stride
+  }
+  return out
+}
+
+/** Adler-32，zlib 尾部校验。 */
+function pngAdler32(bytes) {
+  let a = 1
+  let b = 0
+  for (let i = 0; i < bytes.length; i += 1) {
+    a = (a + bytes[i]) % 65521
+    b = (b + a) % 65521
+  }
+  return ((b << 16) | a) >>> 0
+}
+
+/** 拼接若干 Uint8Array。 */
+function pngConcat(parts) {
+  const out = new Uint8Array(parts.reduce((s, p) => s + p.length, 0))
+  let p = 0
+  for (const part of parts) { out.set(part, p); p += part.length }
+  return out
+}
+
+/** zlib「stored」无压缩流，同步兜底（CompressionStream 不可用时）。 */
+function pngZlibStored(bytes) {
+  const parts = [new Uint8Array([0x78, 0x01])]
+  let off = 0
+  while (off < bytes.length) {
+    const len = Math.min(65535, bytes.length - off)
+    const last = off + len >= bytes.length ? 1 : 0
+    const blk = new Uint8Array(5 + len)
+    blk[0] = last
+    blk[1] = len & 0xff
+    blk[2] = (len >> 8) & 0xff
+    blk[3] = (~len) & 0xff
+    blk[4] = ((~len) >> 8) & 0xff
+    blk.set(bytes.subarray(off, off + len), 5)
+    parts.push(blk)
+    off += len
+  }
+  const tail = new Uint8Array(4)
+  new DataView(tail.buffer).setUint32(0, pngAdler32(bytes))
+  parts.push(tail)
+  return pngConcat(parts)
+}
+
+/**
+ * ImageData → RGBA PNG 字节。优先 CompressionStream('deflate') 出标准 zlib 流，
+ * 不可用则退回同步 stored 流；两条路都不经过 canvas，RGB 一像素不丢。
+ */
+async function encodeMaskPngBytes(imageData, width, height) {
+  const w = Math.max(1, Math.round(Number(width) || 0))
+  const h = Math.max(1, Math.round(Number(height) || 0))
+  const ihdr = new Uint8Array(13)
+  const iv = new DataView(ihdr.buffer)
+  iv.setUint32(0, w)
+  iv.setUint32(4, h)
+  ihdr[8] = 8
+  ihdr[9] = 6
+  const raw = pngScanlines(imageData, w, h)
+  let idat = null
+  if (typeof CompressionStream === 'function' && typeof Blob === 'function' && typeof Response === 'function') {
+    try {
+      const stream = new Blob([raw]).stream().pipeThrough(new CompressionStream('deflate'))
+      idat = new Uint8Array(await new Response(stream).arrayBuffer())
+    } catch {
+      idat = null
+    }
+  }
+  if (idat === null) idat = pngZlibStored(raw)
+  return pngConcat([
+    new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]),
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', idat),
+    pngChunk('IEND', new Uint8Array(0)),
+  ])
+}
+
 
     /** tab 类型的身份；也是正文与标题在 keyed slot 里的 key。 */
     const KIND = 'gallery'
@@ -176,8 +505,8 @@ function annotationSvgCursor(active, dragging, zoom) {
 /** 中英字典（拆分自 client.js L54-L379）。 */
 
     const zh = {
-      'type.label': '产出画廊',
-      'guide.title': '产出画廊',
+      'type.label': '产出台',
+      'guide.title': '产出台',
       'guide.description': '最近 24 小时的产出图片',
       loading: '正在扫描…',
       refreshing: '刷新中…',
@@ -237,7 +566,7 @@ function annotationSvgCursor(active, dragging, zoom) {
       annotNotePrompt: '这块要改什么？（可留空）',
       annotNotePlaceholder: '例如：沙发位置偏了 / 色调太暖',
       annotNoNote: '（无说明）',
-      annotHint: '按住拖拽圈一处，或点两下（起点→终点）；可连续圈多处，保存后自动进反馈篮',
+      annotHint: '左键拖拽或点两下画矩形批注；右键逐点圈出 4–20 点的多边形，闭合后直接生成局部重绘遮罩',
       annotCount: '批注 {n} 处',
       annotPendingTag: '待保存',
       annotPendingHint: '黄色亮框就是刚圈的位置；写完点「保存并生效」，也可以直接在图上继续圈下一处（这处会先自动存档）',
@@ -418,6 +747,23 @@ function annotationSvgCursor(active, dragging, zoom) {
       feedbackAnnotRegion: '区域 左{x}% 上{y}% · 宽{w}% 高{h}%',
       feedbackAnnotNoNote: '（未填说明，按框选区域改）',
       feedbackFrameFrom: '取自《{name}》{timecode} 帧',
+      // 遮罩导出（v0.14.5 本机 MVP）：矩形框选批注 → ComfyUI 可用的 RGBA 遮罩
+      maskExport: '导出遮罩',
+      maskExportHint: '按这个框生成 ComfyUI 可用的 RGBA 遮罩（框内为待重绘区域）',
+      maskExporting: '正在生成遮罩…',
+      maskSaved: '已生成遮罩：{name}（已入当前对话资产）',
+      maskFailed: '遮罩生成失败：{message}',
+      // v0.14.6 右键多点选区（4–20 点）→ 实心多边形遮罩
+      polyTitle: '多边形遮罩选区',
+      polyInfo: '{n}/{max} 点 · 外接框 左{x}% 上{y}% · {w}%×{h}% · 选区约占全图 {area}%',
+      polyHint: '右键逐点圈选；点回起点、按 Enter 或点「闭合并生成遮罩」即导出。顶点可左键拖动微调，Backspace 撤销一点，Escape 清空。',
+      polyFillColor: '填充色：',
+      polyClose: '闭合并生成遮罩',
+      polyUndo: '撤销一点',
+      polyClear: '清空',
+      polyTooFew: '至少 4 个点才能闭合',
+      polyDegenerate: '选区面积太小（点几乎连成一条线），请重新围一圈',
+      feedbackMaskFrom: '已有遮罩：{name}',
       feedbackAnnotHint: '{n} 条框选批注会随反馈一起发出，序号与草稿里的 Annotation N 一一对应',
       feedbackEditTitle: '编辑：{name}',
       feedbackReasonLabel: '理由（可选）',
@@ -555,7 +901,7 @@ function annotationSvgCursor(active, dragging, zoom) {
       annotNotePrompt: 'What should change here? (optional)',
       annotNotePlaceholder: 'e.g. sofa position is off / color is too warm',
       annotNoNote: '(no note)',
-      annotHint: 'Drag to box an area, or click twice (start → end). Box as many as you like — saved notes go straight into the feedback basket',
+      annotHint: 'Left-drag or click twice for a boxed note; right-click 4–20 vertices for a polygon selection that becomes an inpaint mask',
       annotCount: '{n} annotation(s)',
       annotPendingTag: 'Pending',
       annotPendingHint: 'The yellow box is the area you just marked. Add a note and click Save, or keep boxing more areas (this one is stored first).',
@@ -734,6 +1080,23 @@ function annotationSvgCursor(active, dragging, zoom) {
       feedbackAnnotRegion: 'region left {x}% top {y}% · {w}%×{h}%',
       feedbackAnnotNoNote: '(no note — change the boxed area)',
       feedbackFrameFrom: 'From "{name}" at frame {timecode}',
+      // Mask export (v0.14.5 local MVP): rectangular box annotation -> ComfyUI-ready RGBA mask
+      maskExport: 'Export mask',
+      maskExportHint: 'Generate a ComfyUI-ready RGBA mask from this box (box = area to inpaint)',
+      maskExporting: 'Generating mask…',
+      maskSaved: 'Mask saved: {name} (added to current chat assets)',
+      maskFailed: 'Mask export failed: {message}',
+      // v0.14.6 right-click polygon selection (4-20 points) -> solid polygon mask
+      polyTitle: 'Polygon mask selection',
+      polyInfo: '{n}/{max} points · bbox left {x}% top {y}% · {w}%×{h}% · ~{area}% of image',
+      polyHint: 'Right-click to add vertices; click the first point, press Enter, or use Close & make mask. Drag vertices with the left button; Backspace removes the last point.',
+      polyFillColor: 'Fill:',
+      polyClose: 'Close & make mask',
+      polyUndo: 'Undo point',
+      polyClear: 'Clear',
+      polyTooFew: 'At least 4 points are needed',
+      polyDegenerate: 'Selection area is too small — the points are nearly a line',
+      feedbackMaskFrom: 'Mask ready: {name}',
       feedbackAnnotHint: '{n} boxed note(s) will be sent with this feedback, numbered to match `Annotation N` in the draft',
       feedbackEditTitle: 'Edit: {name}',
       feedbackReasonLabel: 'Reason (optional)',
@@ -989,6 +1352,106 @@ function annotationSvgCursor(active, dragging, zoom) {
     }
 
     /**
+     * 由「原图 + 一条矩形框选批注」生成 ComfyUI 可用的 RGBA 遮罩 PNG。
+     * 只走插件自己的 Host 路由取原图（同源，canvas 不会被 taint），不发任何外部请求。
+     */
+    async function buildMaskPng(relPath, annotation) {
+      const blob = await fetchRaw(relPath, new AbortController().signal)
+      const bitmap = await createImageBitmap(blob)
+      try {
+        const rect = maskPixelRect(annotation, bitmap.width, bitmap.height)
+        if (rect.width * rect.height > MASK_MAX_PIXELS) throw new Error('mask-image-too-large')
+        // 右键多边形选区：归一化顶点换算成原图像素坐标；矩形批注为 null，走原来的逐像素框判定。
+        const polygonPx = normalizePolygon(annotation?.polygon, rect.width, rect.height)
+        let canvas
+        if (typeof OffscreenCanvas === 'function') {
+          canvas = new OffscreenCanvas(rect.width, rect.height)
+        } else {
+          canvas = document.createElement('canvas')
+          canvas.width = rect.width
+          canvas.height = rect.height
+        }
+        const context = canvas.getContext('2d', { willReadFrequently: true })
+        if (context === null) throw new Error('mask-canvas-unavailable')
+        // 先画原图：RGB 完整保留；框外 alpha 一律强制 255，源 PNG 自带透明也不会被误判成待重绘。
+        context.drawImage(bitmap, 0, 0)
+        const image = context.getImageData(0, 0, rect.width, rect.height)
+        const data = image.data
+        if (polygonPx !== null) {
+          // 多边形：只在选区内 alpha=0，仍是严格二值，RGB 一像素不动。
+          const alpha = polygonAlphaLayer(polygonPx, rect.width, rect.height)
+          for (let i = 0; i < alpha.length; i += 1) data[(i * 4) + 3] = alpha[i]
+        } else {
+          for (let py = 0; py < rect.height; py += 1) {
+            for (let px = 0; px < rect.width; px += 1) {
+              data[((py * rect.width) + px) * 4 + 3] = maskAlphaAt(px, py, rect)
+            }
+          }
+        }
+        // 🔴 不再 putImageData → convertToBlob：canvas 是预乘 alpha 存储，
+        // alpha=0 的选区内 RGB 会被清零，ComfyUI #369 的 IMAGE 输出必须是原图 RGB。
+        // 直接从上面这份「RGB 原图 + 只改过 alpha」的 ImageData 编 PNG。
+        const pngBytes = await encodeMaskPngBytes(image, rect.width, rect.height)
+        const url = await toDataUrl(new Blob([pngBytes], { type: 'image/png' }))
+
+        // 彩色填充预览：另起一张干净画布，绝不能复用已改 alpha 的遮罩画布。
+        // 选区内叠 0.4 半透明纯色 + 沿同一路径叠 0.7 半透明轮廓；
+        // 轮廓居中描边会让边界外一圈也带色，这是「视觉钥匙」的预期行为，
+        // 精确几何仍只认主 alpha 遮罩，绝不拿这张图去反解或回填工作流。
+        const fill = maskOverlayPath(rect, polygonPx, annotation?.fillColor)
+        let overlayData = null
+        let previewCanvas
+        if (typeof OffscreenCanvas === 'function') {
+          previewCanvas = new OffscreenCanvas(rect.width, rect.height)
+        } else {
+          previewCanvas = document.createElement('canvas')
+          previewCanvas.width = rect.width
+          previewCanvas.height = rect.height
+        }
+        const previewCtx = previewCanvas.getContext('2d')
+        if (previewCtx !== null) {
+          previewCtx.drawImage(bitmap, 0, 0)
+          previewCtx.fillStyle = fill.rgba
+          previewCtx.beginPath()
+          if (fill.points !== null) {
+            previewCtx.moveTo(fill.points[0][0], fill.points[0][1])
+            for (let i = 1; i < fill.points.length; i += 1) {
+              previewCtx.lineTo(fill.points[i][0], fill.points[i][1])
+            }
+            previewCtx.closePath()
+          } else {
+            previewCtx.rect(fill.rect.x, fill.rect.y, fill.rect.w, fill.rect.h)
+          }
+          previewCtx.fill()
+          // 0.7 半透明轮廓：与填充共用同一条路径，线宽按缩略图可见性自适应。
+          // 只画在预览画布上，主遮罩画布一像素不动。
+          previewCtx.strokeStyle = fill.strokeRgba
+          previewCtx.lineWidth = fill.strokeWidth
+          previewCtx.lineJoin = 'round'
+          previewCtx.lineCap = 'round'
+          previewCtx.stroke()
+          const previewBlob = typeof previewCanvas.convertToBlob === 'function'
+            ? await previewCanvas.convertToBlob({ type: 'image/png' })
+            : await new Promise((resolve, reject) => {
+              previewCanvas.toBlob((b) => (b === null
+                ? reject(new Error('preview-toBlob-null')) : resolve(b)), 'image/png')
+            })
+          const previewUrl = await toDataUrl(previewBlob)
+          overlayData = previewUrl.slice(previewUrl.indexOf(',') + 1)
+        }
+        return {
+          data: url.slice(url.indexOf(',') + 1),
+          overlay: overlayData,
+          fillColor: fill.key,
+          fillLabel: fill.label,
+          rect, width: rect.width, height: rect.height, polygonPx,
+        }
+      } finally {
+        if (typeof bitmap.close === 'function') bitmap.close()
+      }
+    }
+
+    /**
      * 读图片真实像素尺寸。优先用 host 已解析好的 item.width/height（零成本）；
      * 缺失时才解码一次图像测 naturalWidth/Height（大图解码有开销，能免则免）。
      */
@@ -1090,7 +1553,11 @@ function annotationSvgCursor(active, dragging, zoom) {
   background: color-mix(in srgb, var(--dsw-alias-brand-primary) 24%, transparent);
 }
 .dg-scopeBtn:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
-.dg-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dg-title { font-weight: 600; white-space: nowrap; overflow: visible; text-overflow: clip; flex: 0 0 auto; }
+/* tab 标题：包成单个 inline-flex 容器，宿主 chip 的 gap 插不进图标与文字之间；名称不再被裁切。 */
+.dg-titleWrap { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; white-space: nowrap; }
+/* tab 标题图标：与宿主内置 tab 的 titleIcon 同规格（16px / currentColor）；间距统一由容器 gap 控制 */
+.dg-tabTitleIcon { width: 16px; height: 16px; flex: 0 0 auto; margin-right: 0; color: var(--dsw-alias-brand-primary); }
 .dg-sub { color: var(--dsw-alias-label-secondary); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* ⚠️ 硬编码：宿主 --dsw-alias-* 变量为空字符串时不会启用 var() 的 fallback */
 .dg-btn {
@@ -2141,7 +2608,13 @@ function annotationSvgCursor(active, dragging, zoom) {
 .dg-mediaNoticeFail { color: #ff8a8a; background: rgba(220, 60, 60, 0.12); }
 
 .dg-open { white-space: nowrap; }
-.dg-openCompact { padding: 2px 6px; line-height: 16px; font-size: 12px; }
+/* 侧栏脚部入口：展开态「图标 + 名称」并排，收窄态仅图标；图标跟随 currentColor */
+.dg-openWide, .dg-openNarrow { display: inline-flex; align-items: center; gap: 7px; }
+.dg-openNarrow { justify-content: center; padding: 5px 8px; }
+.dg-openLabel { line-height: 18px; }
+.dg-sideIcon { width: 16px; height: 16px; flex: 0 0 auto; color: currentColor; }
+.dg-openCompact { padding: 2px 6px; line-height: 16px; font-size: 12px; display: inline-flex; align-items: center; }
+.dg-openCompact .dg-sideIcon { width: 15px; height: 15px; }
 
 /* ---------- 反馈篮（S3-a）---------- */
 /* ⚠️ 配色全部硬编码：宿主 --dsw-alias-* 变量「已定义但值为空」，
@@ -2407,6 +2880,17 @@ function annotationSvgCursor(active, dragging, zoom) {
 .dg-annotItem { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #e8eaed; }
 .dg-annotIndex { color: #8fb6ff; font-weight: 600; }
 .dg-annotText { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dg-annotItem .dg-btn { flex: 0 0 auto; }
+/* 遮罩导出结果提示：避开左上批注列表与底部批注输入框，不受 svg 缩放平移影响 */
+.dg-maskNotice {
+  position: absolute; right: 8px; top: 8px; z-index: 7;
+  max-width: min(360px, 70%); padding: 6px 10px; border-radius: 6px;
+  font-size: 11px; line-height: 1.5; color: #e8eaed;
+  background: rgba(27, 30, 36, 0.96); border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+.dg-maskNotice-ok { border-color: rgba(94, 214, 150, 0.65); }
+.dg-maskNotice-failed { border-color: rgba(255, 107, 107, 0.85); color: #ffd7d7; }
 
 /* 批注输入框：贴底居中，别挡住刚圈出来的框 */
 .dg-annotEditor {
@@ -2443,6 +2927,28 @@ function annotationSvgCursor(active, dragging, zoom) {
 }
 .dg-annotEditorOps .dg-annotSave:hover:not(:disabled) { background: #6a92ff !important; }
 .dg-annotPendingHint { font-size: 11px; color: #ffd166; margin: -2px 0 8px; }
+
+/* v0.14.6 右键多边形选区操作条：贴右下，避开左上批注列表与底部矩形输入框 */
+.dg-polyPanel {
+  position: absolute; right: 8px; bottom: 14px; z-index: 6;
+  width: min(320px, 76%); box-sizing: border-box;
+  background: #1b1e24; color: #e8eaed;
+  border: 1px solid rgba(94, 214, 150, 0.55); border-radius: 8px; padding: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6);
+}
+.dg-polyPanelHead { font-size: 12px; font-weight: 600; color: #9fe1cb; margin-bottom: 6px; }
+.dg-polyPanelInfo { font-size: 11px; line-height: 1.5; word-break: break-all; }
+.dg-polyPanelHint { font-size: 11px; color: #b9c2cf; line-height: 1.5; margin-top: 6px; }
+.dg-polyColors { display: inline-flex; align-items: center; gap: 5px; margin-top: 8px; }
+.dg-polyColorsLabel { font-size: 11px; color: #b9c2cf; margin-right: 2px; }
+.dg-polyColorBtn { min-width: 26px; height: 20px; padding: 0 5px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.22); color: #10161f; font-size: 11px; font-weight: 600; cursor: pointer; line-height: 18px; }
+.dg-polyColorBtn.is-active { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,0.28); }
+.dg-polyPanelOps { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.dg-polyPanelOps .dg-polyClose {
+  background: #0f6e56 !important; color: #fff !important;
+  border-color: #1d9e75 !important; font-weight: 600;
+}
+.dg-polyPanelOps .dg-polyClose:disabled { opacity: 0.45; }
 `
 
 
@@ -2619,6 +3125,24 @@ function makeItem(item) {
       frameMs: Number(item.frameOf.frameMs) || 0,
     }
   }
+  // v0.14.5 遮罩来源：由本条框选区域生成的 RGBA 遮罩资产，路径只随草稿带出
+  // v0.14.6 右键多边形：把外接框 / 顶点像素坐标 / 面积一并带出，供 Agent 精确回填。
+  if (item?.maskOf !== undefined && item?.maskOf !== null && typeof item.maskOf === 'object') {
+    out.maskOf = {
+      relPath: String(item.maskOf.relPath ?? ''),
+      sourceName: String(item.maskOf.sourceName ?? ''),
+      region: item.maskOf.region ?? null,
+      polygon: Array.isArray(item.maskOf.polygon) ? item.maskOf.polygon : null,
+      polygonPx: Array.isArray(item.maskOf.polygonPx) ? item.maskOf.polygonPx : null,
+      bboxPx: Array.isArray(item.maskOf.bboxPx) ? item.maskOf.bboxPx : null,
+      areaPx: Number(item.maskOf.areaPx) || 0,
+      imageWidth: Number(item.maskOf.imageWidth) || 0,
+      imageHeight: Number(item.maskOf.imageHeight) || 0,
+      // v0.14.7 彩色填充预览图：只用于目视核对，工作流仍用主 alpha 遮罩
+      overlayRelPath: String(item.maskOf.overlayRelPath ?? ''),
+      fillColor: String(item.maskOf.fillColor ?? ''),
+    }
+  }
   return out
 }
 
@@ -2642,6 +3166,86 @@ function baseName(relPath) {
   const s = String(relPath ?? '')
   const i = s.lastIndexOf('/')
   return i >= 0 ? s.slice(i + 1) : s
+}
+
+/* ------------------------------------------------------------------ *
+ * 拖图带位置信息（2026-11-12 实证后落地）
+ *
+ * DSH 宿主源码实证（`dsh-client-ui-attachment` / `dsh-client-ui-conversation`）：
+ *   · document 级 drop 只认 `dataTransfer.files`（或内部 application/x-dsh-file
+ *     令牌），**完全不读 text/plain / text/uri-list** —— 所以塞文本无效；
+ *   · `browserDraftAttachment(file)` 保留原 File，
+ *     `encodeImage(file)` 返回 `{ mediaType, data, name: file.name }`，
+ *     即 **file.name 会原样进发给模型的消息**。
+ * 因此正解是：拖出时把「文件名 + 绝对路径 + 主遮罩」写进 File.name，
+ * DSH 的 Agent 拿到附件就能直接定位，不必整目录扫描比对。
+ *
+ * 红线：只写草稿附件，绝不调用 submit()；主 alpha 遮罩契约不动。
+ * ------------------------------------------------------------------ */
+
+/** relPath → { item, absPath }，由 GalleryBody 在列表刷新时填，供 dragstart 同步查。 */
+const dragAssetIndex = new Map()
+/**
+ * 彩色填充预览图 / 原图 → 主遮罩元数据。
+ * frames.json 只登记主遮罩帧，预览图靠「同目录素材」规则出现、本身没有 maskOf，
+ * 所以拖预览图时必须按 overlayRelPath（或原图 sourceRelPath）反查主遮罩。
+ */
+const dragMaskByOverlay = new Map()
+const dragMaskBySource = new Map()
+
+/**
+ * 生成拖出 File 的名字（纯函数，测试跑真身）。
+ * 全角「｜」分隔，控制字符清掉，长度夹在 240 以内，避免 DSH 卡片显示被截到看不懂。
+ */
+function dragNameOf(item, absPath) {
+  const name = String(item?.name ?? baseName(item?.relPath ?? ''))
+  const parts = [`产出台·${name}`]
+  const path = String(absPath ?? '')
+  if (path !== '') parts.push(`路径=${path}`)
+  const m = item?.maskOf ?? null
+  if (m !== null && typeof m === 'object') {
+    const maskRel = String(m.relPath ?? '')
+    if (maskRel !== '') parts.push(`主遮罩=${baseName(maskRel)}`)
+    const overlayRel = String(m.overlayRelPath ?? '')
+    if (m.linkedMask === true) {
+      // 反查命中的预览图 / 原图本身不是遮罩，必须把用法讲死，
+      // 免得 Agent 把这张 RGB 合成图直接回填 #369.image。
+      parts.push('工作流请用主遮罩，预览仅供目视')
+    } else if (overlayRel !== '') {
+      parts.push(`填充预览=${baseName(overlayRel)}`)
+    }
+  }
+  const rel = String(item?.relPath ?? '')
+  if (rel !== '' && path === '') parts.push(`相对路径=${rel}`)
+  return parts.join(' ｜ ').replace(/[\u0000-\u001f]/g, ' ').slice(0, 240)
+}
+
+/**
+ * dragstart 是同步事件，不能 await 取原图字节；这里从已渲染的 <img> 同步重编码 PNG。
+ * 卡片缩略图是 data/blob URL，同源不污染 canvas；失败返回 null 走剪贴板兜底。
+ */
+function syncImagePngBytes(img) {
+  if (img === null || img === undefined || String(img.tagName ?? '').toLowerCase() !== 'img') return null
+  const w = Number(img.naturalWidth || img.width || 0)
+  const h = Number(img.naturalHeight || img.height || 0)
+  if (w < 1 || h < 1) return null
+  try {
+    const canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    const cx = canvas.getContext('2d')
+    if (cx === null) return null
+    cx.drawImage(img, 0, 0, w, h)
+    const url = canvas.toDataURL('image/png')
+    const comma = url.indexOf(',')
+    if (comma < 0) return null
+    const bin = atob(url.slice(comma + 1))
+    const bytes = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i)
+    return bytes
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -2672,7 +3276,7 @@ function renderFeedbackText(feedback, options) {
     lines.push('Reply item by item using the `Annotation N:` prefix, so each decision maps to one annotation.')
     lines.push('')
   } else {
-    lines.push(`【产出画廊反馈 · 共 ${items.length} 条】`)
+    lines.push(`【产出台反馈 · 共 ${items.length} 条】`)
     lines.push('')
     lines.push('请按 `Annotation 1：`、`Annotation 2：` … 逐条回应，让每条决定都对应到一个批注。')
     lines.push('')
@@ -2694,6 +3298,31 @@ function renderFeedbackText(feedback, options) {
       lines.push(locale === 'en'
         ? `Frame source: taken from "${f.videoName}" at ${f.timecode} (${f.frameMs} ms)`
         : `帧来源：取自视频《${f.videoName}》${f.timecode}（第 ${f.frameMs} 毫秒）`)
+    }
+    // 遮罩来源是「资产路径 + 编码说明」，不是自动指令：模型拿到后自行上传 / 回填 image 输入
+    if (item.maskOf !== undefined && item.maskOf !== null && String(item.maskOf.relPath ?? '') !== '') {
+      lines.push(locale === 'en'
+        ? `Mask source: ${item.maskOf.relPath} — RGBA mask from this box; alpha=0 inside the box, so ComfyUI LoadImage MASK (1 - alpha/255) marks only the area to inpaint`
+        : `遮罩来源：${item.maskOf.relPath} —— 由本条框选区域生成的 RGBA 遮罩，框内 alpha=0，ComfyUI LoadImage 的 MASK 输出（1 - alpha/255）即待重绘区域；可用于局部重绘 / 移除流回填 image 输入`)
+      const mp = item.maskOf
+      // v0.14.7 彩色填充预览图：只供人核对选区位置，别拿去回填工作流
+      if (String(mp.overlayRelPath ?? '') !== '') {
+        const fillName = { green: '绿', red: '红', blue: '蓝' }[String(mp.fillColor ?? '')] ?? '绿'
+        lines.push(locale === 'en'
+          ? `Mask preview: ${mp.overlayRelPath} — original image with a solid semi-transparent fill over the selection; visual check only, hand the RGBA mask above to the workflow`
+          : `遮罩预览：${mp.overlayRelPath} —— 原图上叠加${fillName}色半透明填充，仅用于目视核对选区位置；工作流请用上面的 RGBA 遮罩`)
+      }
+      if (Array.isArray(mp.polygonPx) && mp.polygonPx.length > 0) {
+        const b = Array.isArray(mp.bboxPx) ? mp.bboxPx : [0, 0, 0, 0]
+        const size = `${Number(mp.imageWidth) || 0}×${Number(mp.imageHeight) || 0}`
+        const verts = JSON.stringify(mp.polygonPx)
+        lines.push(locale === 'en'
+          ? `Mask region: ${size}px source · ${mp.polygonPx.length} vertices · bbox (${b[0]},${b[1]})-(${b[2]},${b[3]}) · ~${Number(mp.areaPx) || 0}px · vertex pixels ${verts}`
+          : `遮罩区域：原图 ${size}px · ${mp.polygonPx.length} 个顶点 · 外接框 (${b[0]},${b[1]})-(${b[2]},${b[3]}) · 面积约 ${Number(mp.areaPx) || 0}px · 顶点像素坐标 ${verts}`)
+        lines.push(locale === 'en'
+          ? 'Mask handoff: upload it, then replace the target workflow image input; use ONE short target phrase (e.g. change "X" to "Y", keep the original lettering), do not expand into a whole-word rewrite with extra constraints'
+          : '遮罩回填：上传后替换目标工作流的 image 入参；提示词用单目标短句（例如：将图中的「X」，改为「Y」，保持原有字体色调），不要扩写成整词替换加约束')
+      }
     }
     if (item.reason !== undefined) {
       lines.push(`${locale === 'en' ? 'Reason' : '理由'}：${item.reason}`)
@@ -3031,6 +3660,8 @@ function serializeFeedback(feedback) {
             preserve: mark.preserve,
             // 截帧来源随草稿带出（v0.14.3）
             frameOf: it.frameOf,
+            // 遮罩来源随草稿带出（v0.14.5）：由本图框选区域生成的 RGBA 遮罩资产
+            maskOf: it.maskOf,
           })
         }
         const annots = Array.isArray(it.annotations) ? it.annotations : []
@@ -3044,6 +3675,8 @@ function serializeFeedback(feedback) {
             reason: note === '' ? undefined : note,
             region: { x: a.x, y: a.y, w: a.w, h: a.h },
             frameOf: it.frameOf,
+            // 遮罩来源随草稿带出（v0.14.5）：由本图框选区域生成的 RGBA 遮罩资产
+            maskOf: it.maskOf,
           })
         }
       }
@@ -3226,6 +3859,11 @@ function serializeFeedback(feedback) {
                               timecode: it.frameOf.timecode ?? '',
                             }))
                         : null,
+                      // 遮罩资产已生成：在篮子里就能看到路径，不必等草稿
+                      it.maskOf !== undefined && it.maskOf !== null && String(it.maskOf.relPath ?? '') !== ''
+                        ? h('span', { className: 'dg-feedbackDim', key: 'mask', 'data-gallery-feedback-mask': it.maskOf.relPath },
+                            format(t('feedbackMaskFrom'), { name: baseName(it.maskOf.relPath) }))
+                        : null,
                       h('span', { className: 'dg-feedbackDim dg-feedbackRegion', key: 'r' },
                         format(t('feedbackAnnotRegion'), { x: pct(a.x), y: pct(a.y), w: pct(a.w), h: pct(a.h) })),
                       h('span', { className: 'dg-feedbackNote', key: 'note' },
@@ -3264,6 +3902,11 @@ function serializeFeedback(feedback) {
                               timecode: it.frameOf.timecode ?? '',
                             }))
                         : null,
+                    // 遮罩资产已生成：在篮子里就能看到路径，不必等草稿
+                    it.maskOf !== undefined && it.maskOf !== null && String(it.maskOf.relPath ?? '') !== ''
+                      ? h('span', { className: 'dg-feedbackDim', key: 'mask', 'data-gallery-feedback-mask': it.maskOf.relPath },
+                          format(t('feedbackMaskFrom'), { name: baseName(it.maskOf.relPath) }))
+                      : null,
                     (it.mark?.changeOnly !== undefined && it.mark.changeOnly.length > 0)
                       ? h('span', { className: 'dg-feedbackDim', key: 'co' },
                           `${t('feedbackChangeOnly')}：${it.mark.changeOnly.join('/')}`)
@@ -4295,7 +4938,7 @@ ${absPath}
      *   - 右键预览区、按 O、点底部按钮 三种方式切换
      *   - 切换时**保留当前缩放与位置**，否则切过去跳回 1x 就没法对比
      */
-    function Viewer({ items, index, onClose, onStep, t, initialOriginal, annotations, onAddAnnotation, onRemoveAnnotation }) {
+    function Viewer({ items, index, onClose, onStep, t, initialOriginal, annotations, onAddAnnotation, onRemoveAnnotation, onExportMask }) {
       const item = items[index]
       // 文件预览已改走 DSH 原生侧栏（session 地址）；此处 Viewer 仅处理图片，isText 恒 false，
       // 下面的文本分支保留为死代码，供 v0.2 若需插件内预览时复用
@@ -4839,6 +5482,20 @@ ${absPath}
               setAnnotActive((v) => !v)
             },
           }, annotActive ? `✎ ${t('annotExit')}` : `✎ ${t('annotEnter')}`),
+          // 「拖到对话」确定性入口：Viewer 大图本身 draggable:false + pointerEvents:none
+          // （标注态的中键平移 / 右键多边形都依赖它），所以不改大图，另给一个可拖按钮。
+          // 这个按钮同时是「新 client.js 已加载」的可见标记 —— 看到它就说明面板不是旧模块。
+          h('button', {
+            type: 'button',
+            className: 'dg-btn',
+            key: 'dragAsset',
+            draggable: true,
+            'data-gallery-relpath': item.relPath,
+            'data-gallery-dragviewer': true,
+            title: '拖到对话：附带绝对路径 / 主遮罩 / 填充预览文件名',
+            'aria-label': '拖到对话',
+            onClick: (event) => event.stopPropagation(),
+          }, '⇥ 拖到对话'),
           h('button', { type: 'button', className: 'dg-btn', key: 'prev', onClick: () => onStep(-1), 'aria-label': t('prev') }, '‹'),
           h('button', { type: 'button', className: 'dg-btn', key: 'next', onClick: () => onStep(1), 'aria-label': t('next') }, '›'),
           h('button', { type: 'button', className: 'dg-btn', key: 'close', onClick: onClose, 'aria-label': t('close') }, '✕'),
@@ -4908,6 +5565,10 @@ ${absPath}
                         transformTransition: dragRef.current === null ? 'transform 120ms ease-out' : 'none',
                         onAdd: (a) => { onAddAnnotation?.(item, a) },
                         onRemove: (id) => { onRemoveAnnotation?.(item, id) },
+                        // 遮罩导出：把「当前这张图 + 这条矩形批注」一起交给上层执行
+                        onExportMask: typeof onExportMask === 'function'
+                          ? (a) => onExportMask(item, a)
+                          : undefined,
                       }),
                     ]))
               : state.status === 'binary'
@@ -4969,19 +5630,106 @@ ${absPath}
  *      不会被放大、也不会被平移拖出视野。
  */
 
-function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, frameMs, zoom, pan, imgBox, transformTransition }) {
+function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, frameMs, zoom, pan, imgBox, transformTransition, onExportMask }) {
   const [draft, setDraft] = React.useState(null)
   const [editing, setEditing] = React.useState(null)
   /** 已点下第一下、等第二下定终点时的起点（归一化坐标）。 */
   const [pendingStart, setPendingStart] = React.useState(null)
   const svgRef = React.useRef(null)
+  /** 遮罩导出提示（成功/失败），2.5 秒自动消失。 */
+  const [maskNotice, setMaskNotice] = React.useState(null)
+  const [maskBusy, setMaskBusy] = React.useState(false)
+  /** 右键多边形选区：归一化顶点 / 橡皮筋终点 / 正在拖动的顶点下标。 */
+  const [poly, setPoly] = React.useState([])
+  const [polyHover, setPolyHover] = React.useState(null)
+  const [polyDrag, setPolyDrag] = React.useState(null)
+  /** v0.14.7 选区填充色（红 / 绿 / 蓝），同时决定导出的彩色预览图颜色。 */
+  const [fillColor, setFillColor] = React.useState('green')
+  /** SVG 无 viewBox，polygon 的 points 只认用户单位 px，不能用百分比。 */
+  const boxW = Math.max(1, Number(imgBox?.width) || 1)
+  const boxH = Math.max(1, Number(imgBox?.height) || 1)
 
-  /** 退出标注模式时清掉未保存的草稿，避免输入框/虚线框残留。 */
+  React.useEffect(() => {
+    if (maskNotice === null) return undefined
+    const timer = setTimeout(() => setMaskNotice(null), 2500)
+    return () => clearTimeout(timer)
+  }, [maskNotice])
+
+  /** 只把「导出」交给上层；提示与防连点留在本层，查看器其余交互一概不动。 */
+  const runExportMask = (a) => {
+    if (typeof onExportMask !== 'function' || maskBusy) return
+    setMaskBusy(true)
+    setMaskNotice({ kind: 'ok', text: t('maskExporting') })
+    Promise.resolve()
+      .then(() => onExportMask(a))
+      .then((r) => setMaskNotice({ kind: 'ok', text: format(t('maskSaved'), { name: r?.name ?? '' }) }))
+      .catch((error) => setMaskNotice({
+        kind: 'failed',
+        text: format(t('maskFailed'), { message: String(error?.message ?? error) }),
+      }))
+      .finally(() => setMaskBusy(false))
+  }
+
+  /**
+   * 闭合多边形 → 立刻生成遮罩资产。老板要的是「右键点完就形成区域遮罩」，
+   * 所以闭合即导出，不再多一层确认；顶点/面积在闭合前一直可见可撤销。
+   * 零自动发送红线不变：这里只落盘遮罩资产，草稿仍要人工发送。
+   */
+  const commitPolygon = (points) => {
+    if (points.length < POLYGON_LIMITS.min) {
+      setMaskNotice({ kind: 'failed', text: t('polyTooFew') })
+      return
+    }
+    if (polygonArea(points) < POLYGON_LIMITS.minArea) {
+      setMaskNotice({ kind: 'failed', text: t('polyDegenerate') })
+      return
+    }
+    const box = polygonBBox(points)
+    setPoly([])
+    setPolyHover(null)
+    setPolyDrag(null)
+    runExportMask({
+      shape: 'polygon',
+      ...box,
+      polygon: points.map((p) => [clamp01(p.x), clamp01(p.y)]),
+      fillColor,
+      note: '',
+    })
+  }
+
+  /** Enter 闭合 / Backspace 撤销一点 / Escape 清空；输入框有焦点时不抢键。 */
+  React.useEffect(() => {
+    if (!active || poly.length === 0 || editing !== null) return undefined
+    const onKey = (e) => {
+      const el = e.target
+      if (el !== null && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'
+        || (typeof el.closest === 'function' && el.closest('[data-gallery-annot-editor]') !== null))) return
+      if (e.key === 'Enter' && poly.length >= POLYGON_LIMITS.min) {
+        e.preventDefault()
+        commitPolygon(poly)
+      } else if (e.key === 'Backspace') {
+        e.preventDefault()
+        setPoly((cur) => cur.slice(0, -1))
+        setPolyHover(null)
+      } else if (e.key === 'Escape') {
+        e.preventDefault()
+        setPoly([])
+        setPolyHover(null)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [active, poly, editing])
+
+  /** 退出标注模式时清掉未保存的草稿，避免输入框/虚线框/顶点残留。 */
   React.useEffect(() => {
     if (active) return undefined
     setDraft(null)
     setEditing(null)
     setPendingStart(null)
+    setPoly([])
+    setPolyHover(null)
+    setPolyDrag(null)
     return undefined
   }, [active])
 
@@ -5039,10 +5787,35 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
     // 放大状态下查看器会在 pointerdown 里 setPointerCapture；这里必须拦住冒泡，
     // 否则弹窗内的输入框/按钮会被「拖图」逻辑抢走，表现为点击无反应。
     event.stopPropagation()
+    // 右键(2)：多边形遮罩选区逐点采集（4–20 点）。点回首点 / 满 20 点 / Enter / 面板按钮都可闭合。
+    // 左键矩形批注与右键多边形互斥，避免两套草稿同时活着互相打架。
+    if (event.button === 2) {
+      event.preventDefault()
+      const p = toNorm(event)
+      if (p === null) return
+      clearPending()
+      const first = poly[0]
+      const nearFirst = poly.length >= POLYGON_LIMITS.min && first !== undefined
+        && Math.hypot(p.x - first.x, p.y - first.y) <= POLYGON_LIMITS.closeRadius
+      if (nearFirst || poly.length >= POLYGON_LIMITS.max) {
+        commitPolygon(poly)
+        return
+      }
+      const next = [...poly, p]
+      setPoly(next)
+      setPolyHover(null)
+      if (next.length >= POLYGON_LIMITS.max) commitPolygon(next)
+      return
+    }
     if (event.button !== 0) return
     const p = toNorm(event)
     if (p === null) return
     event.preventDefault()
+    if (poly.length > 0) {
+      setPoly([])
+      setPolyHover(null)
+      setPolyDrag(null)
+    }
     try { event.currentTarget.setPointerCapture(event.pointerId) } catch { /* 忽略 */ }
 
     // 上一处还在输入 → 先存档，第二处才按得下去（v0.14.2 ⑤）
@@ -5068,6 +5841,13 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
   const onPointerMove = (event) => {
     // 中键平移进行中：标注层一律不插手，让查看器独占指针（双保险，主保险是中键不再拦冒泡）
     if (dragging) return
+    // 多边形橡皮筋：只在没有矩形草稿、没有说明弹窗时跟随指针
+    if (active && poly.length > 0 && draft === null && editing === null) {
+      event.stopPropagation()
+      const p = toNorm(event)
+      if (p !== null) setPolyHover(p)
+      return
+    }
     if (!active || draft === null || editing !== null) return
     event.stopPropagation()
     const p = toNorm(event)
@@ -5138,6 +5918,22 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         }, a.note || ''),
       ])
     }
+    // v0.14.7 已保存的多边形批注：用选区当时的填充色画实心半透明多边形，
+    // 而不是退化成外接矩形（矩形批注仍走下面的老分支）。
+    if (a.shape === 'polygon') {
+      const pts = normalizePolygon(a.polygon, boxW, boxH)
+      if (pts !== null) {
+        return h('g', { key: a.id }, [
+          h('polygon', {
+            key: 'fill',
+            points: pts.map((q) => `${q[0]},${q[1]}`).join(' '),
+            fill: maskFillRgba(a.fillColor, MASK_FILL_ALPHA),
+            stroke: maskFillRgba(a.fillColor, MASK_STROKE_ALPHA), strokeWidth: MASK_STROKE_PX,
+            vectorEffect: 'non-scaling-stroke',
+          }),
+        ])
+      }
+    }
     // rect / arrow 都先按矩形画（arrow 后续可细化），带编号与说明文字
     return h('g', { key: a.id }, [
       rectPair('r', a, '#4a7cff', false),
@@ -5180,6 +5976,62 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           ])
         : null)
 
+  /** 右键多边形预览：实心半透明填充 + 可拖顶点 + 橡皮筋（点回首点即闭合）。 */
+  const polyShape = poly.length === 0 ? null : (() => {
+    const toPx = (p) => [p.x * boxW, p.y * boxH]
+    const pts = poly.map(toPx)
+    const tip = polyHover === null ? null : toPx(polyHover)
+    const ready = poly.length >= POLYGON_LIMITS.min
+    // 纯色半透明填充 0.4 / 轮廓 0.7，颜色跟操作条色板联动；主遮罩 alpha 契约不受影响。
+    const strokeColor = maskFillRgba(fillColor, MASK_STROKE_ALPHA)
+    const fillNode = h('polygon', {
+      key: 'polyFill',
+      points: pts.map((q) => `${q[0]},${q[1]}`).join(' '),
+      fill: maskFillRgba(fillColor, ready ? MASK_FILL_ALPHA : 0.12),
+      stroke: strokeColor, strokeWidth: MASK_STROKE_PX, vectorEffect: 'non-scaling-stroke',
+      strokeDasharray: ready ? undefined : '6 4',
+      'data-gallery-poly': String(poly.length),
+    })
+    const bandNode = tip === null ? null : h('polyline', {
+      key: 'polyBand',
+      points: [pts[pts.length - 1], tip, pts[0]].map((q) => `${q[0]},${q[1]}`).join(' '),
+      fill: 'none', stroke: strokeColor, strokeWidth: 1.5, strokeDasharray: '5 4',
+      vectorEffect: 'non-scaling-stroke', opacity: 0.85,
+    })
+    const dots = pts.map((q, idx) => h('circle', {
+      key: 'v' + idx,
+      cx: q[0], cy: q[1], r: idx === 0 && ready ? 6 : 4,
+      fill: idx === 0 ? '#ffd166' : strokeColor, stroke: '#000', strokeWidth: 1,
+      vectorEffect: 'non-scaling-stroke', style: { cursor: 'move' },
+      'data-gallery-poly-vertex': String(idx),
+      onPointerDown: (e) => {
+        if (e.button !== 0) return
+        e.stopPropagation()
+        e.preventDefault()
+        setPolyDrag(idx)
+        try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* 忽略 */ }
+      },
+      onPointerMove: (e) => {
+        if (polyDrag !== idx) return
+        e.stopPropagation()
+        e.preventDefault()
+        const p = toNorm(e)
+        if (p !== null) setPoly((cur) => cur.map((q2, i) => (i === idx ? p : q2)))
+      },
+      onPointerUp: (e) => {
+        if (polyDrag !== idx) return
+        e.stopPropagation()
+        setPolyDrag(null)
+      },
+    }))
+    const labels = pts.map((q, idx) => h('text', {
+      key: 'n' + idx, x: q[0] + 7, y: q[1] - 7,
+      fill: '#fff', fontSize: 11, stroke: '#000', strokeWidth: 0.6,
+      style: { paintOrder: 'stroke', pointerEvents: 'none' },
+    }, String(idx + 1)))
+    return h('g', { key: 'poly' }, [fillNode, bandNode, ...dots, ...labels])
+  })()
+
   /** 弹窗与批注列表：一律拦住指针/点击冒泡，别让查看器抢事件。 */
   const blockViewer = {
     onPointerDown: (e) => e.stopPropagation(),
@@ -5187,6 +6039,58 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
     onClick: (e) => e.stopPropagation(),
     onContextMenu: (e) => { e.preventDefault(); e.stopPropagation() },
   }
+
+  /** 多边形选区操作条：点数 / 外接框 / 面积实时可见，闭合前可撤销、可清空。 */
+  const polyBox = poly.length > 0 ? polygonBBox(poly) : null
+  const polyPanel = poly.length === 0 ? null : h('div', {
+    className: 'dg-polyPanel', key: 'polyPanel', 'data-gallery-poly-panel': true,
+    ...blockViewer,
+  }, [
+    h('div', { className: 'dg-polyPanelHead', key: 'h' }, t('polyTitle')),
+    h('div', { className: 'dg-polyPanelInfo', key: 'i', 'data-gallery-poly-info': true },
+      format(t('polyInfo'), {
+        n: String(poly.length), max: String(POLYGON_LIMITS.max),
+        x: Math.round(polyBox.x * 100), y: Math.round(polyBox.y * 100),
+        w: Math.round(polyBox.w * 100), h: Math.round(polyBox.h * 100),
+        area: (polygonArea(poly) * 100).toFixed(2),
+      })),
+    h('div', { className: 'dg-polyPanelHint', key: 'p' }, t('polyHint')),
+    h('div', { className: 'dg-polyColors', key: 'colors', 'data-gallery-poly-colors': true }, [
+      h('span', { className: 'dg-polyColorsLabel', key: 'l' }, t('polyFillColor')),
+      ...MASK_FILL_KEYS.map((k) => h('button', {
+        type: 'button', key: k,
+        className: `dg-polyColorBtn${fillColor === k ? ' is-active' : ''}`,
+        'data-gallery-poly-color': k,
+        style: { background: maskFillRgba(k, 0.9) },
+        title: MASK_FILL_COLORS[k].label,
+        onClick: (e) => { e.stopPropagation(); e.preventDefault(); setFillColor(k) },
+      }, MASK_FILL_COLORS[k].label)),
+    ]),
+    h('div', { className: 'dg-polyPanelOps', key: 'o' }, [
+      h('button', {
+        type: 'button', className: 'dg-btn dg-btnSmall', key: 'u',
+        disabled: poly.length === 0,
+        onClick: (e) => {
+          e.stopPropagation(); e.preventDefault()
+          setPoly((cur) => cur.slice(0, -1))
+          setPolyHover(null)
+        },
+      }, t('polyUndo')),
+      h('button', {
+        type: 'button', className: 'dg-btn dg-btnSmall', key: 'c',
+        onClick: (e) => {
+          e.stopPropagation(); e.preventDefault()
+          setPoly([]); setPolyHover(null); setPolyDrag(null)
+        },
+      }, t('polyClear')),
+      h('button', {
+        type: 'button', className: 'dg-btn dg-btnSmall dg-polyClose', key: 's',
+        'data-gallery-poly-close': true,
+        disabled: maskBusy || poly.length < POLYGON_LIMITS.min,
+        onClick: (e) => { e.stopPropagation(); e.preventDefault(); commitPolygon(poly) },
+      }, t('polyClose')),
+    ]),
+  ])
 
   const editor = editing === null ? null : h('div', {
     className: 'dg-annotEditor',
@@ -5234,12 +6138,27 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
   }, [
     h('span', { className: 'dg-annotIndex', key: 'i' }, `#${idx + 1}`),
     h('span', { className: 'dg-annotText', key: 't' }, a.note || t('annotNoNote')),
+    // 只有矩形框能导出遮罩；箭头 / 纯文字标注没有面积，不显示这个动作。
+    typeof onExportMask === 'function' && (a.shape ?? 'rect') === 'rect' && a.w > 0 && a.h > 0
+      ? h('button', {
+          type: 'button', className: 'dg-btn dg-btnSmall', key: 'm',
+          title: t('maskExportHint'), 'data-gallery-mask-export': a.id,
+          disabled: maskBusy,
+          onClick: (e) => { e.stopPropagation(); e.preventDefault(); runExportMask(a) },
+        }, t('maskExport'))
+      : null,
     h('button', {
       type: 'button', className: 'dg-btn dg-btnSmall dg-btnIcon', key: 'x',
       title: t('delete'), 'data-gallery-annot-remove': a.id,
       onClick: (e) => { e.stopPropagation(); e.preventDefault(); onRemove(a.id) },
     }, '✕'),
   ])))
+
+  const maskNoticeNode = maskNotice === null ? null : h('div', {
+    className: `dg-maskNotice dg-maskNotice-${maskNotice.kind}`,
+    key: 'maskNotice', 'data-gallery-mask-notice': true,
+    ...blockViewer,
+  }, maskNotice.text)
 
   return h('div', {
     className: 'dg-annotWrap', key: 'annot',
@@ -5267,9 +6186,11 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       onPointerCancel: () => { setDraft(null); setPendingStart(null) },
       onClick: active ? (event) => { event.preventDefault(); event.stopPropagation() } : undefined,
       onContextMenu: active ? (event) => { event.preventDefault(); event.stopPropagation() } : undefined,
-    }, [draftShape, ...shapes]),
+    }, [draftShape, polyShape, ...shapes]),
     list,
     editor,
+    polyPanel,
+    maskNoticeNode,
   ])
 }
 
@@ -5767,6 +6688,12 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
        * 不是需要长期保留的状态；确认态才落盘，两者语义不同）。
        */
       const [annotations, setAnnotations] = React.useState({})
+      /**
+       * 遮罩「原图 → 资产」的内存兜底（v0.14.5）：导出成功后立刻登记，
+       * 不用等列表重扫 / 翻页，反馈草稿马上就能带出遮罩路径。刷新后由扫描侧
+       * 的 maskOf 元数据继续兜底；这里同样只存内存，不写 marks、不落盘批注。
+       */
+      const [maskOverrides, setMaskOverrides] = React.useState({})
       const selectMode = batchMode || selected.size > 0
       /** 清废稿确认对话框：null=关闭；{ phase:'list'|'deleting', files, digest, count } */
       const [discardDialog, setDiscardDialog] = React.useState(null)
@@ -6239,6 +7166,34 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       }, [viewer])
 
       const data = view.status === 'ready' ? view.data : null
+      // 拖图元信息索引：卡片容器只有 relPath，绝对路径与遮罩关联从这里查。
+      // 分组视图的条目在 groups[].files 里，扁平视图在 items 里，两边都收。
+      React.useEffect(() => {
+        dragAssetIndex.clear()
+        dragMaskByOverlay.clear()
+        dragMaskBySource.clear()
+        if (data === null) return undefined
+        const root = String(data.root ?? '')
+        const put = (it) => {
+          // 主遮罩帧自带 maskOf，用它建立「预览图 / 原图 → 主遮罩」反查表。
+          const m = it?.maskOf
+          if (m !== null && m !== undefined && typeof m === 'object' && String(m.relPath ?? '') !== '') {
+            const ov = String(m.overlayRelPath ?? '')
+            const src = String(m.sourceRelPath ?? '')
+            if (ov !== '' && !dragMaskByOverlay.has(ov)) dragMaskByOverlay.set(ov, m)
+            if (src !== '' && !dragMaskBySource.has(src)) dragMaskBySource.set(src, m)
+          }
+          const rel = String(it?.relPath ?? '')
+          if (rel !== '' && !dragAssetIndex.has(rel)) {
+            dragAssetIndex.set(rel, { item: it, absPath: buildAbsPath(root, rel) })
+          }
+        }
+        if (Array.isArray(data.items)) data.items.forEach(put)
+        for (const g of (Array.isArray(data.groups) ? data.groups : [])) {
+          if (Array.isArray(g.files)) g.files.forEach(put)
+        }
+        return undefined
+      }, [data])
       const items = data?.items ?? []
       /**
        * 顶部分类筛选后的可见条目（v0.14.3）。
@@ -6964,6 +7919,61 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           })
         : null
 
+      /**
+       * 矩形框选批注 → ComfyUI 遮罩（v0.14.5 本机 MVP）。
+       * 全链路只碰插件自己的 Host 路由：取原图 → 生成 RGBA PNG → 落盘 → 登记当前对话 → 重扫。
+       * 不自动发送、不写会话日志、不请求 ComfyUI；路径由「遮罩来源」随反馈草稿带出，
+       * 由老板确认后手动发送，模型再拿去回填 #369.image / #193.image。
+       */
+      const exportMask = React.useCallback(async (item, annotation) => {
+        const built = await buildMaskPng(item.relPath, annotation)
+        // 右键多边形选区带归一化顶点；矩形批注没有这个字段，Host 仍按老契约处理。
+        const isPolygon = Array.isArray(annotation?.polygon) && annotation.polygon.length >= 4
+        const payload = await callHost('saveMask', {
+          path: item.relPath,
+          data: built.data,
+          region: {
+            x: clamp01(annotation.x), y: clamp01(annotation.y),
+            w: clamp01(annotation.w), h: clamp01(annotation.h),
+          },
+          ...(isPolygon ? {
+            polygon: annotation.polygon,
+            width: built.width,
+            height: built.height,
+          } : {}),
+          // v0.14.7 彩色填充预览图：与主 alpha 遮罩一起落盘，颜色由界面色板决定
+          ...(built.overlay ? {
+            overlay: built.overlay,
+            fillColor: String(built.fillColor ?? 'green'),
+            fillLabel: String(built.fillLabel ?? '绿'),
+          } : {}),
+          sessionId: sessionId ?? '',
+          sessionTitle: Array.isArray(data?.groups)
+            ? (data.groups.find((g) => g.isCurrent)?.title ?? '')
+            : '',
+          sessionCreatedAt: Array.isArray(data?.groups)
+            ? (data.groups.find((g) => g.isCurrent)?.createdAt ?? 0)
+            : 0,
+        })
+        if (payload?.ok === false) throw new Error(payload?.error?.message ?? 'saveMask failed')
+        setMaskOverrides((prev) => ({
+          ...prev,
+          [item.relPath]: {
+            relPath: String(payload?.relPath ?? ''),
+            sourceName: String(item.name ?? ''),
+            region: payload?.region ?? null,
+            polygon: payload?.polygon ?? null,
+            polygonPx: payload?.polygonPx ?? null,
+            bboxPx: payload?.bboxPx ?? null,
+            areaPx: Number(payload?.areaPx) || 0,
+            overlayRelPath: String(payload?.overlayRelPath ?? ''),
+            fillColor: String(built.fillColor ?? 'green'),
+          },
+        }))
+        void refresh()
+        return payload
+      }, [sessionId, data, refresh])
+
       // 查看器作为覆盖层叠在网格上：网格保持挂载，滚动位置不丢
       // 用 viewer.list（打开时记录的快照），不用全局 items：
       // 分组视图下卡片来自组内文件，与当前页的扁平 items 不是同一个集合。
@@ -6973,6 +7983,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
               annotations: annotationsOf,
               onAddAnnotation: addAnnotation,
               onRemoveAnnotation: removeAnnotation,
+              onExportMask: exportMask,
               items: viewer.list,
               index: Math.min(viewer.index, viewer.list.length - 1),
               t,
@@ -7014,6 +8025,39 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       // 反馈篮（S3-a）：列出已标记条目 + 带批注的卡片（v0.14.3 批注并入反馈）
       // 批注属于「反馈」这一侧：它不进 marks（不参与表态/筛选/落盘），
       // 但只要有批注，这张卡就出现在反馈篮里，草稿会按 Annotation N 逐条带出说明与框选区域。
+      // 遮罩资产由扫描侧透传 maskOf.sourceRelPath；反查成「原图 → 遮罩」映射，
+      // 这样原图的反馈条目（带框选批注）在草稿里会自动带出「遮罩来源」，无需人工复制路径。
+      const allAssets = [
+        ...(Array.isArray(data?.items) ? data.items : []),
+        ...(Array.isArray(data?.groups)
+          ? data.groups.flatMap((gr) => (Array.isArray(gr.files) ? gr.files : []))
+          : []),
+      ]
+      const maskBySource = new Map()
+      for (const asset of allAssets) {
+        const m = asset.maskOf
+        const source = String(m?.sourceRelPath ?? '')
+        if (source === '' || maskBySource.has(source)) continue
+        maskBySource.set(source, {
+          relPath: String(asset.relPath ?? ''),
+          sourceName: String(m?.sourceName ?? ''),
+          region: m?.region ?? null,
+          // v0.14.6/14.7：源图的反馈条目也要带全顶点坐标与彩色预览路径，
+          // 否则这里会把扫描元数据「压扁」，草稿里只剩 region。
+          polygon: Array.isArray(m?.polygon) ? m.polygon : null,
+          polygonPx: Array.isArray(m?.polygonPx) ? m.polygonPx : null,
+          bboxPx: Array.isArray(m?.bboxPx) ? m.bboxPx : null,
+          areaPx: Number(m?.areaPx) || 0,
+          imageWidth: Number(m?.imageWidth) || 0,
+          imageHeight: Number(m?.imageHeight) || 0,
+          overlayRelPath: String(m?.overlayRelPath ?? ''),
+          fillColor: String(m?.fillColor ?? ''),
+        })
+      }
+      // 刚导出、列表还没刷出遮罩时，用内存兜底覆盖（刷新后由扫描元数据接管）
+      for (const [source, meta] of Object.entries(maskOverrides)) {
+        if (String(meta?.relPath ?? '') !== '') maskBySource.set(source, meta)
+      }
       const feedbackPaths = Array.from(new Set([
         ...Object.keys(marks),
         ...Object.keys(annotations),
@@ -7031,6 +8075,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           category: found?.category ?? 'unknown',
           sessionId: found?.sessionId,
           frameOf: found?.frameOf,
+          maskOf: maskBySource.get(relPath) ?? found?.maskOf,
           mark: marks[relPath],
           annotations: Array.isArray(annotations[relPath]) ? annotations[relPath] : [],
         }
@@ -7363,17 +8408,41 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       ])
     }
 
-    /** tab 标题（chip / 浮动面板标题）。 */
-
-    function GalleryTitle({ t }) {
-      return h('span', { className: 'dg-title' }, t('type.label'))
+    /**
+     * 画廊图标（相框 + 山 + 闪光）—— tab 标题、侧栏脚部入口、输入框入口三处复用，
+     * 保证同一份图形不漂移。内联 SVG、跟随 currentColor、尺寸由外层 className 决定；
+     * 不依赖包内 icon.svg（其首行是非法的 <!DOCTYPE html>，且从未被引用过）。
+     */
+    function GalleryGlyph({ className }) {
+      return h('svg', {
+        className: className || 'dg-tabTitleIcon',
+        viewBox: '0 0 64 64',
+        width: 16, height: 16,
+        'aria-hidden': 'true', focusable: 'false',
+      }, [
+        // 叠层工作台：后层只露右上边角。三层完整轮廓在 16px 下会互相交叠糊成一块，
+        // 故减为「一张主卡片 + 露角」，线宽加粗到 4（缩到 16px 约 1px 实线）。
+        h('path', { key: 'back', d: 'M22 8h28a4 4 0 0 1 4 4v24', fill: 'none', stroke: 'currentColor', strokeWidth: 4, strokeLinecap: 'round', opacity: 0.55 }),
+        h('rect', { key: 'card', x: 6, y: 16, width: 42, height: 38, rx: 6, fill: 'none', stroke: 'currentColor', strokeWidth: 4 }),
+        h('path', { key: 'check', d: 'M15 35l6 6 12-13', fill: 'none', stroke: 'currentColor', strokeWidth: 4.5, strokeLinecap: 'round', strokeLinejoin: 'round' }),
+      ])
     }
 
-    /** 侧栏脚部入口按钮：点击打开画廊 tab。 */
+    /** tab 标题（chip / 浮动面板标题）：图标 + 名称。 */
+    function GalleryTitle({ t }) {
+      // 包成单个 inline-flex 容器：宿主 chip 会把 slot 的每个子节点当 flex item 并额外插一份 gap，
+      // 若用 Fragment 返回 [图标, 文字]，间距会与图标自带的 margin-right 叠加而过大，还挤压名称。
+      return h('span', { className: 'dg-titleWrap' },
+        h(GalleryGlyph),
+        h('span', { className: 'dg-title' }, t('type.label')))
+    }
+
+    /** 侧栏脚部入口按钮：点击打开画廊 tab。展开态「图标 + 名称」，收窄态仅图标。 */
     function OpenButton({ t, wide }) {
+      const glyph = h(GalleryGlyph, { className: 'dg-sideIcon' })
       return h('button', {
         type: 'button',
-        className: 'dg-btn dg-open',
+        className: `dg-btn dg-open ${wide ? 'dg-openWide' : 'dg-openNarrow'}`,
         'data-gallery-open': true,
         title: t('type.label'),
         'aria-label': t('type.label'),
@@ -7384,7 +8453,9 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
             console.error('dsh-gallery: open failed', error)
           }
         },
-      }, wide ? t('type.label') : '▦')
+      }, wide
+        ? h(React.Fragment, null, glyph, h('span', { className: 'dg-openLabel' }, t('type.label')))
+        : glyph)
     }
 
 
@@ -7486,7 +8557,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
             console.error('dsh-gallery: open failed', error)
           }
         },
-      }, '▦')
+      }, h(GalleryGlyph, { className: 'dg-sideIcon' }))
     }
 
     return {
@@ -7509,6 +8580,53 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
             if (window.dshGallerySeam === seam) delete window.dshGallerySeam
           }
         }, 'dsh-gallery: seam')
+
+        // 拖图带位置信息：捕获阶段拦截画廊卡片的 dragstart，把
+        // 「文件名 + 绝对路径 + 主遮罩」写进 File.name（DSH 会原样带进消息）。
+        // 不改图片节点、不改 draggable、不碰 Viewer 的缩放/批注交互、不自动发送。
+        ctx.effect(() => {
+          const onDragStart = (event) => {
+            const dt = event.dataTransfer
+            const target = event.target
+            if (dt === null || dt === undefined || !(target instanceof Element)) return
+            const card = target.closest('[data-gallery-relpath]')
+            if (card === null) return
+            const relPath = String(card.getAttribute('data-gallery-relpath') ?? '')
+            const entry = dragAssetIndex.get(relPath)
+            if (entry === undefined) return
+            // 预览图 / 原图没有 maskOf，按 overlayRelPath / sourceRelPath 反查主遮罩，
+            // 把「主遮罩=<文件名> ｜ 工作流请用主遮罩，预览仅供目视」写进拖拽文本。
+            const linked = dragMaskByOverlay.get(relPath) ?? dragMaskBySource.get(relPath) ?? null
+            const hasMask = entry.item?.maskOf !== null && entry.item?.maskOf !== undefined
+            const item = (!hasMask && linked !== null)
+              ? { ...entry.item, maskOf: { ...linked, linkedMask: true } }
+              : entry.item
+            const name = dragNameOf(item, entry.absPath)
+            // 自证 + 兜底双用途：无论 File 替换是否成功，都把同一串信息写进剪贴板。
+            // 拖完在输入框 Ctrl+V 能粘出「产出台·…」= 新代码确实执行过、dragstart 命中；
+            // 粘不出 = 面板仍加载旧模块，需重载窗口。编码 / 写入失败时它就是唯一可用通道。
+            void copyText(name)
+            // 从 Viewer「拖到对话」按钮拖出时，取预览大图而不是按钮内的节点；
+            // 列表卡片则仍用自己那张缩略图。两者都是同源 blob URL，canvas 不会被污染。
+            const img = card.hasAttribute('data-gallery-dragviewer')
+              ? document.querySelector('.dg-viewerBody img')
+              : (target.matches('img') ? target : target.querySelector('img'))
+            const bytes = syncImagePngBytes(img)
+            if (bytes === null) {
+              // 编码失败：保留浏览器原生拖图，信息已在剪贴板供手动粘贴
+              return
+            }
+            try {
+              dt.clearData()
+              dt.effectAllowed = 'copy'
+              dt.items.add(new File([bytes], name, { type: 'image/png' }))
+            } catch (error) {
+              console.warn('dsh-gallery: 拖图元信息写入失败，信息已在剪贴板', error)
+            }
+          }
+          document.addEventListener('dragstart', onDragStart, true)
+          return () => document.removeEventListener('dragstart', onDragStart, true)
+        }, 'dsh-gallery: drag asset metadata')
 
         ctx.effect(() => {
           const tag = document.createElement('style')
