@@ -34,7 +34,7 @@ import { resolveReadable, serveMedia, contentTypeFor } from './media.js'
 import { MARK_ACTIONS, readMarks, writeMarks, setMark, setMarksBatch, marksFilePath } from './marks.js'
 import { LABEL_CATEGORIES, readLabels, setLabel, setLabelsBatch, deleteLabels } from './labels.js'
 import {
-  registerFrame, deleteFrames, frameTimecode, makeFrameName,
+  registerFrame, deleteFrames, frameTimecode, makeFrameName, makeMaskName, maskPolygonMeta,
 } from './frames.js'
 
 /** reveal 相关的排查日志（失败/异常时便于定位，不影响功能）。 */
@@ -684,6 +684,172 @@ export function registerOpsRoute(ctx, config) {
             return json({
               ok: true, relPath, absPath: abs, name, timecode,
               frameMs: Math.round(frameMs), videoName,
+            })
+          }
+
+          // ---- v0.14.5 矩形框选批注 → ComfyUI 可用 RGBA 遮罩 ----
+          // 前端已按「框内 alpha=0、框外 255、RGB 保留原图」编码好 PNG；
+          // 这里只负责安全落盘 + 登记当前对话，不解析像素、不请求 ComfyUI。
+          if (op === 'saveMask') {
+            const opts = resolveOptions(config)
+            const imageRel = String(body?.path ?? '').replace(/\\/g, '/')
+            const data = typeof body?.data === 'string' ? body.data : ''
+            const region = body?.region
+            if (imageRel === '' || data === '') {
+              return json({ ok: false, error: { code: 'bad-request', message: '缺少 path 或 data' } }, 400)
+            }
+            const keys = ['x', 'y', 'w', 'h']
+            const validRegion = region !== null && typeof region === 'object'
+              && keys.every((k) => {
+                const n = Number(region[k])
+                return Number.isFinite(n) && n >= 0 && n <= 1
+              })
+              && Number(region.w) > 0 && Number(region.h) > 0
+            if (!validRegion) {
+              return json({ ok: false, error: { code: 'bad-request', message: 'region 不合法' } }, 400)
+            }
+            const normRegion = {
+              x: Number(region.x), y: Number(region.y),
+              w: Number(region.w), h: Number(region.h),
+            }
+            // v0.14.6 右键多边形：多边形仍然保留 region bbox（兼容旧文件名与旧遮罩），
+            // 额外登记顶点像素坐标 / 外接框 / 面积；顶点不合法直接 400，不落脏数据。
+            const polygonMeta = body?.polygon === undefined || body?.polygon === null
+              ? null
+              : maskPolygonMeta(body.polygon, body?.width, body?.height)
+            if (body?.polygon !== undefined && body?.polygon !== null && polygonMeta === null) {
+              return json({ ok: false, error: { code: 'bad-request', message: 'polygon 不合法（需 4–20 个归一化顶点与有效原图尺寸）' } }, 400)
+            }
+
+            // 源图必须真实存在于扫描目录内；同时拿到它所属的 root 以反算 relPath。
+            let imageAbs = null
+            let ownerRoot = null
+            for (const root of opts.roots) {
+              if (typeof root !== 'string' || root === '') continue
+              const abs = path.resolve(root, imageRel)
+              if (!isInside(root, abs)) continue
+              try {
+                const st = await fsp.stat(abs)
+                if (st.isFile()) { imageAbs = abs; ownerRoot = root; break }
+              } catch { /* 换下一个 root */ }
+            }
+            if (imageAbs === null) {
+              return json({ ok: false, error: { code: 'image-not-found', message: '源图不在扫描目录内' } }, 404)
+            }
+
+            const buf = Buffer.from(data, 'base64')
+            if (buf.length < 8 || buf.length > 24 * 1024 * 1024) {
+              return json({ ok: false, error: { code: 'bad-png', message: 'PNG 数据为空或超过 24 MB' } }, 400)
+            }
+            // PNG 魔数：不允许把任意 base64 写进资产目录
+            if (!(buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47)) {
+              return json({ ok: false, error: { code: 'bad-png', message: '数据不是 PNG' } }, 400)
+            }
+
+            // v0.14.7 彩色填充预览图：与主遮罩同样只认 PNG / 24 MB。
+            // 颜色和中文标签都走白名单，避免把任意字符串拼进文件名。
+            const overlayData = typeof body?.overlay === 'string' ? body.overlay : ''
+            let overlayBuf = null
+            const overlayColor = ['green', 'red', 'blue'].includes(String(body?.fillColor ?? ''))
+              ? String(body.fillColor) : 'green'
+            const overlayLabel = ['绿', '红', '蓝'].includes(String(body?.fillLabel ?? ''))
+              ? String(body.fillLabel) : '绿'
+            if (overlayData !== '') {
+              overlayBuf = Buffer.from(overlayData, 'base64')
+              const isPng = overlayBuf[0] === 0x89 && overlayBuf[1] === 0x50
+                && overlayBuf[2] === 0x4e && overlayBuf[3] === 0x47
+              if (overlayBuf.length < 8 || overlayBuf.length > 24 * 1024 * 1024 || !isPng) {
+                return json({ ok: false, error: { code: 'bad-png', message: '预览图数据为空、不是 PNG 或超过 24 MB' } }, 400)
+              }
+            }
+
+            const dir = path.dirname(imageAbs)
+            const imageName = path.basename(imageAbs)
+            // 多边形遮罩文件名带「多边形」，与矩形遮罩一眼可分；重复导出仍加 -2 / -3。
+            const baseSuffix = polygonMeta === null ? '' : '-多边形'
+            let name = makeMaskName(imageName, normRegion, baseSuffix)
+            let abs = path.join(dir, name)
+            // 同一个框重复导出：不覆盖旧遮罩，依次加 -2 / -3 …
+            let n = 2
+            while (n <= 99) {
+              let exists = true
+              try { await fsp.access(abs) } catch { exists = false }
+              if (!exists) break
+              name = makeMaskName(imageName, normRegion, `${baseSuffix}-${n}`)
+              abs = path.join(dir, name)
+              n += 1
+            }
+            if (!isInside(ownerRoot, abs)) {
+              return json({ ok: false, error: { code: 'outside-roots', message: '目标路径越出扫描目录' } }, 400)
+            }
+
+            // 原子写：先落到 .tmp 再改名，避免扫描读到半截 PNG
+            const tmp = `${abs}.tmp-${process.pid}-${Date.now().toString(36)}`
+            try {
+              await fsp.mkdir(dir, { recursive: true })
+              await fsp.writeFile(tmp, buf)
+              await fsp.rename(tmp, abs)
+            } catch (error) {
+              try { await fsp.rm(tmp, { force: true }) } catch { /* 忽略 */ }
+              return json({ ok: false, error: { code: 'mask-write-failed', message: String(error?.message ?? error) } }, 500)
+            }
+
+            const relPath = path.relative(ownerRoot, abs).split(path.sep).join('/')
+
+            // v0.14.7 彩色填充预览：与主遮罩同目录、独立文件，不登记成遮罩帧。
+            // 它会按「同目录外部素材」规则自动出现在当前对话并标为素材，方便目视核对选区。
+            let overlayRelPath = ''
+            let overlayNameFinal = ''
+            if (overlayBuf !== null) {
+              const stem = name.replace(/\.png$/i, '')
+              let oName = `${stem}_${overlayLabel}填充预览.png`
+              let oAbs = path.join(dir, oName)
+              let k = 2
+              while (k <= 99) {
+                let exists = true
+                try { await fsp.access(oAbs) } catch { exists = false }
+                if (!exists) break
+                oName = `${stem}_${overlayLabel}填充预览-${k}.png`
+                oAbs = path.join(dir, oName)
+                k += 1
+              }
+              if (isInside(ownerRoot, oAbs)) {
+                const oTmp = `${oAbs}.tmp-${process.pid}-${Date.now().toString(36)}`
+                try {
+                  await fsp.writeFile(oTmp, overlayBuf)
+                  await fsp.rename(oTmp, oAbs)
+                  overlayNameFinal = oName
+                  overlayRelPath = path.relative(ownerRoot, oAbs).split(path.sep).join('/')
+                } catch {
+                  try { await fsp.rm(oTmp, { force: true }) } catch { /* 忽略 */ }
+                  // 预览图是附加产物，写失败不影响主遮罩成功
+                }
+              }
+            }
+
+            try {
+              await registerFrame(opts.settingsFile, {
+                kind: 'mask',
+                relPath,
+                sessionId: String(body?.sessionId ?? ''),
+                sessionTitle: String(body?.sessionTitle ?? ''),
+                sessionCreatedAt: Number(body?.sessionCreatedAt) || 0,
+                sourceRelPath: imageRel,
+                sourceName: imageName,
+                region: normRegion,
+                ...(polygonMeta ?? {}),
+                ...(overlayRelPath !== '' ? { overlayRelPath, fillColor: overlayColor } : {}),
+              })
+            } catch (error) {
+              return json({ ok: false, error: { code: 'mask-register-failed', message: String(error?.message ?? error) } }, 500)
+            }
+
+            // 新资产要立刻出现在列表里，不能等 4 秒缓存过期
+            listCache.clear()
+            return json({
+              ok: true, relPath, absPath: abs, name, region: normRegion,
+              ...(polygonMeta ?? {}),
+              ...(overlayRelPath !== '' ? { overlayRelPath, overlayName: overlayNameFinal } : {}),
             })
           }
 
