@@ -113,3 +113,62 @@ export function makeFrameName(videoName, frameMs, suffix = '') {
   const safe = raw.replace(/[\\/:*?"<>|\r\n\t]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 80) || 'video'
   return `${safe}_帧_${frameTimecode(frameMs)}${suffix}.png`
 }
+
+/**
+ * 遮罩文件名（v0.14.5）：`<原图名>_遮罩_x<左>-y<上>-w<宽>-h<高>.png`。
+ * 坐标用归一化百分比整数，肉眼就能看出框选位置；同框重复导出加 -2 / -3，不覆盖旧遮罩。
+ * 复用 frames.json 登记（kind:'mask'），扫描时据此把遮罩挂回产出它的当前对话。
+ */
+export function makeMaskName(imageName, region, suffix = '') {
+  const raw = String(imageName ?? 'image').replace(/\.[^.]+$/, '')
+  const safe = raw.replace(/[\\/:*?"<>|\r\n\t]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 60) || 'image'
+  const pct = (v) => {
+    const n = Number(v)
+    if (!Number.isFinite(n)) return 0
+    return Math.round(Math.min(1, Math.max(0, n)) * 100)
+  }
+  const r = region ?? {}
+  return `${safe}_遮罩_x${pct(r.x)}-y${pct(r.y)}-w${pct(r.w)}-h${pct(r.h)}${suffix}.png`
+}
+
+/**
+ * 多边形遮罩元数据（v0.14.6）：校验归一化顶点（4–20 点），换算成原图像素坐标，
+ * 并给出外接框与选区面积。老板要的「记录这个区域在图片的准确位置」就落在这里——
+ * 像素坐标只在 Host 侧按原图真实尺寸计算，前端显示的百分比不作为准。
+ * 返回 null 表示不合法，调用方直接 400，绝不把脏坐标写进 frames.json。
+ */
+export function maskPolygonMeta(polygon, width, height) {
+  if (!Array.isArray(polygon) || polygon.length < 4 || polygon.length > 20) return null
+  const w = Math.max(1, Math.round(Number(width) || 0))
+  const h = Math.max(1, Math.round(Number(height) || 0))
+  const pts = []
+  for (const p of polygon) {
+    const nx = Number(Array.isArray(p) ? p[0] : p?.x)
+    const ny = Number(Array.isArray(p) ? p[1] : p?.y)
+    if (!Number.isFinite(nx) || !Number.isFinite(ny)) return null
+    if (nx < 0 || nx > 1 || ny < 0 || ny > 1) return null
+    pts.push([Math.round(nx * w), Math.round(ny * h)])
+  }
+  const xs = pts.map((p) => p[0])
+  const ys = pts.map((p) => p[1])
+  // 右/下用开区间（与 PIL getbbox 一致），草稿里 (x0,y0)-(x1,y1) 才不会少算一列/一行。
+  const bboxPx = [
+    Math.min(...xs), Math.min(...ys),
+    Math.min(w, Math.max(...xs) + 1), Math.min(h, Math.max(...ys) + 1),
+  ]
+  let sum = 0
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i, i += 1) {
+    sum += (pts[j][0] * pts[i][1]) - (pts[i][0] * pts[j][1])
+  }
+  return {
+    polygon: polygon.map((p) => [
+      Number(Array.isArray(p) ? p[0] : p.x),
+      Number(Array.isArray(p) ? p[1] : p.y),
+    ]),
+    polygonPx: pts,
+    bboxPx,
+    areaPx: Math.round(Math.abs(sum) / 2),
+    imageWidth: w,
+    imageHeight: h,
+  }
+}
