@@ -16,6 +16,20 @@ import { readLabels, LABEL_CATEGORIES } from './labels.js'
 import { readFrames } from './frames.js'
 import { buildSessionIndex, readSessionStates } from './session-index.js'
 
+/**
+ * v0.14.7：相对路径的父目录（统一小写；空串表示文件直接躺在 root 下）。
+ * 当前对话据此判断「外部图片是否和本对话用过的资产在同一目录」。
+ */
+export function parentDirOf(relPath) {
+  const p = String(relPath ?? '').replace(/\\/g, '/').toLowerCase()
+  return p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : ''
+}
+
+/** v0.14.7：当前对话分类。日志/登记里没有的、同目录外部图片自动标「素材」(input)。 */
+export function categoryForSessionAsset(autoCategory, externalAsset) {
+  return autoCategory ?? (externalAsset ? ASSET_CATEGORY.INPUT : null)
+}
+
 export function extractAssetInfo(logText, sessionStartMs = 0) {
   const assets = new Map()
   if (typeof logText !== 'string' || logText === '') return assets
@@ -206,6 +220,9 @@ export async function resolveSessionScope(config, sessionId, allRoots) {
   const normalized = []
   const relPaths = []
   const taskDirs = new Set()
+  // v0.14.7：会话引用过的「精确目录」（相对 root、小写，空串表示 root 直属层）。
+  // 外部拷进同一目录、没被日志引用的图片，也要能在「当前对话」里看到并标为素材。
+  const sessionDirs = new Set()
   // relPath(小写) → 分类，供扫描时标注
   const categoryByRel = new Map()
 
@@ -224,6 +241,7 @@ export async function resolveSessionScope(config, sessionId, allRoots) {
     const relPath = rel.split(path.sep).join('/')
     relPaths.push(relPath)
     categoryByRel.set(relPath.toLowerCase(), info.category)
+    sessionDirs.add(parentDirOf(relPath))
     // 修法 B：有子目录时取第一层；没有子目录（文件直接在 root 下）时，
     // 用空字符串占位，表示「只在根目录层匹配」，不再直接丢弃
     if (segs.length >= 2) taskDirs.add(segs[0])
@@ -236,6 +254,7 @@ export async function resolveSessionScope(config, sessionId, allRoots) {
     paths: normalized,
     relPaths,
     categoryByRel,
+    sessionDirs: [...sessionDirs],
     subSessions: subLogs.length,
   }
 }
@@ -282,11 +301,15 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
   // 当前对话范围：先解析会话日志（含子智能体会话），得到「本对话产出过的路径」
   let scopeInfo = { ok: true, reason: 'global', taskDirs: [], paths: [], relPaths: [], subSessions: 0 }
   let sessionRelSet = null
+  // v0.14.7：会话引用过的目录集合。同目录下的外部图片也纳入「当前对话」，
+  // 但不在精确路径白名单里 —— 它们会被自动标为「素材」(input)。
+  let sessionDirSet = null
   if (isSession) {
     scopeInfo = await resolveSessionScope(config, sessionId, opts.roots)
     // 修法 B：用「精确相对路径」集合判定，而不是只靠第一层目录名。
     // 这样既能处理有子目录的情况，也能处理「文件直接躺在 root 根目录下」。
     sessionRelSet = new Set((scopeInfo.relPaths ?? []).map((p) => p.toLowerCase()))
+    sessionDirSet = new Set((scopeInfo.sessionDirs ?? []).map((d) => String(d).toLowerCase()))
     // 会话日志缺失时 resolveSessionScope 可能不带分类表，补一个空的
     if (!(scopeInfo.categoryByRel instanceof Map)) scopeInfo.categoryByRel = new Map()
     // 本对话截出来的帧：让它通过范围过滤，并给一个明确标签
@@ -294,6 +317,7 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
       if (String(f.sessionId ?? '') === sessionId) {
         sessionRelSet.add(rel)
         scopeInfo.categoryByRel?.set(rel, ASSET_CATEGORY.INTERMEDIATE)
+        sessionDirSet.add(parentDirOf(rel))
       }
     }
   }
@@ -327,6 +351,38 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
           })
         }
       }
+    }
+  }
+
+  // v0.14.8：全局资产下「当前对话」组也要认出外部素材。
+  // 旧逻辑只在 scope=session 算 sessionDirs；全局模式只认会话日志 / frames.json
+  // 精确引用过的文件，同目录里外部放进来、没被引用过的图全掉进「历史资产」
+  // 并标「未归类」——界面上就表现为「当前对话」组只有几张过程稿、素材数为 0。
+  // 这里复用与「当前对话」视图完全相同的目录判定，把无归属的同目录图片
+  // 挂回当前对话组并标 input（素材）；其它对话 / 历史资产一律不动。
+  let globalCurrentDirs = null
+  let globalCurrentMeta = null
+  if (!isSession && sessionId !== '') {
+    const current = await resolveSessionScope(config, sessionId, opts.roots)
+    if (current.ok) {
+      const dirs = new Set((current.sessionDirs ?? []).map((d) => String(d).toLowerCase()))
+      // 本对话截帧 / 遮罩的登记目录也算（与 session 模式保持一致）
+      for (const [rel, f] of frameByRel) {
+        if (String(f.sessionId ?? '') === sessionId) dirs.add(parentDirOf(rel))
+      }
+      globalCurrentDirs = dirs
+      // 会话索引里可能没有该会话（日志里没有落在扫描目录内的产出），
+      // 这时组名会退化成 sessionId 前 8 位。frames.json 的登记带会话标题，补上。
+      const indexed = sessionIndex?.get(sessionId) ?? null
+      let title = String(indexed?.title ?? '')
+      let createdAt = Number(indexed?.createdAt) || 0
+      for (const [, f] of frameByRel) {
+        if (String(f.sessionId ?? '') !== sessionId) continue
+        if (title === '') title = String(f.sessionTitle ?? '')
+        if (createdAt === 0) createdAt = Number(f.sessionCreatedAt) || 0
+        if (title !== '' && createdAt !== 0) break
+      }
+      globalCurrentMeta = { title, createdAt }
     }
   }
 
@@ -392,7 +448,13 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
         if (!extSet.has(ext)) continue
         // 当前对话范围：按精确相对路径判定（支持根目录文件与多层子目录）
         const relPath = path.relative(rootDir, fullPath).split(path.sep).join('/')
-        if (sessionRelSet !== null && !sessionRelSet.has(relPath.toLowerCase())) continue
+        // 当前对话：精确路径白名单优先；不在白名单但落在「本对话用过的目录」里，
+        // 视作外部放进来的素材放行（v0.14.7）。其它目录一律不进当前对话。
+        let externalAsset = false
+        if (sessionRelSet !== null && !sessionRelSet.has(relPath.toLowerCase())) {
+          if (sessionDirSet === null || !sessionDirSet.has(parentDirOf(relPath))) continue
+          externalAsset = true
+        }
         let stat
         try {
           stat = await fsp.stat(fullPath)
@@ -413,6 +475,8 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
           size: stat.size,
           mtime: stat.mtimeMs,
           extension: ext,
+          // v0.14.7：外部素材标记，扫描阶段据此给出「素材」标签
+          ...(externalAsset ? { externalAsset: true } : {}),
           // 音视频区分「视频 / 音频」，客户端据此选 <video> 还是 <audio>
           ...(isMedia ? { mediaType: VIDEO_EXTS.includes(ext) ? 'video' : 'audio' } : {}),
         })
@@ -433,8 +497,27 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
   for (const item of matches) {
     const abs = path.join(item.rootDir, ...item.relPath.split('/'))
     const frame = frameByRel.get(item.relPath.toLowerCase())
-    // 帧来源元数据透传到卡片 / 反馈篮，草稿里才能写清「取自哪段视频的哪一帧」
-    if (frame !== undefined) {
+    // 帧 / 遮罩来源元数据透传到卡片 / 反馈篮，草稿里才能写清来源。
+    // 遮罩是「由某张原图的框选区域生成」的新资产（kind:'mask'），
+    // 原图的反馈条目靠 maskOf.sourceRelPath 反查到它，路径随草稿带出、零自动发送。
+    if (frame?.kind === 'mask') {
+      item.maskOf = {
+        relPath: String(item.relPath ?? ''),
+        sourceRelPath: String(frame.sourceRelPath ?? ''),
+        sourceName: String(frame.sourceName ?? ''),
+        region: frame.region ?? null,
+        // v0.14.6 右键多边形：像素级位置信息透传到反馈草稿
+        polygon: Array.isArray(frame.polygon) ? frame.polygon : null,
+        polygonPx: Array.isArray(frame.polygonPx) ? frame.polygonPx : null,
+        bboxPx: Array.isArray(frame.bboxPx) ? frame.bboxPx : null,
+        areaPx: Number(frame.areaPx) || 0,
+        imageWidth: Number(frame.imageWidth) || 0,
+        imageHeight: Number(frame.imageHeight) || 0,
+        // v0.14.7 彩色填充预览图路径 + 颜色，随草稿带出（工作流仍用主遮罩）
+        overlayRelPath: String(frame.overlayRelPath ?? ''),
+        fillColor: String(frame.fillColor ?? ''),
+      }
+    } else if (frame !== undefined) {
       item.frameOf = {
         videoName: String(frame.videoName ?? ''),
         videoRelPath: String(frame.videoRelPath ?? ''),
@@ -456,16 +539,28 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
     const owner = ownerByAbs.get(abs) ?? virtualOwner
     item.absPath = abs
     if (isSession) {
-      item.category = (scopeInfo.categoryByRel?.get(item.relPath.toLowerCase())) ?? null
+      const autoCategory = scopeInfo.categoryByRel?.get(item.relPath.toLowerCase())
+      // 外部放进本对话目录、日志里没引用的图 → 自动标「素材」(input)。
+      // 手动改过的标签在下面仍然优先覆盖，刷新/重扫/重启都不回退。
+      item.category = categoryForSessionAsset(autoCategory, item.externalAsset)
       item.sessionId = sessionId
     } else if (owner !== undefined) {
       item.category = owner.category
       item.sessionId = owner.sessionId
       item.sessionTitle = owner.title
       item.sessionCreatedAt = owner.createdAt
+    } else if (globalCurrentDirs !== null && globalCurrentDirs.has(parentDirOf(item.relPath))) {
+      // v0.14.8 全局模式：外部放进本对话目录、日志与登记都没引用的图片。
+      // 与「当前对话」视图同一口径：挂回当前对话组 + 自动标「素材」(input)。
+      // 只对「不属于任何已知对话」的条目生效，绝不抢别的对话已引用的文件。
+      item.category = ASSET_CATEGORY.INPUT
+      item.externalAsset = true
+      item.sessionId = sessionId
+      item.sessionTitle = globalCurrentMeta?.title ?? ''
+      item.sessionCreatedAt = globalCurrentMeta?.createdAt ?? 0
     } else {
-      // 不属于任何已知对话的文件：归到「历史资产」，分类记为**未归类**
-      // 不能兜底成 input —— 那会把 4995 个历史文件全标成「输入」
+      // 不属于任何已知对话、也不在当前对话目录里的文件：归到「历史资产」，
+      // 分类记为**未归类**。不能兜底成 input —— 那会把几千个历史文件全标成「输入」
       item.category = ASSET_CATEGORY.UNKNOWN
       item.sessionId = null
     }
@@ -546,6 +641,11 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
       relPaths: (scopeInfo.relPaths ?? []).length,
       // 子智能体会话数：> 0 表示已纳入它们的产出
       subSessions: scopeInfo.subSessions ?? 0,
+      // v0.14.7：本对话用过的目录数 / 自动纳入的外部素材数（诊断用）
+      // v0.14.8：全局模式另给一份目录数，两种视图口径是否一致一眼可查
+      externalDirs: sessionDirSet?.size ?? 0,
+      globalExternalDirs: globalCurrentDirs?.size ?? 0,
+      externalAssets: matches.reduce((n, i) => n + (i.externalAsset ? 1 : 0), 0),
     },
     root: opts.root,
     roots: opts.roots,
