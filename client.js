@@ -68,6 +68,37 @@ function clamp01(v) {
   return n
 }
 
+/** 把数夹到 [min, max] 闭区间内。 */
+function clampNum(v, min, max) {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return min
+  if (n < min) return min
+  if (n > max) return max
+  return n
+}
+
+/**
+ * v0.16.0 选段播放决策（纯函数，便于单测）。
+ *
+ * 老板 2026-11-13 11:56 反馈：播放必须跟选段走 —— **从入点起播、到出点结束**，
+ * 而不是播放器自己按整段播（截图里选段是 2:16–3:21，播放头却停在 0:29）。
+ * 拖动端点 / 点轨道时（scrubbing）不做钳制，否则播放头会被反复拽回，没法目视选帧。
+ *
+ * @returns {{ action: 'none' | 'stop' | 'seekIn', seekTo?: number }}
+ */
+function trimPlaybackDecision(now, inPoint, outPoint, opts) {
+  const o = opts || {}
+  if (!Number.isFinite(now)) return { action: 'none' }
+  // 区间还没初始化（或过短）时不要干预原生播放
+  if (!(outPoint > inPoint + 0.05)) return { action: 'none' }
+  if (o.scrubbing === true) return { action: 'none' }
+  // 到出点：停住，不循环 —— 老板要的是「到出点结束」
+  if (now >= outPoint - 0.02) return { action: 'stop', seekTo: Math.min(now, outPoint) }
+  // 播放跑到入点之前（例如用原生进度条拖到了区间外）→ 拉回入点
+  if (now < inPoint - 0.25 && o.paused !== true) return { action: 'seekIn', seekTo: inPoint }
+  return { action: 'none' }
+}
+
 /** 校验并规整一条批注；不合法返回 null。 */
 function normalizeAnnotation(a) {
   if (a === null || typeof a !== "object") return null
@@ -710,6 +741,8 @@ async function encodeMaskPngBytes(imageData, width, height) {
       ctxDeleteConfirm: '确认删除？此操作不可恢复',
       ctxDeleteYes: '确认删除',
       ctxDeleteNo: '取消',
+      // 批注删除按钮的 title 与卡片删除共用 t('delete')
+      delete: '删除',
       ctxHiddenDone: '已隐藏，可在设置里恢复',
       ctxDeleting: '删除中…',
       ctxDeleteFailed: '删除失败',
@@ -837,6 +870,49 @@ async function encodeMaskPngBytes(imageData, width, height) {
       meta: '{size} · {time}',
       scanned: '已扫描 {dirs} 个目录',
       capped: '已达扫描上限，结果可能不完整',
+      // v0.16.0 粘贴 / 裁剪 / 音视频选段
+      ctxPaste: '粘贴',
+      pasteToCurrent: '粘贴到当前对话素材',
+      pasteHint: '作为「素材」放进鼠标所在的对话；不在任何分组内则放进当前对话',
+      pasteImageOk: '已粘贴图片：{name}（到「{target}」）',
+      pasteFileOk: '已粘贴文件：{name}（到「{target}」）',
+      pasteEmpty: '剪贴板里没有可粘贴的图片或文件',
+      pasteFailed: '粘贴失败：{message}',
+      pasteFileByKey: '剪贴板里没有可粘贴的图片或文件；请在资源管理器里复制文件后重试',
+      pasteUnsupported: '这类文件拿不到磁盘路径，请在资源管理器里复制后重试',
+      // v0.16.0 单文件 / 批量复制 + 任意文件粘贴
+      ctxCopyFile: '复制文件',
+      ctxCopyFileHint: '把该文件写入系统剪贴板，可在别的对话或资源管理器里粘贴',
+      batchCopyFiles: '复制所选文件',
+      batchCopyHint: '把选中的文件写入系统剪贴板，可在别的对话或资源管理器里粘贴',
+      copyOk: '已复制 {n} 个文件到剪贴板；切到目标对话后右键「粘贴」或按 Ctrl+V',
+      copyOkInternal: '已复制 {n} 个文件（系统剪贴板不可用，仅插件内粘贴有效）',
+      copyFailed: '复制失败：{message}',
+      pasteFilesOk: '已粘贴 {n} 个文件到「{target}」：{name}',
+      // v0.16.2 粘贴落点：全局视图下按「鼠标所在的对话组」决定，不是永远当前对话
+      pasteTargetCurrent: '当前对话',
+      pasteTo: '粘贴到「{target}」',
+      cropEnter: '裁剪',
+      cropExit: '退出裁剪',
+      cropConfirm: '确认裁剪',
+      cropCancel: '取消',
+      cropHint: '拖动框选要保留的区域；放大镜显示光标处细节，可拖角调整、拖动框移动',
+      cropSaving: '正在裁剪…',
+      cropSaved: '已裁剪：{name}（已加入「{target}」素材）',
+      cropFailed: '裁剪失败：{message}',
+      cropMinSize: '选区太小',
+      trimEnter: '裁剪片段',
+      trimExit: '退出裁剪',
+      trimPreview: '从入点播放',
+      trimPause: '暂停',
+      trimSave: '保存片段',
+      trimSaving: '正在裁剪音视频…',
+      trimSaved: '已保存片段：{name}（已加入当前对话素材）',
+      trimFailed: '裁剪失败：{message}',
+      trimIn: '入点',
+      trimOut: '出点',
+      trimDragHint: '拖蓝色入点 / 橙色出点选段，也可点轨道设定就近端点；播放自动从入点开始、到出点暂停，拖端点时画面跟着走',
+      trimNoDuration: '媒体尚未就绪，无法裁剪',
     }
 
     const en = {
@@ -1044,6 +1120,7 @@ async function encodeMaskPngBytes(imageData, width, height) {
       ctxDeleteConfirm: 'Delete permanently? This cannot be undone',
       ctxDeleteYes: 'Delete',
       ctxDeleteNo: 'Cancel',
+      delete: 'Delete',
       ctxHiddenDone: 'Hidden. Restore it in settings later.',
       ctxDeleting: 'Deleting…',
       ctxDeleteFailed: 'Delete failed',
@@ -1168,6 +1245,49 @@ async function encodeMaskPngBytes(imageData, width, height) {
       meta: '{size} · {time}',
       scanned: 'Scanned {dirs} folders',
       capped: 'Scan limit reached; results may be incomplete',
+      // v0.16.0 paste / image crop / media trim
+      ctxPaste: 'Paste',
+      pasteToCurrent: 'Paste into current chat assets',
+      pasteHint: 'Add as "source" assets to the chat group under the cursor; falls back to this chat',
+      pasteImageOk: 'Pasted image: {name} (into "{target}")',
+      pasteFileOk: 'Pasted file: {name} (into "{target}")',
+      pasteEmpty: 'No image or file to paste in the clipboard',
+      pasteFailed: 'Paste failed: {message}',
+      pasteFileByKey: 'No image or file to paste; copy files in Explorer and try again',
+      pasteUnsupported: 'No disk path for this file; copy it in Explorer and try again',
+      // v0.16.0 single / batch copy + any-file paste
+      ctxCopyFile: 'Copy file',
+      ctxCopyFileHint: 'Write this file to the system clipboard; paste it in another chat or Explorer',
+      batchCopyFiles: 'Copy selected files',
+      batchCopyHint: 'Write the selected files to the system clipboard; paste them in another chat or Explorer',
+      copyOk: 'Copied {n} file(s) to the clipboard; right-click "Paste" or press Ctrl+V in the target chat',
+      copyOkInternal: 'Copied {n} file(s) (system clipboard unavailable; in-plugin paste only)',
+      copyFailed: 'Copy failed: {message}',
+      pasteFilesOk: 'Pasted {n} file(s) into "{target}": {name}',
+      // v0.16.2 paste destination follows the hovered chat group in the global view
+      pasteTargetCurrent: 'this chat',
+      pasteTo: 'Paste into "{target}"',
+      cropEnter: 'Crop',
+      cropExit: 'Exit crop',
+      cropConfirm: 'Apply crop',
+      cropCancel: 'Cancel',
+      cropHint: 'Drag to select the area to keep; the magnifier shows cursor detail; drag corners to resize, drag the box to move',
+      cropSaving: 'Cropping…',
+      cropSaved: 'Cropped: {name} (added to "{target}" assets)',
+      cropFailed: 'Crop failed: {message}',
+      cropMinSize: 'Selection too small',
+      trimEnter: 'Trim clip',
+      trimExit: 'Exit trim',
+      trimPreview: 'Play from in',
+      trimPause: 'Pause',
+      trimSave: 'Save clip',
+      trimSaving: 'Trimming media…',
+      trimSaved: 'Saved clip: {name} (added to current chat assets)',
+      trimFailed: 'Trim failed: {message}',
+      trimIn: 'In',
+      trimOut: 'Out',
+      trimDragHint: 'Drag the blue In / orange Out handle, or click the track to set the nearest endpoint; playback starts at the in-point and stops at the out-point',
+      trimNoDuration: 'Media not ready yet — cannot trim',
     }
 
 /** 格式化 / 图片压缩 / 并发限流工具。 */
@@ -1234,7 +1354,24 @@ async function encodeMaskPngBytes(imageData, width, height) {
           body: JSON.stringify({ op, ...(payload ?? {}) }),
           signal: merged,
         })
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        if (!response.ok) {
+          // Host 的 op 路由会把具体原因放在 { error: { message } } 里。
+          // 旧实现只抛 `HTTP 500`，老板截图只剩状态码、没法排障 —— 这里把原因带出来。
+          let detail = ''
+          try {
+            const text = await response.text()
+            try {
+              const parsed = JSON.parse(text)
+              const msg = parsed?.error?.message ?? parsed?.message
+              if (typeof msg === 'string') detail = msg
+            } catch {
+              // 网关可能返回 HTML / 纯文本，取一小段兜底（别把整页 HTML 塞进提示）
+              if (text.length < 300 && !text.includes('<')) detail = text.trim()
+            }
+          } catch { /* body 读不动就只报状态码 */ }
+          if (detail.length > 240) detail = `${detail.slice(0, 240)}…`
+          throw new Error(detail === '' ? `HTTP ${response.status}` : `HTTP ${response.status}: ${detail}`)
+        }
         return await response.json()
       } catch (error) {
         // 组件卸载造成的取消仍按 AbortError 交给上层忽略；只有自己的超时转成可读错误
@@ -2544,8 +2681,11 @@ async function encodeMaskPngBytes(imageData, width, height) {
 .dg-mediaStage {
   display: flex; align-items: center; justify-content: center;
   background: #000; min-height: 120px;
-  padding: 0;
+  padding: 0; overflow: hidden; flex: 1 1 auto;
 }
+/* 选段条展开时把舞台的最小高度让出来，否则小窗口下轨道会被面板裁掉 */
+.dg-mediaPanel.is-trim .dg-mediaStage { min-height: 0; }
+.dg-mediaPanel.is-trim .dg-mediaStage video { max-height: 50vh; }
 .dg-mediaPanelVideo .dg-mediaStage video { width: 100%; max-height: 60vh; display: block; }
 .dg-mediaPanelAudio .dg-mediaStage { padding: 24px 16px; background: transparent; }
 .dg-mediaPanelAudio .dg-mediaStage audio { width: 100%; }
@@ -2949,6 +3089,84 @@ async function encodeMaskPngBytes(imageData, width, height) {
   border-color: #1d9e75 !important; font-weight: 600;
 }
 .dg-polyPanelOps .dg-polyClose:disabled { opacity: 0.45; }
+
+/* v0.16.0 粘贴结果提示 */
+.dg-pasteNotice {
+  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+  z-index: 50; max-width: 84%; box-sizing: border-box;
+  padding: 8px 14px; border-radius: 8px; font-size: 12px; line-height: 1.4;
+  background: #1b1e24; color: #e8eaed; box-shadow: 0 8px 28px rgba(0,0,0,0.6);
+  border: 1px solid rgba(255,255,255,0.18); pointer-events: none; word-break: break-all;
+}
+.dg-pasteOk { border-color: rgba(94,214,150,0.6); }
+.dg-pasteFail { border-color: rgba(255,107,107,0.6); color: #ffd2d2; }
+
+/* v0.16.0 图片裁剪层 + 微信式圆形放大镜
+   坐标系说明：裁剪框/放大镜都用 getBoundingClientRect 的**视口坐标**定位，
+   所以这一层必须 fixed 铺满视口，absolute 会相对 stage 偏移导致框错位。 */
+.dg-cropLayer { position: fixed; inset: 0; z-index: 60; cursor: crosshair; }
+.dg-cropRect {
+  position: absolute; border: 1px solid #6a92ff;
+  box-shadow: 0 0 0 9999px rgba(0,0,0,0.5); box-sizing: border-box;
+  cursor: move; background: rgba(106,146,255,0.06);
+}
+.dg-cropHandle {
+  position: absolute; width: 13px; height: 13px; background: #6a92ff;
+  border: 2px solid #fff; border-radius: 2px; box-sizing: border-box;
+}
+.dg-cropHandleNW { left: -7px; top: -7px; cursor: nwse-resize; }
+.dg-cropHandleNE { right: -7px; top: -7px; cursor: nesw-resize; }
+.dg-cropHandleSW { left: -7px; bottom: -7px; cursor: nesw-resize; }
+.dg-cropHandleSE { right: -7px; bottom: -7px; cursor: nwse-resize; }
+.dg-cropMagnifier {
+  position: absolute; width: 130px; height: 130px; border-radius: 50%;
+  border: 2px solid #fff; box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+  pointer-events: none; overflow: hidden; background: #000; transform: translate(-50%, -50%);
+}
+.dg-cropMagnifier canvas { display: block; width: 100%; height: 100%; }
+.dg-cropPanel {
+  /* 位置由组件按裁剪框实时算好、以内联 left/top 注入：贴在选区下方，
+     靠窗口下沿时自动翻到选区上方。千万别写死 left/bottom ——
+     cropLayer 是 fixed inset:0，写死就会跑到视口左下角，离选区十万八千里。 */
+  position: absolute; z-index: 6; width: 300px;
+  box-sizing: border-box; background: #1b1e24; color: #e8eaed;
+  border: 1px solid rgba(106,146,255,0.55); border-radius: 8px; padding: 10px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.6);
+}
+.dg-cropPanelHead { font-size: 12px; font-weight: 600; color: #a9c4ff; margin-bottom: 6px; }
+.dg-cropPanelHint { font-size: 11px; color: #b9c2cf; line-height: 1.5; margin-top: 6px; }
+.dg-cropPanelOps { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+
+/* v0.16.0 音视频选段轨道 */
+.dg-trimWrap { padding: 6px 10px 2px; box-sizing: border-box; }
+.dg-trimHint { font-size: 11px; color: #b9c2cf; margin-bottom: 6px; }
+.dg-trimTrack {
+  position: relative; height: 30px; border-radius: 6px;
+  background: rgba(255,255,255,0.08); overflow: hidden; user-select: none;
+}
+.dg-trimTrackBg { position: absolute; inset: 0; }
+.dg-trimRegion { position: absolute; top: 0; bottom: 0; background: rgba(106,146,255,0.35); }
+.dg-trimHandle {
+  position: absolute; top: 0; bottom: 0; width: 12px; background: #6a92ff;
+  border-radius: 2px; cursor: ew-resize; box-shadow: 0 0 0 1px rgba(0,0,0,0.4);
+  /* 以时间点为**中心**；left 由内联样式给出并钳到 1%–99%。
+     否则 outPoint=duration 时 left:100% 会让整条手柄溢出轨道被裁掉（只剩入点可见）。 */
+  transform: translateX(-50%); z-index: 2;
+}
+.dg-trimHandleOut { background: #ff9e64; } /* 与入点区分，一眼看出有两个端点 */
+/* 播放头：让「播放跟随选定点」在轨道上可见；pointer-events:none 才不挡拖手柄 */
+.dg-trimPlayhead {
+  position: absolute; top: 0; bottom: 0; width: 2px; background: #fff;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.55); pointer-events: none; z-index: 4;
+}
+.dg-trimPlayhead::after {
+  content: ''; position: absolute; top: 0; left: -3px;
+  border-left: 4px solid transparent; border-right: 4px solid transparent;
+  border-top: 6px solid #fff;
+}
+.dg-trimTicks { position: absolute; inset: 0; pointer-events: none; }
+.dg-trimLabel { position: absolute; top: 50%; transform: translateY(-50%); font-size: 10px; color: #e8eaed; pointer-events: none; }
+.dg-trimOps { display: flex; justify-content: center; gap: 8px; margin: 8px 0 4px; }
 `
 
 
@@ -3008,6 +3226,125 @@ async function encodeMaskPngBytes(imageData, width, height) {
         console.error('dsh-gallery: 复制失败', error)
         return false
       }
+    }
+
+    /**
+     * 取 File 的真实磁盘路径（Electron）。
+     *
+     * 为什么不能只看 `file.path`：Electron 32 起已移除 `File.prototype.path`，
+     * 而 DSH 宿主是 Electron 44 —— 只看 file.path 会让「复制的文件」全部落到
+     * 「当图片读」的分支，非图片文件直接失败。必须补 `webUtils.getPathForFile(file)`。
+     *
+     * @returns {string} 绝对路径；拿不到返回空串
+     */
+    function filePathOf(file) {
+      if (file === null || file === undefined) return ''
+      // ① 旧 Electron / 部分定制运行环境仍可能带 path
+      if (typeof file.path === 'string' && file.path !== '') return file.path
+      // ② 新 Electron 的正规入口：webUtils.getPathForFile
+      try {
+        const g = globalThis
+        const req = typeof g.require === 'function' ? g.require : null
+        if (req !== null) {
+          const electron = req('electron')
+          const webUtils = electron?.webUtils
+          if (webUtils !== null && webUtils !== undefined && typeof webUtils.getPathForFile === 'function') {
+            const p = webUtils.getPathForFile(file)
+            if (typeof p === 'string' && p !== '') return p
+          }
+        }
+      } catch { /* 渲染进程未开 node 集成时正常失败，走下一档 */ }
+      return ''
+    }
+
+    /**
+     * v0.16.0 粘贴入口的剪贴板解析（纯逻辑，可单测）。
+     *
+     * Electron 渲染进程里：截图/复制的图片与复制的文件都走 `paste` 事件的
+     * `clipboardData.items`（`kind === 'file'`）。区别在能否拿到磁盘路径：
+     *   ① 复制的文件（资源管理器里 Ctrl+C）：webUtils 给到真实绝对路径；
+     *   ② 截图/复制的图片：没有路径，但 `getAsFile()` 给到 Blob，可转 base64。
+     * 所以：有路径 → 走「粘贴文件」（Host 直接 copyFile）；无路径 → 按图片转 base64。
+     */
+    function extractFromPasteEvent(clipboardData) {
+      /** @type {File[]} */
+      const images = []
+      /** @type {{ path: string, name: string }[]} */
+      const files = []
+      if (clipboardData === null || clipboardData === undefined) return { images, files }
+      const items = clipboardData.items
+      if (items === null || items === undefined) return { images, files }
+      for (let i = 0; i < items.length; i += 1) {
+        const it = items[i]
+        if (it === null || it === undefined || it.kind !== 'file') continue
+        let file = null
+        try { file = it.getAsFile() } catch { continue }
+        if (file === null) continue
+        const p = filePathOf(file)
+        if (p !== '') {
+          const name = (typeof file.name === 'string' && file.name !== '') ? file.name : (p.split(/[\\/]/).pop() || 'file')
+          files.push({ path: p, name })
+        } else {
+          // 无磁盘路径的 Blob 只有图片能直接转 base64 落盘。音视频 / PDF / ZIP
+          // 在 Chromium 里拿不到路径，若塞进 images 会让 ingestPasted 判「不支持」
+          // 而短路，Host 的系统剪贴板兜底就没机会跑 —— 这里明确跳过。
+          const mime = typeof file.type === 'string' ? file.type : ''
+          if (mime === '' || mime.startsWith('image/')) images.push(file)
+        }
+      }
+      return { images, files }
+    }
+
+    /**
+     * v0.16.0：判断是不是「纯文本粘贴」—— 这类粘贴必须放行，不能抢。
+     * 从资源管理器复制的文件在 Chromium 里可能只挂一个 text/plain 条目，
+     * 但它同时带 Files / 非纯文本类型；只有**真的只有文本**才放行。
+     */
+    function isPlainTextPaste(clipboardData) {
+      if (clipboardData === null || clipboardData === undefined) return false
+      const types = Array.from(clipboardData.types ?? [])
+      if (types.length === 0) return false
+      if (!types.every((x) => x === 'text/plain')) return false
+      let text = ''
+      try { text = String(clipboardData.getData('text/plain') ?? '') } catch { return false }
+      return text !== ''
+    }
+
+    /** 把 File/Blob 读成 dataURL（含 `data:…;base64,` 前缀）。 */
+    function fileToDataUrl(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result))
+        reader.onerror = () => reject(reader.error ?? new Error('FileReader failed'))
+        reader.readAsDataURL(file)
+      })
+    }
+
+    /**
+     * 程序化读剪贴板（右键菜单「粘贴」用，无 paste 事件）。
+     * `navigator.clipboard.read()` 能拿到图片（截图/复制的图），但拿不到任意文件，
+     * 所以这里只返回图片；文件类粘贴统一走 Ctrl+V（见 extractFromPasteEvent）。
+     * @returns {Promise<File[]>} 图片 Blob 列表
+     */
+    async function readClipboardImages() {
+      const nav = navigator
+      if (nav === null || nav === undefined || nav.clipboard === null || nav.clipboard === undefined) return []
+      if (typeof nav.clipboard.read !== 'function') return []
+      let items = []
+      try { items = await nav.clipboard.read() } catch { return [] }
+      /** @type {File[]} */
+      const out = []
+      for (const ci of items) {
+        if (ci === null || ci === undefined || typeof ci.types === 'undefined') continue
+        for (const type of ci.types) {
+          if (typeof type !== 'string' || !type.startsWith('image/')) continue
+          try {
+            const blob = await ci.getType(type)
+            if (blob !== null) out.push(blob)
+          } catch { /* 忽略单个类型失败 */ }
+        }
+      }
+      return out
     }
 
     /**
@@ -4082,14 +4419,30 @@ function serializeFeedback(feedback) {
         style: { left: `${pos.left}px`, top: `${pos.top}px` },
       }, [
         h('div', { className: 'dg-ctxHead', key: 'head' }, item.name),
+        // v0.16.0：列表级「粘贴」（右键任意处都可出现）；无 item 的空白区菜单只给这一项
+        actions.onPaste !== undefined
+          ? entry('paste', t('ctxPaste'), '📥', () => actions.onPaste())
+          : null,
         // 「查看原图」只对图片出现：文件卡片没有原图概念，避免无效按钮
         actions.onOpenOriginal !== undefined
           ? entry('original', t('ctxOpenOriginal'), '🔍', () => actions.onOpenOriginal())
           : null,
-        entry('hide', t('ctxHide'), '🚫', () => actions.onHide()),
-        entry('reveal', t('ctxReveal'), '📂', () => actions.onReveal()),
-        entry('copy', t('ctxCopy'), '⧉', () => actions.onCopy()),
-        entry('delete', t('ctxDelete'), '🗑', () => actions.onDelete(), true),
+        actions.onHide !== undefined
+          ? entry('hide', t('ctxHide'), '🚫', () => actions.onHide())
+          : null,
+        actions.onReveal !== undefined
+          ? entry('reveal', t('ctxReveal'), '📂', () => actions.onReveal())
+          : null,
+        actions.onCopy !== undefined
+          ? entry('copy', t('ctxCopy'), '⧉', () => actions.onCopy())
+          : null,
+        // v0.16.0：复制**文件本体**到系统剪贴板（与上面的「复制路径」文本区分）
+        actions.onCopyFile !== undefined
+          ? entry('copyFile', t('ctxCopyFile'), '📄', () => actions.onCopyFile())
+          : null,
+        actions.onDelete !== undefined
+          ? entry('delete', t('ctxDelete'), '🗑', () => actions.onDelete(), true)
+          : null,
         // ---- v0.14.2 手动标签：表态层已下线，只留「改标签 / 恢复自动」两个入口 ----
         actions.onEditLabel !== undefined
           ? h('div', { className: 'dg-ctxDivider', key: 'labelDivider' }, t('labelEdit'))
@@ -4432,6 +4785,18 @@ function serializeFeedback(feedback) {
       const [dims, setDims] = React.useState(null)
       // 截帧结果提示（成功/失败），2.5 秒自动消失
       const [grabNotice, setGrabNotice] = React.useState(null)
+      // v0.16.0 音视频选段（入点/出点裁剪）
+      const [duration, setDuration] = React.useState(0)
+      const [trimActive, setTrimActive] = React.useState(false)
+      const [inPoint, setInPoint] = React.useState(0)
+      const [outPoint, setOutPoint] = React.useState(0)
+      const [trimBusy, setTrimBusy] = React.useState(false)
+      // previewing = 正在按选区播放（到出点会自动置 false）；不再是「循环预览」开关
+      const [previewing, setPreviewing] = React.useState(false)
+      const [playhead, setPlayhead] = React.useState(0)
+      const trimTrackRef = React.useRef(null)
+      // 拖动端点期间不做区间钳制，否则播放头会被反复拽回、没法目视选帧
+      const scrubbingRef = React.useRef(false)
 
       // 取回完整文件为 blob 并建 URL（支持 seek 的唯一可靠路径）
       React.useEffect(() => {
@@ -4589,13 +4954,233 @@ function serializeFeedback(feedback) {
         return () => clearTimeout(timer)
       }, [grabNotice])
 
+      /**
+       * v0.16.0：把播放头移到指定秒（拖端点 / 点轨道 / 从入点重播共用）。
+       * 只改 currentTime 不换 src —— React 复用同一个 <video> DOM，播放不会被重建。
+       */
+      const seekMedia = (sec) => {
+        const v = videoRef.current
+        if (v === null || duration <= 0) return
+        try { v.currentTime = clampNum(sec, 0, duration) } catch { /* 元数据未就绪 */ }
+      }
+      /** 播放头跟随选段：更新轨道指示线 + 到出点暂停 + 区间外起播拉回入点。 */
+      const onMediaTimeUpdate = (event) => {
+        const v = event.currentTarget
+        const now = v.currentTime
+        // 只在选段态更新播放头：没开选段时不必每 250ms 重渲染整个播放器
+        if (trimActive && Number.isFinite(now)) setPlayhead(now)
+        if (!trimActive) return
+        const d = trimPlaybackDecision(now, inPoint, outPoint, {
+          paused: v.paused, scrubbing: scrubbingRef.current,
+        })
+        if (d.action === 'stop') {
+          try {
+            if (typeof d.seekTo === 'number' && Math.abs(v.currentTime - d.seekTo) > 0.001) v.currentTime = d.seekTo
+            v.pause()
+          } catch { /* 忽略 */ }
+          setPreviewing(false)
+        } else if (d.action === 'seekIn') {
+          try { v.currentTime = d.seekTo } catch { /* 忽略 */ }
+        }
+      }
+      /** 用户按原生播放键时，播放头若不在选区内，直接跳到入点起播。 */
+      const onMediaPlay = (event) => {
+        if (!trimActive) return
+        const v = event.currentTarget
+        const now = v.currentTime
+        if (!(outPoint > inPoint + 0.05)) return
+        if (now < inPoint - 0.25 || now >= outPoint - 0.05) {
+          try { v.currentTime = inPoint } catch { /* 忽略 */ }
+        }
+      }
+      // v0.16.0 音视频选段：秒数 → m:ss
+      const fmtClock = (sec) => {
+        const s = Math.max(0, Math.floor(Number(sec) || 0))
+        const m = Math.floor(s / 60)
+        const r = s % 60
+        return `${m}:${String(r).padStart(2, '0')}`
+      }
+      // 轨道坐标 → 时间
+      const timeFromClientX = (clientX) => {
+        const track = trimTrackRef.current
+        if (track === null || duration <= 0) return 0
+        const r = track.getBoundingClientRect()
+        if (r.width <= 0) return 0
+        return clampNum((clientX - r.left) / r.width, 0, 1) * duration
+      }
+      // 拖动入点/出点滑块（用 window 监听保证拖出元素也不丢）
+      const startTrimDrag = (e, which) => {
+        e.preventDefault()
+        e.stopPropagation()
+        try { e.currentTarget.setPointerCapture(e.pointerId) } catch {}
+        // 拖动期间暂停区间钳制，让画面**跟着端点走**（老板要的「播放跟随选定点」）
+        scrubbingRef.current = true
+        const move = (ev) => {
+          const t = timeFromClientX(ev.clientX)
+          if (which === 'in') {
+            const n = clampNum(t, 0, Math.max(0, outPoint - 0.1))
+            setInPoint(n); seekMedia(n); setPlayhead(n)
+          } else if (which === 'out') {
+            const n = clampNum(t, Math.min(duration, inPoint + 0.1), duration)
+            setOutPoint(n); seekMedia(n); setPlayhead(n)
+          }
+        }
+        const up = () => {
+          scrubbingRef.current = false
+          window.removeEventListener('pointermove', move)
+          window.removeEventListener('pointerup', up)
+        }
+        window.addEventListener('pointermove', move)
+        window.addEventListener('pointerup', up)
+      }
+      /**
+       * 点轨道空白处也能设点：把离点击位置**最近**的那个端点移过来。
+       * 手柄自身的 onPointerDown 已 stopPropagation，不会误触发这里。
+       * 有了这条，即使出点贴到最右端，老板也能直接点轨道右侧把它拉回来。
+       */
+      const onTrackPointerDown = (e) => {
+        if (duration <= 0) return
+        e.preventDefault()
+        const t = timeFromClientX(e.clientX)
+        let n
+        if (Math.abs(t - inPoint) <= Math.abs(t - outPoint)) {
+          n = clampNum(t, 0, Math.max(0, outPoint - 0.1))
+          setInPoint(n)
+        } else {
+          n = clampNum(t, Math.min(duration, inPoint + 0.1), duration)
+          setOutPoint(n)
+        }
+        // 点轨道设点后，播放头也跳到该点，方便目视核对这一帧
+        seekMedia(n); setPlayhead(n)
+      }
+      /**
+       * 进入选段 / 拿到时长后：立刻把播放头移到入点并起播。
+       *
+       * 老板 11:56 反馈的根因就在这里 —— 原来只有点「预览选区」才 seek，
+       * 不点的话播放器一直按整段自动播（选段 2:16–3:21，播放头却停在 0:29）。
+       * 依赖数组刻意不含 inPoint/outPoint：拖动端点不该重复触发这个 effect。
+       */
+      React.useEffect(() => {
+        if (!trimActive || duration <= 0) return
+        const initIn = outPoint > 0 ? inPoint : duration * 0.2
+        if (outPoint <= 0) {
+          setInPoint(duration * 0.2); setOutPoint(duration * 0.8)
+        }
+        seekMedia(initIn)
+        setPlayhead(initIn)
+        const v = videoRef.current
+        if (v === null) return
+        try { v.play().catch(() => {}) } catch { /* 自动播放被拦就等用户点按钮 */ }
+        setPreviewing(true)
+      }, [trimActive, duration])
+      // 退出选段时清掉「按选区播放」标记，恢复原生自由播放
+      React.useEffect(() => {
+        if (!trimActive) setPreviewing(false)
+      }, [trimActive])
+      const saveTrim = React.useCallback(async () => {
+        if (duration <= 0 || outPoint <= inPoint + 0.05) {
+          setGrabNotice({ kind: 'fail', text: t('cropMinSize') })
+          return
+        }
+        setTrimBusy(true)
+        try {
+          const payload = await callHost('cropMedia', {
+            path: item.relPath,
+            start: Math.round(inPoint * 1000) / 1000,
+            end: Math.round(outPoint * 1000) / 1000,
+            kind: isVideo ? 'video' : 'audio',
+            // v0.16.1：带上对话身份，Host 才能把片段登记回当前对话组；
+            // 不传的话全局资产会把它扔进「未归类」，界面上等于「切了但没生成」。
+            sessionId: sessionId ?? '',
+            sessionTitle: sessionTitle ?? '',
+            sessionCreatedAt: sessionCreatedAt ?? 0,
+          })
+          if (payload?.ok === false) throw new Error(payload?.error?.message ?? 'cropMedia failed')
+          if (typeof onSaved === 'function') onSaved(payload)
+          setGrabNotice({ kind: 'ok', text: format(t('trimSaved'), { name: payload?.name ?? '' }) })
+        } catch (error) {
+          setGrabNotice({ kind: 'fail', text: format(t('trimFailed'), { message: String(error?.message ?? error) }) })
+        } finally {
+          setTrimBusy(false)
+        }
+      }, [duration, inPoint, outPoint, isVideo, item.relPath, onSaved, t, sessionId, sessionTitle, sessionCreatedAt])
+      const trimUI = (trimActive && duration > 0)
+        ? h('div', {
+          className: 'dg-trimWrap', key: 'trim', 'data-gallery-trim': item.relPath,
+          onPointerDown: (e) => e.stopPropagation(),
+        }, [
+          h('div', { className: 'dg-trimHint', key: 'hint' }, t('trimDragHint')),
+          h('div', {
+            className: 'dg-trimTrack', key: 'track', ref: trimTrackRef,
+            'data-gallery-trim-track': true,
+            onPointerDown: onTrackPointerDown,
+          }, [
+            h('div', {
+              className: 'dg-trimRegion', key: 'region',
+              style: {
+                left: `${(inPoint / duration) * 100}%`,
+                width: `${((outPoint - inPoint) / duration) * 100}%`,
+              },
+            }),
+            h('div', {
+              className: 'dg-trimHandle dg-trimHandleIn', key: 'in',
+              'data-gallery-trim-in': true,
+              // 钳到 1%–99%：配合 CSS 的 translateX(-50%)，贴边时仍露出半个手柄可拖
+              style: { left: `${clampNum((inPoint / duration) * 100, 1, 99)}%` },
+              onPointerDown: (e) => startTrimDrag(e, 'in'),
+            }),
+            h('div', {
+              className: 'dg-trimHandle dg-trimHandleOut', key: 'out',
+              'data-gallery-trim-out': true,
+              style: { left: `${clampNum((outPoint / duration) * 100, 1, 99)}%` },
+              onPointerDown: (e) => startTrimDrag(e, 'out'),
+            }),
+            // 白色播放头：让「播放跟随选定点」在轨道上可见
+            h('div', {
+              className: 'dg-trimPlayhead', key: 'playhead',
+              'data-gallery-trim-playhead': true,
+              style: { left: `${clampNum((playhead / duration) * 100, 0, 100)}%` },
+            }),
+          ]),
+          h('div', {
+            className: 'dg-trimLabels', key: 'labels',
+            style: { display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#b9c2cf', marginTop: '4px' },
+          }, [
+            h('span', { key: 'li' }, `${t('trimIn')} ${fmtClock(inPoint)}`),
+            h('span', { key: 'lo' }, `${t('trimOut')} ${fmtClock(outPoint)}`),
+          ]),
+          h('div', { className: 'dg-trimOps', key: 'ops' }, [
+            h('button', {
+              type: 'button', className: 'dg-btn', key: 'preview',
+              onClick: (e) => {
+                e.stopPropagation()
+                const v = videoRef.current
+                if (previewing) {
+                  try { v?.pause() } catch { /* 忽略 */ }
+                  setPreviewing(false)
+                } else {
+                  // 从入点重播（播放到出点由 onMediaTimeUpdate 自动停住）
+                  seekMedia(inPoint); setPlayhead(inPoint)
+                  try { v?.play().catch(() => {}) } catch { /* 忽略 */ }
+                  setPreviewing(true)
+                }
+              },
+            }, previewing ? `⏸ ${t('trimPause')}` : `▶ ${t('trimPreview')}`),
+            h('button', {
+              type: 'button', className: 'dg-btn dg-btnPrimary', key: 'save', disabled: trimBusy,
+              onClick: (e) => { e.stopPropagation(); void saveTrim() },
+            }, trimBusy ? t('trimSaving') : t('trimSave')),
+          ]),
+        ])
+        : null
+
       return h('div', {
         className: 'dg-mediaLayer',
         key: 'mediaLayer',
         'data-gallery-player': item.relPath,
         onClick: onClose,
       }, h('div', {
-        className: `dg-mediaPanel${isVideo ? ' dg-mediaPanelVideo' : ' dg-mediaPanelAudio'}`,
+        className: `dg-mediaPanel${isVideo ? ' dg-mediaPanelVideo' : ' dg-mediaPanelAudio'}${trimActive ? ' is-trim' : ''}`,
         key: 'panel',
         onClick: (event) => event.stopPropagation(),
       }, [
@@ -4611,6 +5196,23 @@ function serializeFeedback(feedback) {
                 'aria-label': t('mediaGrabFrame'),
                 onClick: (event) => { event.stopPropagation(); grabFrame() },
               }, ['📷 ', t('mediaGrabFrame')])
+            : null,
+          // v0.16.0 选段裁剪：开关入点/出点选段 UI
+          source.status === 'ready' && !failed
+            ? h('button', {
+                type: 'button',
+                className: `dg-btn${trimActive ? ' dg-btnActive' : ''}`,
+                key: 'trim',
+                'data-gallery-trim-toggle': item.relPath,
+                title: trimActive ? t('trimExit') : t('trimEnter'),
+                'aria-label': trimActive ? t('trimExit') : t('trimEnter'),
+                onClick: (event) => {
+                  event.stopPropagation()
+                  // 默认选区与「跳到入点起播」都交给下面的进入 effect，
+                  // 这里只做状态切换（updater 里不要塞副作用）。
+                  setTrimActive((v) => !v)
+                },
+              }, ['✂ ', trimActive ? t('trimExit') : t('trimEnter')])
             : null,
           h('button', {
             type: 'button', className: 'dg-btn', key: 'close',
@@ -4676,10 +5278,13 @@ function serializeFeedback(feedback) {
                       preload: 'metadata',
                       key: 'v',
                       'data-gallery-video': item.relPath,
+                      onTimeUpdate: onMediaTimeUpdate,
+                      onPlay: onMediaPlay,
                       onError: () => setFailed(true),
                       onLoadedMetadata: (event) => {
                         const v = event.currentTarget
                         if (v.videoWidth > 0) setDims({ w: v.videoWidth, h: v.videoHeight })
+                        if (Number.isFinite(v.duration) && v.duration > 0) setDuration(v.duration)
                       },
                     })
                   : h('audio', {
@@ -4689,9 +5294,17 @@ function serializeFeedback(feedback) {
                       preload: 'metadata',
                       key: 'a',
                       'data-gallery-audio': item.relPath,
+                      ref: videoRef,
+                      onTimeUpdate: onMediaTimeUpdate,
+                      onPlay: onMediaPlay,
                       onError: () => setFailed(true),
+                      onLoadedMetadata: (event) => {
+                        const a = event.currentTarget
+                        if (Number.isFinite(a.duration) && a.duration > 0) setDuration(a.duration)
+                      },
                     })
         )),
+        trimUI,
         h('div', { className: 'dg-mediaFoot', key: 'foot' }, [
           h('span', { className: 'dg-mediaFootName', key: 'name', title: item.relPath }, item.name),
           h('span', { className: 'dg-mediaFootMeta', key: 'meta' },
@@ -4938,7 +5551,279 @@ ${absPath}
      *   - 右键预览区、按 O、点底部按钮 三种方式切换
      *   - 切换时**保留当前缩放与位置**，否则切过去跳回 1x 就没法对比
      */
-    function Viewer({ items, index, onClose, onStep, t, initialOriginal, annotations, onAddAnnotation, onRemoveAnnotation, onExportMask }) {
+
+    /**
+     * v0.16.0 图片裁剪 + 微信式圆形放大镜。
+     *
+     * 设计要点：
+     *   · 固定覆盖层（viewport 坐标），与查看器的 pan/zoom 解耦 —— 归一化坐标由图片在屏幕上的
+     *     实际矩形算出，无论放大/平移都准确。
+     *   · 放大镜与最终裁图都从「全分辨率源图」取像素（fetchRaw 现拉），保证细节真实、不被预览缩放糊掉。
+     *   · 裁剪结果（归一化矩形）交给上层 callHost('cropImage')，落盘到源图同目录并标素材。
+     *   · 零自动发送红线不变：本组件只产出 PNG，落盘与登记由 Host 完成。
+     */
+    function ImageCropper({ t, item, imgRef, onCrop, onCancel }) {
+      const [rect, setRect] = React.useState(null) // {x,y,w,h} 归一化 0–1（相对图片宽高）
+      const [drag, setDrag] = React.useState(null) // { mode:'new'|'move'|'nw'|'ne'|'sw'|'se', sx, sy, startRect }
+      const [mag, setMag] = React.useState(null)   // { cx, cy(视口), nx, ny(归一化) }
+      const [full, setFull] = React.useState(null) // 全分辨率 HTMLImageElement
+      const [busy, setBusy] = React.useState(false)
+      const magCanvasRef = React.useRef(null)
+
+      // 载入全分辨率源图（放大镜取真实像素 + 最终裁图）
+      React.useEffect(() => {
+        let alive = true
+        const controller = new AbortController()
+        fetchRaw(item.relPath, controller.signal)
+          .then((blob) => {
+            if (!alive) return
+            const url = URL.createObjectURL(blob)
+            const im = new Image()
+            im.onload = () => { if (alive) setFull(im) }
+            im.onerror = () => {}
+            im.src = url
+          })
+          .catch(() => {})
+        return () => { alive = false; controller.abort() }
+      }, [item.relPath])
+
+      // 图片在屏幕上的实际矩形（getBoundingClientRect 含 zoom/pan 变换后的真实位置）
+      const imgRect = () => {
+        const el = imgRef.current
+        if (el === null) return null
+        const r = el.getBoundingClientRect()
+        if (r.width <= 0 || r.height <= 0) return null
+        return r
+      }
+      const toNorm = (clientX, clientY) => {
+        const r = imgRect()
+        if (r === null) return null
+        return {
+          x: clamp01((clientX - r.left) / r.width),
+          y: clamp01((clientY - r.top) / r.height),
+        }
+      }
+      // 由拖拽状态与新归一化点计算矩形；负宽高先规范化再夹到图像内。
+      const computeRect = (d, n) => {
+        if (d.mode === 'new') {
+          return {
+            x: Math.min(d.sx, n.x), y: Math.min(d.sy, n.y),
+            w: Math.abs(n.x - d.sx), h: Math.abs(n.y - d.sy),
+          }
+        }
+        const s = d.startRect
+        if (s === null) return null
+        let x = s.x
+        let y = s.y
+        let w = s.w
+        let h = s.h
+        if (d.mode === 'move') {
+          x = clamp01(s.x + (n.x - d.sx))
+          y = clamp01(s.y + (n.y - d.sy))
+          x = Math.min(x, 1 - s.w)
+          y = Math.min(y, 1 - s.h)
+          return { x: Math.max(0, x), y: Math.max(0, y), w: s.w, h: s.h }
+        }
+        if (d.mode === 'se') { w = n.x - s.x; h = n.y - s.y }
+        else if (d.mode === 'ne') { y = n.y; w = n.x - s.x; h = (s.y + s.h) - n.y }
+        else if (d.mode === 'sw') { x = n.x; w = (s.x + s.w) - n.x; h = n.y - s.y }
+        else if (d.mode === 'nw') { x = n.x; y = n.y; w = (s.x + s.w) - n.x; h = (s.y + s.h) - n.y }
+        if (w < 0) { x += w; w = -w }
+        if (h < 0) { y += h; h = -h }
+        x = clamp01(x); y = clamp01(y); w = clamp01(w); h = clamp01(h)
+        if (x + w > 1) w = 1 - x
+        if (y + h > 1) h = 1 - y
+        return { x, y, w, h }
+      }
+      const startDrag = (e, mode) => {
+        e.preventDefault()
+        e.stopPropagation()
+        const n = toNorm(e.clientX, e.clientY)
+        if (n === null) return
+        try { e.currentTarget.setPointerCapture(e.pointerId) } catch {}
+        setDrag({ mode, sx: n.x, sy: n.y, startRect: rect })
+      }
+      const onLayerDown = (e) => {
+        const n = toNorm(e.clientX, e.clientY)
+        if (n === null) return
+        try { e.currentTarget.setPointerCapture(e.pointerId) } catch {}
+        setDrag({ mode: 'new', sx: n.x, sy: n.y, startRect: null })
+        setRect({ x: n.x, y: n.y, w: 0, h: 0 })
+      }
+      const onLayerMove = (e) => {
+        const n = toNorm(e.clientX, e.clientY)
+        if (n === null) return
+        setMag({ cx: e.clientX, cy: e.clientY, nx: n.x, ny: n.y })
+        if (drag === null) return
+        setRect((cur) => computeRect(drag, n, cur))
+      }
+      const onLayerUp = () => setDrag(null)
+
+      // 放大镜绘制：从全分辨率源图取光标处的 3× 局部放大；越界区域填黑（与相机放大镜一致）。
+      React.useEffect(() => {
+        const canvas = magCanvasRef.current
+        if (canvas === null || full === null || mag === null) return
+        const ctx = canvas.getContext('2d')
+        if (ctx === null) return
+        const SIZE = canvas.width
+        const FACTOR = 3
+        const FW = full.naturalWidth
+        const FH = full.naturalHeight
+        const halfSrc = (SIZE / FACTOR) / 2
+        const sx = clampNum(mag.nx * FW - halfSrc, 0, Math.max(0, FW - SIZE / FACTOR))
+        const sy = clampNum(mag.ny * FH - halfSrc, 0, Math.max(0, FH - SIZE / FACTOR))
+        ctx.fillStyle = '#000'
+        ctx.fillRect(0, 0, SIZE, SIZE)
+        ctx.drawImage(full, sx, sy, SIZE / FACTOR, SIZE / FACTOR, 0, 0, SIZE, SIZE)
+        ctx.strokeStyle = 'rgba(255,255,255,0.85)'
+        ctx.lineWidth = 1
+        ctx.beginPath()
+        ctx.moveTo(SIZE / 2, 0); ctx.lineTo(SIZE / 2, SIZE)
+        ctx.moveTo(0, SIZE / 2); ctx.lineTo(SIZE, SIZE / 2)
+        ctx.stroke()
+      }, [mag, full])
+
+      const confirmCrop = () => {
+        if (full === null || rect === null || rect.w < 0.02 || rect.h < 0.02) return
+        setBusy(true)
+        const FW = full.naturalWidth
+        const FH = full.naturalHeight
+        const sx = Math.round(rect.x * FW)
+        const sy = Math.round(rect.y * FH)
+        const sw = Math.max(1, Math.round(rect.w * FW))
+        const sh = Math.max(1, Math.round(rect.h * FH))
+        try {
+          const canvas = document.createElement('canvas')
+          canvas.width = sw
+          canvas.height = sh
+          const c2d = canvas.getContext('2d')
+          if (c2d === null) throw new Error('no 2d context')
+          c2d.drawImage(full, sx, sy, sw, sh, 0, 0, sw, sh)
+          canvas.toBlob((blob) => {
+            if (blob === null) { setBusy(false); return }
+            const fr = new FileReader()
+            fr.onload = () => {
+              const dataUrl = String(fr.result)
+              const comma = dataUrl.indexOf(',')
+              const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl
+              setBusy(false)
+              onCrop(base64)
+            }
+            fr.onerror = () => setBusy(false)
+            fr.readAsDataURL(blob)
+          }, 'image/png')
+        } catch (error) {
+          setBusy(false)
+          console.error('dsh-gallery: 裁剪失败', error)
+        }
+      }
+
+      const r = imgRect()
+      const rectStyle = rect !== null && r !== null
+        ? {
+            left: `${r.left + rect.x * r.width}px`,
+            top: `${r.top + rect.y * r.height}px`,
+            width: `${rect.w * r.width}px`,
+            height: `${rect.h * r.height}px`,
+          }
+        : {}
+      const magX = mag !== null ? clampNum(mag.cx + 72, 72, (typeof window !== 'undefined' ? window.innerWidth : 9999) - 72) : 0
+      const magY = mag !== null ? clampNum(mag.cy - 72, 72, (typeof window !== 'undefined' ? window.innerHeight : 9999) - 72) : 0
+
+      /**
+       * 操作面板跟着选区走（微信截图式）：水平居中于裁剪框、贴在框下方 12px；
+       * 若框贴着窗口下沿，翻到框上方。还没画框时贴在图片下沿中央。
+       * 全部用视口坐标 —— cropLayer 是 fixed inset:0，absolute 子元素即相对视口。
+       */
+      const PANEL_W = 300
+      const PANEL_H = 118
+      const panelStyle = (() => {
+        const vw = Number(typeof window !== 'undefined' ? window.innerWidth : 0) || 1280
+        const vh = Number(typeof window !== 'undefined' ? window.innerHeight : 0) || 800
+        const maxLeft = Math.max(8, vw - PANEL_W - 8)
+        const maxTop = Math.max(8, vh - PANEL_H - 8)
+        const hasBox = rect !== null && r !== null && rect.w > 0.02 && rect.h > 0.02
+        let cx
+        let boxTop
+        let boxBottom
+        if (hasBox) {
+          boxTop = r.top + rect.y * r.height
+          const boxLeft = r.left + rect.x * r.width
+          cx = boxLeft + (rect.w * r.width) / 2
+          boxBottom = boxTop + rect.h * r.height
+        } else if (r !== null) {
+          cx = r.left + r.width / 2
+          boxTop = r.top
+          boxBottom = r.bottom - PANEL_H - 16
+        } else {
+          cx = vw / 2
+          boxTop = 0
+          boxBottom = vh - PANEL_H - 20
+        }
+        const left = clampNum(cx - PANEL_W / 2, 8, maxLeft)
+        let top = hasBox ? boxBottom + 12 : boxBottom
+        if (hasBox && top + PANEL_H > vh - 8) top = boxTop - PANEL_H - 12
+        return { left: `${left}px`, top: `${clampNum(top, 8, maxTop)}px` }
+      })()
+
+      return h('div', {
+        className: 'dg-cropLayer',
+        key: 'cropLayer',
+        'data-gallery-crop-layer': true,
+        onPointerDown: onLayerDown,
+        onPointerMove: onLayerMove,
+        onPointerUp: onLayerUp,
+        onPointerLeave: () => { setMag(null); setDrag(null) },
+        onContextMenu: (e) => e.preventDefault(),
+      }, [
+        rect !== null
+          ? h('div', {
+            className: 'dg-cropRect',
+            key: 'rect',
+            'data-gallery-crop-rect': true,
+            style: rectStyle,
+            onPointerDown: (e) => startDrag(e, 'move'),
+          }, [
+            h('div', { className: 'dg-cropHandle dg-cropHandleNW', key: 'nw', onPointerDown: (e) => startDrag(e, 'nw') }),
+            h('div', { className: 'dg-cropHandle dg-cropHandleNE', key: 'ne', onPointerDown: (e) => startDrag(e, 'ne') }),
+            h('div', { className: 'dg-cropHandle dg-cropHandleSW', key: 'sw', onPointerDown: (e) => startDrag(e, 'sw') }),
+            h('div', { className: 'dg-cropHandle dg-cropHandleSE', key: 'se', onPointerDown: (e) => startDrag(e, 'se') }),
+          ])
+          : null,
+        mag !== null && full !== null
+          ? h('div', {
+            className: 'dg-cropMagnifier',
+            key: 'mag',
+            style: { left: `${magX}px`, top: `${magY}px` },
+          }, h('canvas', { ref: magCanvasRef, width: 130, height: 130, key: 'magCanvas' }))
+          : null,
+        h('div', {
+          className: 'dg-cropPanel',
+          key: 'panel',
+          'data-gallery-crop-panel': true,
+          style: panelStyle,
+          onPointerDown: (e) => e.stopPropagation(),
+          onPointerMove: (e) => e.stopPropagation(), // 别让放大镜跟着面板上的鼠标乱跑
+          onPointerEnter: () => setMag(null),        // 鼠标进面板就收起放大镜
+        }, [
+          h('div', { className: 'dg-cropPanelHead', key: 'h' }, t('cropEnter')),
+          h('div', { className: 'dg-cropPanelHint', key: 'hint' }, t('cropHint')),
+          h('div', { className: 'dg-cropPanelOps', key: 'ops' }, [
+            h('button', {
+              type: 'button', className: 'dg-btn', key: 'cancel',
+              onClick: (e) => { e.stopPropagation(); onCancel() },
+            }, t('cropCancel')),
+            h('button', {
+              type: 'button', className: 'dg-btn dg-btnPrimary', key: 'ok', disabled: busy,
+              'data-gallery-crop-confirm': true,
+              onClick: (e) => { e.stopPropagation(); confirmCrop() },
+            }, busy ? t('cropSaving') : t('cropConfirm')),
+          ]),
+        ]),
+      ])
+    }
+
+    function Viewer({ items, index, onClose, onStep, t, initialOriginal, annotations, onAddAnnotation, onRemoveAnnotation, onExportMask, onCrop }) {
       const item = items[index]
       // 文件预览已改走 DSH 原生侧栏（session 地址）；此处 Viewer 仅处理图片，isText 恒 false，
       // 下面的文本分支保留为死代码，供 v0.2 若需插件内预览时复用
@@ -5027,6 +5912,7 @@ ${absPath}
         originalRequestedRef.current = false
         setOriginalMode(false)
         setOriginal({ status: 'idle' })
+        setCropActive(false)
         return () => {
           if (originalAbortRef.current !== null) originalAbortRef.current.abort()
         }
@@ -5196,6 +6082,8 @@ ${absPath}
       // 中键按下时阻止浏览器默认的自动滚动
       /** 批注模式（v0.14.0）：开启后指针交给 SVG 标注层，查看器的缩放/拖拽暂停。 */
       const [annotActive, setAnnotActive] = React.useState(false)
+      /** v0.16.0 裁剪模式：开启后覆盖裁剪层（含放大镜），查看器自身的平移/点击关闭暂停。 */
+      const [cropActive, setCropActive] = React.useState(false)
       const annotsOfCurrent = React.useMemo(
         () => (typeof annotations === 'function' ? annotations(item) : []),
         [annotations, item],
@@ -5211,6 +6099,8 @@ ${absPath}
       const onClickBody = (event) => {
         // 标注模式下点图只用于画框，不能顺手把大图关掉（老板 20:32 指出的冲突）
         if (annotActive) return
+        // v0.16.0 裁剪模式下点击被裁剪层接管，不应关闭查看器
+        if (cropActive) return
         event.preventDefault()
         if (lastDragMoved.current === true) {
           lastDragMoved.current = false
@@ -5482,6 +6372,22 @@ ${absPath}
               setAnnotActive((v) => !v)
             },
           }, annotActive ? `✎ ${t('annotExit')}` : `✎ ${t('annotEnter')}`),
+          // v0.16.0 裁剪：开关裁剪覆盖层（含放大镜）；裁剪态下查看器自身的平移/关闭暂停
+          // 只在图片真正就绪时出现 —— 二进制/加载失败没有可裁的像素
+          state.status === 'ready'
+            ? h('button', {
+                type: 'button',
+                className: `dg-btn${cropActive ? ' dg-btnActive' : ''}`,
+                key: 'crop',
+                'data-gallery-crop-toggle': true,
+                'aria-pressed': cropActive,
+                title: cropActive ? t('cropExit') : t('cropEnter'),
+                onClick: (event) => {
+                  event.stopPropagation()
+                  setCropActive((v) => !v)
+                },
+              }, cropActive ? `✂ ${t('cropExit')}` : `✂ ${t('cropEnter')}`)
+            : null,
           // 「拖到对话」确定性入口：Viewer 大图本身 draggable:false + pointerEvents:none
           // （标注态的中键平移 / 右键多边形都依赖它），所以不改大图，另给一个可拖按钮。
           // 这个按钮同时是「新 client.js 已加载」的可见标记 —— 看到它就说明面板不是旧模块。
@@ -5577,6 +6483,20 @@ ${absPath}
                     state.status === 'failed' ? `${t('thumbFailed')}：${item.name}` : t('loading')),
           ),
           slider,
+          // v0.16.0 裁剪覆盖层：裁剪模式开启时显示（含微信式放大镜），固定在视口上、与 pan/zoom 解耦
+          cropActive && isImageItem(item) && !isText && state.status === 'ready'
+            ? h(ImageCropper, {
+              key: 'cropper',
+              t,
+              item,
+              imgRef,
+              onCrop: (base64) => {
+                setCropActive(false)
+                if (typeof onCrop === 'function') onCrop(item.relPath, base64)
+              },
+              onCancel: () => setCropActive(false),
+            })
+            : null,
         ]),
         // 原图加载状态条：失败要能看见并知道原因，否则用户以为图坏了
         original.status === 'failed'
@@ -6619,6 +7539,18 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       // 让回调（如右键菜单）读到最新值而不必重建依赖
       const viewerRef = React.useRef(null)
       React.useEffect(() => { viewerRef.current = viewer }, [viewer])
+      /**
+       * v0.16.2 粘贴落点：全局视图下「鼠标所在的对话组」。
+       *
+       * 此前粘贴固定用 slot 的 sessionId（= 当前对话），所以在任何历史对话组里
+       * 粘贴都会跑到当前对话目录，老板报的正是这个。这里记下 hover / 右键所在的
+       * 组（`{ sessionId, title, createdAt }`），粘贴时优先用它，没有才退回当前对话。
+       *
+       * 🔴 用 ref 不用 useState：onMouseEnter 改它不该触发整表重渲染；而且粘贴是
+       *    异步事件，必须读「事件发生那一刻」的值，渲染期快照会过期。
+       *    null 表示「没有指定组」→ 落回当前对话。
+       */
+      const pasteTargetRef = React.useRef(null)
       const limiter = React.useRef(null)
       if (limiter.current === null) limiter.current = createLimiter(MAX_CONCURRENT)
 
@@ -6708,6 +7640,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       // 组内中间产物开关已并入顶部分类筛选（v0.14.3）。
       // 右键菜单：{ item, absPath, x, y }
       const [ctxMenu, setCtxMenu] = React.useState(null)
+      // v0.16.0：右键空白处（非卡片）弹出的「粘贴」菜单
+      const [pasteMenu, setPasteMenu] = React.useState(null)
       // 删除确认：{ item, busy }
       const [deleteTarget, setDeleteTarget] = React.useState(null)
       // ---- v0.14.2：反馈篮条目（marks，一次性）与手动标签（labels，持久）分开 ----
@@ -7003,7 +7937,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
        *   分组视图下卡片来自 `data.groups[i].files`，与当前页的扁平 `items` 是两个不同的集合，
        *   直接用全局 `items` 的索引会「点哪张都跳出同一张图」。
        */
-      const openViewer = React.useCallback((index, anchorEl, list, asOriginal) => {
+      const openViewer = React.useCallback((index, anchorEl, list, asOriginal, origin) => {
         const scroller = bodyScrollRef.current
         if (scroller !== null) {
           savedScrollRef.current = {
@@ -7022,7 +7956,14 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           width: it.width ?? null,
           height: it.height ?? null,
         }))
-        setViewer({ index, list: snapshot, asOriginal: asOriginal === true })
+        // v0.16.2：记住这张图属于哪个对话组 —— 裁剪产物要跟着来源组落盘，
+        // 不能一律塞进当前对话（否则在历史对话的图上裁剪，产物跑到别的对话）。
+        const originSid = String(origin?.sessionId ?? '')
+        setViewer({
+          index, list: snapshot, asOriginal: asOriginal === true,
+          originSid: originSid === '__history__' ? '' : originSid,
+          originTitle: originSid === '__history__' ? '' : String(origin?.title ?? ''),
+        })
       }, [])
 
       /**
@@ -7036,7 +7977,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         const cur = viewerRef.current
         if (cur !== null && Array.isArray(cur.list)) {
           const i = cur.list.findIndex(samePath)
-          if (i >= 0) { openViewer(i, null, cur.list, true); return }
+          // 沿用原查看器已记录的来源组，别因为「查看原图」把归属丢掉
+          if (i >= 0) { openViewer(i, null, cur.list, true, { sessionId: cur.originSid ?? '' }); return }
         }
         // 2) 全局 items（扁平/分页视图）
         const flat = itemsRef.current ?? []
@@ -7048,7 +7990,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           for (const g of groups) {
             if (!Array.isArray(g.files)) continue
             const k = g.files.findIndex(samePath)
-            if (k >= 0) { openViewer(k, null, g.files, true); return }
+            if (k >= 0) { openViewer(k, null, g.files, true, { sessionId: g.sessionId }); return }
           }
         }
         // 4) 兜底：单独一张（此时左右切图无意义，但不至于打不开）
@@ -7118,6 +8060,259 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           setRefreshing(false)
         }
       }, [load, kind, scope, page])
+
+      // ---- v0.16.0 粘贴：剪贴板图片/文件作为「素材」落当前对话 ----
+      /** 粘贴提示（成功/失败），3 秒自动消失。 */
+      const [pasteNotice, setPasteNotice] = React.useState(null)
+      React.useEffect(() => {
+        if (pasteNotice === null) return undefined
+        const timer = setTimeout(() => setPasteNotice(null), 3000)
+        return () => clearTimeout(timer)
+      }, [pasteNotice])
+
+      const showPasteNotice = React.useCallback((kindOf, text) => {
+        setPasteNotice({ kind: kindOf, text })
+      }, [])
+
+      /**
+       * v0.16.2 粘贴落点解析：hover 的对话组优先，否则 slot 的当前对话。
+       *
+       * 这两个 helper 必须在所有粘贴 / 裁剪回调**之前**声明 ——
+       * 回调体内的引用是惰性的，但一旦写进 useCallback 依赖数组就会在渲染时
+       * 立即求值，引用后面声明的 const 会直接 TDZ 白屏（v0.16.0 踩过）。
+       */
+      const pasteTargetSid = () => {
+        // 查看器打开时，图是从哪个组点开的就落哪个组 —— 覆盖层是模态的，
+        // 此时鼠标已经不在组的 DOM 里，靠 hover 记的落点会被 mouseleave 清掉。
+        const viewerSid = String(viewerRef.current?.originSid ?? '')
+        if (viewerSid !== '') return viewerSid
+        const sid = String(pasteTargetRef.current?.sessionId ?? '')
+        return sid !== '' ? sid : String(sessionId ?? '')
+      }
+      /** 提示文案里的落点名：组标题，没有则「当前对话」。 */
+      const pasteTargetLabel = () => {
+        const viewerTitle = String(viewerRef.current?.originTitle ?? '')
+        if (viewerTitle !== '') return viewerTitle
+        const target = pasteTargetRef.current
+        if (target === null || String(target.sessionId ?? '') === '') return t('pasteTargetCurrent')
+        return String(target.title ?? '') || t('pasteTargetCurrent')
+      }
+
+      /**
+       * v0.16.0 从**系统剪贴板**读文件列表并落盘 —— 音视频 / 任意文件的主通道。
+       *
+       * Chromium 的 paste 事件对「资源管理器 Ctrl+C 的文件」不给 File 对象，
+       * 只能让 Host 用 PowerShell 读 CF_HDROP；系统剪贴板没有文件列表时，
+       * Host 会退回插件内部剪贴板（复制→粘贴仍闭环）。
+       *
+       * 🔴 必须定义在 doPasteEvent 之前：useCallback 的依赖数组是渲染时立即求值的。
+       * @returns {Promise<boolean>} 是否确实粘进了文件
+       */
+      const pasteFromClipboard = React.useCallback(async () => {
+        let payload = null
+        try { payload = await callHost('clipboardFiles') } catch (error) {
+          showPasteNotice('fail', format(t('pasteFailed'), { message: String(error?.message ?? error) }))
+          return false
+        }
+        const files = Array.isArray(payload?.files) ? payload.files : []
+        if (files.length === 0) return false
+        let result = null
+        try {
+          result = await callHost('pasteFiles', {
+            // v0.16.2：落到「鼠标所在的对话组」，没指定才落当前对话
+            sessionId: pasteTargetSid(),
+            srcPaths: files.map((f) => f.path),
+          })
+        } catch (error) {
+          showPasteNotice('fail', format(t('pasteFailed'), { message: String(error?.message ?? error) }))
+          return false
+        }
+        const okFiles = Array.isArray(result?.files) ? result.files : []
+        if (okFiles.length === 0) {
+          showPasteNotice('fail', format(t('pasteFailed'), { message: result?.error?.message ?? 'pasteFiles failed' }))
+          return false
+        }
+        showPasteNotice('ok', format(t('pasteFilesOk'), {
+          n: okFiles.length, name: okFiles[0].name ?? '', target: pasteTargetLabel(),
+        }))
+        void refresh()
+        if (Array.isArray(result?.failed) && result.failed.length > 0) {
+          console.warn('dsh-gallery: 部分文件粘贴失败', result.failed)
+        }
+        return true
+      }, [callHost, sessionId, refresh, t, showPasteNotice])
+
+      /** 真正落盘：把解析出的图片(images)/文件(files)交给 Host 分别粘贴。 */
+      const ingestPasted = React.useCallback(async ({ images, files }) => {
+        let okCount = 0
+        let lastErr = ''
+        let skipped = 0
+        for (const file of images) {
+          // 没有磁盘路径、MIME 又不是图片的（如复制的 PDF/zip）：读成 base64 也过不了
+          // PNG 校验，直接跳过并计数，最后给一条明确的「请拖入画廊」提示。
+          const mime = typeof file?.type === 'string' ? file.type : ''
+          if (mime !== '' && !mime.startsWith('image/')) { skipped += 1; continue }
+          try {
+            const dataUrl = await fileToDataUrl(file)
+            const comma = dataUrl.indexOf(',')
+            const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl
+            const payload = await callHost('pasteImage', { sessionId: pasteTargetSid(), data: base64, ext: 'png' })
+            if (payload?.ok === true) { okCount += 1; showPasteNotice('ok', format(t('pasteImageOk'), { name: payload.name ?? '', target: pasteTargetLabel() })) }
+            else lastErr = payload?.error?.message ?? 'pasteImage failed'
+          } catch (error) {
+            lastErr = String(error?.message ?? error)
+          }
+        }
+        for (const f of files) {
+          try {
+            const payload = await callHost('pasteFile', { sessionId: pasteTargetSid(), srcPath: f.path, name: f.name })
+            if (payload?.ok === true) { okCount += 1; showPasteNotice('ok', format(t('pasteFileOk'), { name: payload.name ?? '', target: pasteTargetLabel() })) }
+            else lastErr = payload?.error?.message ?? 'pasteFile failed'
+          } catch (error) {
+            lastErr = String(error?.message ?? error)
+          }
+        }
+        if (okCount > 0) {
+          void refresh()
+          if (lastErr !== '') console.warn('dsh-gallery: 部分粘贴失败', lastErr)
+        } else if (lastErr !== '') {
+          showPasteNotice('fail', format(t('pasteFailed'), { message: lastErr }))
+        } else if (skipped > 0) {
+          showPasteNotice('fail', t('pasteUnsupported'))
+        } else {
+          showPasteNotice('fail', t('pasteEmpty'))
+        }
+      }, [sessionId, refresh, t, showPasteNotice])
+
+      /** Ctrl+V：优先吃 paste 事件的图片/文件；事件没给文件信息时退到系统剪贴板。 */
+      const doPasteEvent = React.useCallback(async (clipboardData, event) => {
+        const parsed = extractFromPasteEvent(clipboardData)
+        if (parsed.images.length > 0 || parsed.files.length > 0) {
+          if (typeof event?.preventDefault === 'function') event.preventDefault()
+          await ingestPasted(parsed)
+          return true
+        }
+        return pasteFromClipboard()
+      }, [ingestPasted, pasteFromClipboard])
+
+      /** 右键菜单「粘贴」：先图片（Clipboard API），再文件（含音视频，系统剪贴板）。 */
+      const doPaste = React.useCallback(async () => {
+        const images = await readClipboardImages()
+        if (images.length > 0) {
+          await ingestPasted({ images, files: [] })
+          return
+        }
+        const got = await pasteFromClipboard()
+        if (!got) showPasteNotice('fail', t('pasteEmpty'))
+      }, [ingestPasted, pasteFromClipboard, showPasteNotice, t])
+
+      /** v0.16.0 图片裁剪：把裁剪出的 PNG base64 交给 Host 落盘（源图同目录，标素材）。 */
+      const doCrop = React.useCallback(async (relPath, base64) => {
+        try {
+          // v0.16.2：裁剪产物跟「这张图所属的对话」走，而不是永远跟当前对话。
+          // 来源组由 openViewer 记在 viewer.originSid（打开查看器时就知道图来自哪个组）；
+          // 没有来源组（扁平视图）时才退回 hover 组 / 当前对话。
+          // 组标题 / 创建时间由 Host 读会话日志补（这里读不到 `data`：声明在后面，会 TDZ）。
+          const originSid = String(viewerRef.current?.originSid ?? '')
+          const payload = await callHost('cropImage', {
+            path: relPath, data: base64,
+            sessionId: originSid !== '' ? originSid : pasteTargetSid(),
+          })
+          if (payload?.ok === false) throw new Error(payload?.error?.message ?? 'cropImage failed')
+          const originLabel = String(viewerRef.current?.originTitle ?? '') || pasteTargetLabel()
+          showPasteNotice('ok', format(t('cropSaved'), { name: payload?.name ?? '', target: originLabel }))
+          void refresh()
+        } catch (error) {
+          showPasteNotice('fail', format(t('cropFailed'), { message: String(error?.message ?? error) }))
+        }
+      }, [callHost, refresh, t, showPasteNotice, sessionId])
+
+      /**
+       * v0.16.0 粘贴事件接线。
+       *
+       * 🔴 这些必须放在 `doPasteEvent` **之后**：React 的 useCallback / useEffect
+       * 会在渲染时立即求值依赖数组，若引用后面才声明的 const 会触发 TDZ
+       * （ReferenceError: Cannot access 'doPasteEvent' before initialization），
+       * 整个 GalleryBody 渲染抛错 → 面板白屏。v0.16.0 首版就踩过这个坑。
+       */
+      /** 画廊区域粘贴（Ctrl+V）。只拦截含图片/文件的粘贴，纯文本放行。 */
+      const onBodyPaste = React.useCallback((event) => {
+        if (event?.defaultPrevented === true) return
+        if (isPlainTextPaste(event.clipboardData)) return
+        // 🔴 preventDefault 必须在同步阶段调用：后面读系统剪贴板是异步的
+        event.preventDefault()
+        void doPasteEvent(event.clipboardData, event)
+      }, [doPasteEvent])
+
+      /**
+       * Ctrl+V 的真正落点。
+       *
+       * 面板的 body 是普通 div，**不可聚焦**，浏览器不会把 paste 事件投给它。
+       * 所以必须挂 document 级监听，再用两道门控避免抢走对话输入框的粘贴：
+       *   ① 鼠标必须悬停在本面板上（hoveringRef）；
+       *   ② 焦点不能在 input/textarea/contenteditable 里。
+       */
+      const hoveringRef = React.useRef(false)
+      React.useEffect(() => {
+        const onDocPaste = (event) => {
+          if (hoveringRef.current !== true) return
+          if (event?.defaultPrevented === true) return
+          const ae = document.activeElement
+          const tag = (ae?.tagName ?? '').toLowerCase()
+          if (tag === 'input' || tag === 'textarea' || ae?.isContentEditable === true) return
+          if (isPlainTextPaste(event.clipboardData)) return
+          // 🔴 同步拦截：哪怕 paste 事件没给任何 File（资源管理器复制文件的常态），
+          // 也要拦下来，异步让 Host 去读系统剪贴板的文件列表。
+          event.preventDefault()
+          void doPasteEvent(event.clipboardData, event)
+        }
+        document.addEventListener('paste', onDocPaste)
+        return () => document.removeEventListener('paste', onDocPaste)
+      }, [doPasteEvent])
+
+      /** 右键空白处（非卡片）弹出「粘贴」菜单。卡片已 stopPropagation，不会到这里。 */
+      const onBodyContextMenu = React.useCallback((event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        // v0.16.2：右键落在哪个组里，粘贴就落到那个对话。
+        // 卡片自己 stopPropagation，所以这里命中的是「组内空白处」。
+        const el = typeof event.target?.closest === 'function'
+          ? event.target.closest('[data-gallery-group]')
+          : null
+        const sid = el === null ? '' : String(el.getAttribute('data-gallery-group') ?? '')
+        const targetTitle = el === null ? '' : String(el.getAttribute('data-gallery-group-title') ?? '')
+        pasteTargetRef.current = sid === '' || sid === '__history__'
+          ? null
+          : { sessionId: sid, title: targetTitle, createdAt: 0 }
+        setCtxMenu(null)
+        setPasteMenu({
+          x: event.clientX,
+          y: event.clientY,
+          targetLabel: pasteTargetRef.current === null ? t('pasteTargetCurrent') : (targetTitle || t('pasteTargetCurrent')),
+        })
+      }, [t])
+
+      /**
+       * v0.16.0 复制资产（单文件右键 / 批量选择共用）。
+       * 只把 roots 内的相对路径交给 Host，由 Host 解析绝对路径并写系统剪贴板；
+       * 前端不拼路径、不改原文件、零自动发送。
+       */
+      const doCopyAssets = React.useCallback(async (relPaths) => {
+        const paths = [...new Set((Array.isArray(relPaths) ? relPaths : [])
+          .map((p) => String(p ?? '')).filter((p) => p !== ''))]
+        if (paths.length === 0) return
+        try {
+          const payload = await callHost('copyAssets', { paths })
+          if (payload?.ok !== true) throw new Error(payload?.error?.message ?? 'copyAssets failed')
+          const text = payload?.mode === 'internal' ? t('copyOkInternal') : t('copyOk')
+          showPasteNotice('ok', format(text, { n: payload.count ?? paths.length }))
+          if (Array.isArray(payload?.missed) && payload.missed.length > 0) {
+            console.warn('dsh-gallery: 复制时跳过了不在扫描根目录内的项', payload.missed)
+          }
+        } catch (error) {
+          showPasteNotice('fail', format(t('copyFailed'), { message: String(error?.message ?? error) }))
+        }
+      }, [callHost, t, showPasteNotice])
 
       React.useEffect(() => {
         let alive = true
@@ -7414,6 +8609,13 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
                 title: t('labelEditHint'),
                 onClick: () => openBatchLabelDialog(),
               }, t('labelBatch')),
+              // v0.16.0 批量复制：把选中资产写进系统剪贴板文件列表（跨对话调动）
+              h('button', {
+                type: 'button', className: 'dg-btn dg-btnSmall', key: 'copyFiles',
+                'data-gallery-batch-copy': true,
+                title: t('batchCopyHint'),
+                onClick: () => { void doCopyAssets([...selected]) },
+              }, `⧉ ${t('batchCopyFiles')} (${selectedCount})`),
               h('button', {
                 type: 'button', className: 'dg-btn dg-btnSmall', key: 'clearmark',
                 'data-gallery-batch-clear': true,
@@ -7672,7 +8874,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
                 },
                 t,
                 absPath: buildAbsPath(data.root, item.relPath),
-                onPlay: (target) => setMediaPlaying(target),
+                // v0.16.2：选段产物跟来源组走（groupKey 就是该组 sessionId）
+                onPlay: (target) => setMediaPlaying({ ...target, originSessionId: groupKey }),
                 onContextMenu: openContextMenu,
               }), item, `${groupKey}:${item.relPath}`)
             }
@@ -7712,7 +8915,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
                   pos = list.findIndex((f) => f.relPath === opened.relPath)
                 }
                 if (pos < 0) return
-                openViewer(pos, anchorEl ?? null, list)
+                // v0.16.2：把这张图所属的组带给查看器，裁剪产物要落回同一个对话
+                openViewer(pos, anchorEl ?? null, list, false, { sessionId: groupKey, title: group.title ?? '' })
               },
             }), item, `${groupKey}:${item.relPath}`)
           }
@@ -7755,6 +8959,17 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
               key: `g:${headKey}`,
               'data-gallery-group': headKey,
               'data-gallery-group-current': group.isCurrent === true ? '1' : '0',
+              'data-gallery-group-title': group.title ?? '',
+              /**
+               * v0.16.2：鼠标停在哪一组，粘贴/裁剪就落到那一组。
+               * 「未归类」池没有对应会话，置 null 退回当前对话（不能凭空造目录）。
+               */
+              onMouseEnter: () => {
+                pasteTargetRef.current = group.isHistory === true || !group.sessionId
+                  ? null
+                  : { sessionId: group.sessionId, title: group.title ?? '', createdAt: group.createdAt ?? 0 }
+              },
+              onMouseLeave: () => { pasteTargetRef.current = null },
             }, [
               h('button', {
                 type: 'button',
@@ -7812,12 +9027,21 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
             ])
           })
 
-          body = h('div', { className: 'dg-bodyWrap', key: 'bodyWrap' }, [
+          body = h('div', {
+            className: 'dg-bodyWrap',
+            key: 'bodyWrap',
+            // hover 门控：Ctrl+V 只在鼠标位于面板上时接管（见 hoveringRef 注释）
+            onMouseEnter: () => { hoveringRef.current = true },
+            // 离开面板就清掉粘贴落点，绝不让「上次 hover 的组」残留
+            onMouseLeave: () => { hoveringRef.current = false; pasteTargetRef.current = null },
+          }, [
             h('div', {
               className: `dg-body${kind === 'file' ? ' dg-fileBody' : ''}`,
               key: 'body',
               'data-gallery-body': true,
               ref: bodyScrollRef,
+              onPaste: onBodyPaste,
+              onContextMenu: onBodyContextMenu,
             }, [
               h('div', { className: 'dg-groups', key: 'groups' }, groupNodes),
               data.scan.capped
@@ -7871,12 +9095,19 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
               onOpen: (opened, anchorEl) => openViewer(visibleItems.indexOf(opened), anchorEl, visibleItems),
             }), item, item.relPath))
         // 网格区外面包一层定位容器，右侧放滚动辅助列（无滚轮场景用）
-        body = h('div', { className: 'dg-bodyWrap', key: 'bodyWrap' }, [
+        body = h('div', {
+          className: 'dg-bodyWrap',
+          key: 'bodyWrap',
+          onMouseEnter: () => { hoveringRef.current = true },
+          onMouseLeave: () => { hoveringRef.current = false; pasteTargetRef.current = null },
+        }, [
           h('div', {
             className: `dg-body${kind === 'file' ? ' dg-fileBody' : ''}`,
             key: 'body',
             'data-gallery-body': true,
             ref: bodyScrollRef,
+            onPaste: onBodyPaste,
+            onContextMenu: onBodyContextMenu,
           }, [
             (visibleItems.length > 0
               ? h('div', { className: `dg-grid${kind === 'file' ? ' dg-fileGrid' : ''}${kind === 'media' ? ' dg-mediaGrid' : ''}`, key: 'grid' }, kind === 'media' ? mediaGridChildren : gridChildren)
@@ -7978,7 +9209,14 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       // 用 viewer.list（打开时记录的快照），不用全局 items：
       // 分组视图下卡片来自组内文件，与当前页的扁平 items 不是同一个集合。
       const viewerLayer = viewer !== null && Array.isArray(viewer.list) && viewer.list.length > 0
-        ? h('div', { className: 'dg-viewerLayer', key: 'viewerLayer' },
+        ? h('div', {
+            className: 'dg-viewerLayer',
+            key: 'viewerLayer',
+            // 查看器是独立覆盖层：鼠标在这里也要让 Ctrl+V 生效，
+            // 落点由 pasteTargetSid 从 viewer.originSid 取（不是 hover 的组）。
+            onMouseEnter: () => { hoveringRef.current = true },
+            onMouseLeave: () => { hoveringRef.current = false },
+          },
             h(Viewer, {
               annotations: annotationsOf,
               onAddAnnotation: addAnnotation,
@@ -7990,21 +9228,26 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
               initialOriginal: viewer.asOriginal === true,
               onClose: closeViewer,
               onStep: step,
+              onCrop: doCrop,
             }))
         : null
 
       // 音视频播放器层（v0.10.1）
-      // 截帧要挂到当前对话：把当前组标题 / 创建时间一并传下去登记
+      // 截帧要挂到对话：把当前组标题 / 创建时间一并传下去登记
+      // v0.16.2：在全局视图里播放别组的素材，产物要落回**那个组**，
+      // 标题/创建时间留空由 Host 读会话日志补（传错组名比留空更糟）。
+      const mediaOriginSid = mediaPlaying === null ? '' : String(mediaPlaying.originSessionId ?? '')
+      const mediaSameAsCurrent = mediaOriginSid === '' || mediaOriginSid === String(sessionId ?? '')
       const mediaLayer = mediaPlaying !== null
         ? h(MediaPlayer, {
             key: 'mediaPlayer',
             item: mediaPlaying,
             t,
-            sessionId: sessionId ?? '',
-            sessionTitle: Array.isArray(data?.groups)
+            sessionId: mediaSameAsCurrent ? (sessionId ?? '') : mediaOriginSid,
+            sessionTitle: mediaSameAsCurrent && Array.isArray(data?.groups)
               ? (data.groups.find((g) => g.isCurrent)?.title ?? '')
               : '',
-            sessionCreatedAt: Array.isArray(data?.groups)
+            sessionCreatedAt: mediaSameAsCurrent && Array.isArray(data?.groups)
               ? (data.groups.find((g) => g.isCurrent)?.createdAt ?? 0)
               : 0,
             onSaved: () => { void refresh() },
@@ -8137,7 +9380,11 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
               onHide: () => { void doHide(ctxMenu.item) },
               onReveal: () => { void doReveal(ctxMenu.item) },
               onCopy: () => { void copyText(ctxMenu.absPath) },
+              // v0.16.0 单文件复制：写系统剪贴板文件列表，可在别的对话粘贴
+              onCopyFile: () => { void doCopyAssets([ctxMenu.item.relPath]) },
               onDelete: () => setDeleteTarget({ item: ctxMenu.item, busy: false }),
+              // v0.16.0：列表级粘贴（右键任意卡片也出现）
+              onPaste: () => { void doPaste() },
               // v0.14.2：改标签 / 恢复自动，表态层已下线
               onEditLabel: () => {
                 const target = ctxMenu.item
@@ -8162,6 +9409,20 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
                 : {}),
             },
           })
+        : null
+
+      // v0.16.0：右键空白处（非卡片）的「粘贴」菜单；只给粘贴一项
+      const pasteLayer = pasteMenu !== null
+        ? h(ContextMenu, {
+          key: 'pasteMenu',
+          t,
+          x: pasteMenu.x,
+          y: pasteMenu.y,
+          // 菜单标题直接写清落点，避免「粘到哪去了」说不清
+          item: { relPath: '', name: format(t('pasteTo'), { target: pasteMenu.targetLabel ?? t('pasteTargetCurrent') }) },
+          onClose: () => setPasteMenu(null),
+          actions: { onPaste: () => { void doPaste() } },
+        })
         : null
 
       // 删除确认弹窗
@@ -8189,9 +9450,19 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         mediaLayer,
         settingsLayer,
         ctxLayer,
+        pasteLayer,
         confirmLayer,
         feedbackLayer,
         labelLayer,
+        // v0.16.0 粘贴结果提示（贴在根级，跟随画廊不随网格滚动）
+        pasteNotice === null
+          ? null
+          : h('div', {
+            className: 'dg-pasteNotice'
+              + (pasteNotice.kind === 'ok' ? ' dg-pasteOk' : ' dg-pasteFail'),
+            key: 'pasteNotice',
+            'data-gallery-paste-notice': pasteNotice.kind,
+          }, pasteNotice.text),
       ])
     }
 
