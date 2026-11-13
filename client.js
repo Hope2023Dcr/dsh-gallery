@@ -892,6 +892,8 @@ async function encodeMaskPngBytes(imageData, width, height) {
       // v0.16.2 粘贴落点：全局视图下按「鼠标所在的对话组」决定，不是永远当前对话
       pasteTargetCurrent: '当前对话',
       pasteTo: '粘贴到「{target}」',
+      viewerCopyFile: '复制',
+      viewerCopyFileHint: 'Ctrl+C 复制当前文件（剪贴板里是文件本身，可直接在资源管理器或其他对话粘贴）',
       cropEnter: '裁剪',
       cropExit: '退出裁剪',
       cropConfirm: '确认裁剪',
@@ -1267,6 +1269,8 @@ async function encodeMaskPngBytes(imageData, width, height) {
       // v0.16.2 paste destination follows the hovered chat group in the global view
       pasteTargetCurrent: 'this chat',
       pasteTo: 'Paste into "{target}"',
+      viewerCopyFile: 'Copy',
+      viewerCopyFileHint: 'Ctrl+C copies this file to the clipboard (paste it in Explorer or another chat)',
       cropEnter: 'Crop',
       cropExit: 'Exit crop',
       cropConfirm: 'Apply crop',
@@ -5823,7 +5827,7 @@ ${absPath}
       ])
     }
 
-    function Viewer({ items, index, onClose, onStep, t, initialOriginal, annotations, onAddAnnotation, onRemoveAnnotation, onExportMask, onCrop }) {
+    function Viewer({ items, index, onClose, onStep, t, initialOriginal, annotations, onAddAnnotation, onRemoveAnnotation, onExportMask, onCrop, onCopyFile }) {
       const item = items[index]
       // 文件预览已改走 DSH 原生侧栏（session 地址）；此处 Viewer 仅处理图片，isText 恒 false，
       // 下面的文本分支保留为死代码，供 v0.2 若需插件内预览时复用
@@ -6210,11 +6214,20 @@ ${absPath}
             // 原图/预览切换：保留当前 zoom 与 pan，方便对比同一点细节
             event.preventDefault()
             toggleOriginal()
+          } else if ((event.ctrlKey || event.metaKey) && (key === 'c' || key === 'C')) {
+            // v0.16.3：Ctrl+C 复制**当前查看的这一份文件**（不是画面截图）。
+            // 剪贴板里是文件对象，能直接粘到资源管理器 / 其他对话。
+            // 有选中文本时让位给浏览器默认复制，别抢用户想复制的批注文字。
+            const sel = typeof window.getSelection === 'function' ? window.getSelection() : null
+            if (sel !== null && String(sel).trim() !== '') return
+            if (typeof onCopyFile !== 'function') return
+            event.preventDefault()
+            onCopyFile(item.relPath)
           }
         }
         window.addEventListener('keydown', onKey)
         return () => window.removeEventListener('keydown', onKey)
-      }, [onClose, onStep, panStep, zoomBy, toggleOriginal])
+      }, [onClose, onStep, panStep, zoomBy, toggleOriginal, onCopyFile, item.relPath])
 
       const sliderDragRef = React.useRef(null)
       const onSliderPointerDown = (event) => {
@@ -6402,6 +6415,19 @@ ${absPath}
             'aria-label': '拖到对话',
             onClick: (event) => event.stopPropagation(),
           }, '⇥ 拖到对话'),
+          // v0.16.3：Ctrl+C 复制当前文件；按钮是这条快捷键的可见入口（远程控制也能点）
+          h('button', {
+            type: 'button',
+            className: 'dg-btn',
+            key: 'copyFile',
+            'data-gallery-copy-file': item.relPath,
+            title: t('viewerCopyFileHint'),
+            'aria-label': t('viewerCopyFile'),
+            onClick: (event) => {
+              event.stopPropagation()
+              if (typeof onCopyFile === 'function') onCopyFile(item.relPath)
+            },
+          }, `⧉ ${t('viewerCopyFile')}`),
           h('button', { type: 'button', className: 'dg-btn', key: 'prev', onClick: () => onStep(-1), 'aria-label': t('prev') }, '‹'),
           h('button', { type: 'button', className: 'dg-btn', key: 'next', onClick: () => onStep(1), 'aria-label': t('next') }, '›'),
           h('button', { type: 'button', className: 'dg-btn', key: 'close', onClick: onClose, 'aria-label': t('close') }, '✕'),
@@ -8855,7 +8881,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         }
 
         if (useGroups) {
-          const cardFor = (item, groupKey, listForViewer) => {
+          const cardFor = (item, groupKey, listForViewer, groupMeta) => {
             // 分组里的文件也走同一套卡片组件
             const enriched = {
               ...item,
@@ -8908,7 +8934,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
               onOpen: (opened, anchorEl) => {
                 // 用**该组当前可见的文件**作为查看器列表：
                 // 左右切图应在本组内循环，而不是跳到别的对话的图。
-                const list = Array.isArray(listForViewer) ? listForViewer : group.files
+                const list = Array.isArray(listForViewer) ? listForViewer : (groupMeta?.files ?? [])
                 let pos = list.indexOf(opened)
                 if (pos < 0) {
                   // 对象引用对不上时按 relPath 找（enriched 是浅拷贝，引用可能不同）
@@ -8916,7 +8942,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
                 }
                 if (pos < 0) return
                 // v0.16.2：把这张图所属的组带给查看器，裁剪产物要落回同一个对话
-                openViewer(pos, anchorEl ?? null, list, false, { sessionId: groupKey, title: group.title ?? '' })
+                openViewer(pos, anchorEl ?? null, list, false, { sessionId: groupKey, title: groupMeta?.title ?? '' })
               },
             }), item, `${groupKey}:${item.relPath}`)
           }
@@ -9015,7 +9041,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
                     h('div', { className: 'dg-groupBody', key: 'body' }, [
                       visibleFiles.length > 0
                         ? h('div', { className: `dg-grid${kind === 'file' ? ' dg-fileGrid' : ''}`, key: 'grid' },
-                            visibleFiles.map((f) => cardFor(f, headKey, visibleFiles)))
+                            visibleFiles.map((f) => cardFor(f, headKey, visibleFiles, group)))
                         : h('div', { className: 'dg-groupEmpty', key: 'empty' }, t('groupEmpty')),
                       group.truncated
                         ? h('div', { className: 'dg-groupEmpty', key: 'trunc', style: { marginTop: '8px' } },
@@ -9229,6 +9255,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
               onClose: closeViewer,
               onStep: step,
               onCrop: doCrop,
+              // v0.16.3：Ctrl+C / 顶部按钮 → 复制当前文件（复用 copyAssets，Host 解析绝对路径写剪贴板）
+              onCopyFile: (relPath) => { void doCopyAssets([relPath]) },
             }))
         : null
 
