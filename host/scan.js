@@ -28,6 +28,21 @@ export function parentDirOf(relPath) {
 /** v0.14.7：当前对话分类。日志/登记里没有的、同目录外部图片自动标「素材」(input)。 */
 export function categoryForSessionAsset(autoCategory, externalAsset) {
   return autoCategory ?? (externalAsset ? ASSET_CATEGORY.INPUT : null)
+
+}
+
+/**
+ * 登记条目自带分类（v0.16.1）。
+ *
+ * frames.json 原本只登记截帧，截帧一律算「过程稿」(intermediate)。v0.16.1 起
+ * 粘贴 / 裁剪也登记——它们是从外部拿进来的素材或切出来的片段，必须算「素材」
+ * (input)，否则界面上跟截帧混成一堆过程稿，老板分不清哪个能直接喂给工作流。
+ * 未知/缺省值仍回落到 intermediate，保持截帧原有行为不变。
+ */
+function frameCategoryOf(frame) {
+  const c = String(frame?.category ?? '')
+  if (c === ASSET_CATEGORY.INPUT || c === ASSET_CATEGORY.FINAL || c === ASSET_CATEGORY.UNKNOWN) return c
+  return ASSET_CATEGORY.INTERMEDIATE
 }
 
 export function extractAssetInfo(logText, sessionStartMs = 0) {
@@ -223,6 +238,14 @@ export async function resolveSessionScope(config, sessionId, allRoots) {
   // v0.14.7：会话引用过的「精确目录」（相对 root、小写，空串表示 root 直属层）。
   // 外部拷进同一目录、没被日志引用的图片，也要能在「当前对话」里看到并标为素材。
   const sessionDirs = new Set()
+  /**
+   * v0.16.2：同一批目录的**绝对路径**（保留原始大小写）。
+   *
+   * 只留相对路径时，Host 拼目录只能赌「属于第一个 root」—— 本机有两个产出根
+   * （G:/DSH产出、G:/DSH任务文件），会话只用了第二个时就会拼到第一个根下，
+   * mkdir 造出一个空目录，粘贴的资产凭空消失。这里把根一起记下来。
+   */
+  const sessionDirsAbs = new Set()
   // relPath(小写) → 分类，供扫描时标注
   const categoryByRel = new Map()
 
@@ -242,6 +265,7 @@ export async function resolveSessionScope(config, sessionId, allRoots) {
     relPaths.push(relPath)
     categoryByRel.set(relPath.toLowerCase(), info.category)
     sessionDirs.add(parentDirOf(relPath))
+    sessionDirsAbs.add(path.dirname(absolute))
     // 修法 B：有子目录时取第一层；没有子目录（文件直接在 root 下）时，
     // 用空字符串占位，表示「只在根目录层匹配」，不再直接丢弃
     if (segs.length >= 2) taskDirs.add(segs[0])
@@ -255,6 +279,7 @@ export async function resolveSessionScope(config, sessionId, allRoots) {
     relPaths,
     categoryByRel,
     sessionDirs: [...sessionDirs],
+    sessionDirsAbs: [...sessionDirsAbs],
     subSessions: subLogs.length,
   }
 }
@@ -312,11 +337,11 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
     sessionDirSet = new Set((scopeInfo.sessionDirs ?? []).map((d) => String(d).toLowerCase()))
     // 会话日志缺失时 resolveSessionScope 可能不带分类表，补一个空的
     if (!(scopeInfo.categoryByRel instanceof Map)) scopeInfo.categoryByRel = new Map()
-    // 本对话截出来的帧：让它通过范围过滤，并给一个明确标签
+    // 本对话派生出来的资产（截帧 / 粘贴 / 裁剪）：让它通过范围过滤，并给一个明确标签
     for (const [rel, f] of frameByRel) {
       if (String(f.sessionId ?? '') === sessionId) {
         sessionRelSet.add(rel)
-        scopeInfo.categoryByRel?.set(rel, ASSET_CATEGORY.INTERMEDIATE)
+        scopeInfo.categoryByRel?.set(rel, frameCategoryOf(f))
         sessionDirSet.add(parentDirOf(rel))
       }
     }
@@ -517,7 +542,9 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
         overlayRelPath: String(frame.overlayRelPath ?? ''),
         fillColor: String(frame.fillColor ?? ''),
       }
-    } else if (frame !== undefined) {
+    } else if (frame !== undefined && (frame.kind === undefined || frame.kind === 'frame')) {
+      // 只有「视频截帧」才带来源视频/时间码。粘贴 / 裁剪（v0.16.1 起也登记）
+      // 没有取自哪一帧的概念，误设 frameOf 会让卡片显示「取自《…》」的假来源。
       item.frameOf = {
         videoName: String(frame.videoName ?? ''),
         videoRelPath: String(frame.videoRelPath ?? ''),
@@ -525,7 +552,7 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
         frameMs: Number(frame.frameMs) || 0,
       }
     }
-    // 截帧不在会话日志里：ownerByAbs 查不到时，用登记里的会话信息补一个虚拟归属。
+    // 登记不在会话日志里：ownerByAbs 查不到时，用登记里的会话信息补一个虚拟归属。
     // 日志里已有归属的文件（例如视频本身）一律沿用原归属，不受影响。
     const frameSid = String(frame?.sessionId ?? '')
     const virtualOwner = frame !== undefined && frameSid !== ''
@@ -533,7 +560,8 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
           sessionId: frameSid,
           title: String(frame.sessionTitle ?? '') || sessionIndex?.get(frameSid)?.title || '',
           createdAt: Number(frame.sessionCreatedAt) || sessionIndex?.get(frameSid)?.createdAt || 0,
-          category: ASSET_CATEGORY.INTERMEDIATE,
+          // 截帧 = 过程稿；粘贴 / 裁剪 = 素材（登记里带着 category，缺省回落过程稿）
+          category: frameCategoryOf(frame),
         }
       : undefined
     const owner = ownerByAbs.get(abs) ?? virtualOwner
