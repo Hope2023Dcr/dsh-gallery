@@ -279,10 +279,10 @@ github:Hope2023Dcr/dsh-gallery
 > 想锁定版本（推荐，避免仓库更新导致行为变化）：
 >
 > ```
-> git+https://github.com/Hope2023Dcr/dsh-gallery.git#260a8dadfb39b393fdb8e85b182dd1f871e3ea43
+> git+https://github.com/Hope2023Dcr/dsh-gallery.git#v0.15.0
 > ```
 
-> 上面那个 commit 是 **v0.14.1** 的历史基线（表态层当时还在）。v0.15.0 发布后可用
+> 上面钉的是 **v0.15.0 标签**。用标签而不是 commit：commit 会随文档提交往前漂移，标签始终指向已发布的那一棵树。
 > `git+https://github.com/Hope2023Dcr/dsh-gallery.git#v0.15.0` 锁定版本。
 > **更推荐直接用 npm**（`npm i dsh-gallery`）—— 版本号跟着 `latest` 走，不用每次手工核对哈希。
 
