@@ -77,7 +77,7 @@ async function listSessionDirs(sessionsDir) {
  * @param logText - 解压后的日志文本。
  * @returns 标题字符串；没有则空串。
  */
-function extractSessionTitle(logText) {
+export function extractSessionTitle(logText) {
   if (typeof logText !== 'string' || logText === '') return ''
   // 取最后一个 title（用户可能改过标题）
   let title = ''
@@ -85,6 +85,39 @@ function extractSessionTitle(logText) {
     if (!line.includes('session/title')) continue
     let o
     try { o = JSON.parse(line) } catch { continue }
+    if (o?.type !== 'session/title') continue
+    const t = o?.data?.title
+    if (typeof t === 'string' && t.trim() !== '') title = t.trim()
+  }
+  return title
+}
+
+/**
+ * 同上的省内存版：不 split 全文，只按 `session/title` 命中位置切片。
+ *
+ * 为什么要它：单个会话日志解压后实测 390 万字符（约 4 MB 字符串），
+ * `split('\n')` 会造出十几万个小字符串，在「粘贴一次就读一次标题」这种
+ * 热路径上纯属白烧内存。标题事件的位置也不固定（实测出现在第 98121 字符，
+ * 既不在开头也不在末尾），所以不能靠截头尾。
+ *
+ * 语义与 extractSessionTitle 一致：取最后一次出现的标题。
+ */
+export function extractSessionTitleFast(logText) {
+  if (typeof logText !== 'string' || logText === '') return ''
+  const MARK = 'session/title'
+  let title = ''
+  let pos = 0
+  while (pos < logText.length) {
+    const hit = logText.indexOf(MARK, pos)
+    if (hit < 0) break
+    const lineStart = logText.lastIndexOf('\n', hit) + 1
+    let lineEnd = logText.indexOf('\n', hit)
+    if (lineEnd < 0) lineEnd = logText.length
+    pos = lineEnd + 1
+    // 一整个会话序列化成一行时该行可能极大，直接跳过，避免解析几 MB 的单行
+    if (lineEnd - lineStart > 8192) continue
+    let o
+    try { o = JSON.parse(logText.slice(lineStart, lineEnd)) } catch { continue }
     if (o?.type !== 'session/title') continue
     const t = o?.data?.title
     if (typeof t === 'string' && t.trim() !== '') title = t.trim()
