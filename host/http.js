@@ -11,14 +11,21 @@
 import { promises as fsp } from 'node:fs'
 import { createHash } from 'node:crypto'
 import path from 'node:path'
+import { spawn } from 'node:child_process'
 
 import { ROUTE, MEDIA_ROUTE } from './constants.js'
 import { isInside } from './fsutil.js'
+import { cropMediaFile } from './trim.js'
 import {
   resolveOptions, readSettingsFile, readHiddenList,
   validateRootCandidate, readSettingsPayload,
 } from './settings.js'
-import { scanGallery } from './scan.js'
+import { scanGallery, resolveSessionScope, parentDirOf } from './scan.js'
+import { locateSessionDir, readSessionLogText } from './session.js'
+import { extractSessionTitleFast } from './session-index.js'
+import { DEFAULT_SESSIONS_DIR } from './constants.js'
+import { makeDerivedName, bumpName, pngBufferFrom, tmpPathFor } from './derive.js'
+import { readClipboardFilePaths, writeClipboardFilePaths, internalClipboardPaths, pasteFilesIntoDir } from './clipboard.js'
 
 /**
  * 列表请求的短缓存 + 并发去重（加载提速，不改变返回内容与分组顺序）。
@@ -1340,6 +1347,446 @@ export function registerOpsRoute(ctx, config) {
           }
 
 
+
+          // ---- v0.16.0 粘贴 / 裁剪：把外部素材或派生资产落进当前对话目录 ----
+
+          /**
+           * 按绝对路径找它所属的产出根（多根环境必备）。
+           *
+           * 以前一律取 `roots[0]` 算 relPath：粘贴目标在第二个根（G:/DSH任务文件）时，
+           * 算出来的相对路径会变成 `../DSH任务文件/xxx`，登记与列表全都对不上。
+           * 找不到返回空串，调用方按「无法归属」处理。
+           */
+          function rootOfAbs(roots, abs) {
+            const list = Array.isArray(roots) ? roots : []
+            // 两侧都归一成平台路径再比：配置里常写正斜杠，落盘路径是反斜杠，
+            // isInside 只做字符串前缀判断，不归一就会把同一条路径判成根外。
+            const target = path.resolve(abs)
+            for (const r of list) {
+              if (typeof r === 'string' && r !== '' && isInside(path.resolve(r), target)) return r
+            }
+            return ''
+          }
+
+          /**
+           * 由 sessionId 解析「这次要落进去的对话目录」（绝对路径），拿不到返回 null。
+           *
+           * v0.16.2 起调用方不一定传当前对话：全局视图里在别组的资产区粘贴/裁剪，
+           * 前端会把**那个组**的 sessionId 传进来，这里就落到它的工作目录。
+           *
+           * 目录选择顺序（都很保守，宁可返回 null 也不凭空造目录）：
+           *   ① `sessionDirsAbs` 里**已存在**的目录（带 root，跨产出根不会拼错）；
+           *   ② 相对路径 + 本 root 拼出来的目录（旧行为，会话目录被清掉时靠 mkdir 恢复）。
+           */
+          async function resolveSessionDir(config, sessionId) {
+            if (typeof sessionId !== 'string' || sessionId === '') return null
+            const opts = resolveOptions(config)
+            let scope
+            try { scope = await resolveSessionScope(config, sessionId, opts.roots) } catch { return null }
+            if (!scope?.ok) return null
+            const roots = (opts.roots ?? []).filter((r) => typeof r === 'string' && r !== '')
+            if (roots.length === 0) return null
+            const absDirs = (scope.sessionDirsAbs ?? [])
+              .map((d) => String(d ?? ''))
+              .filter((d) => d !== '')
+              .map((d) => path.resolve(d))
+              // 同上：正/反斜杠混用时 isInside 会误判，两侧都先归一
+              .filter((d) => roots.some((r) => isInside(path.resolve(r), d)))
+            for (const abs of absDirs) {
+              try { if ((await fsp.stat(abs)).isDirectory()) return abs } catch { /* 目录不在，试下一个 */ }
+            }
+            const dirs = (scope.sessionDirs ?? []).map((d) => String(d)).filter((d) => d !== '')
+            if (dirs.length === 0) return null
+            const root = roots[0]
+            const abs = path.resolve(root, dirs[0])
+            if (!isInside(root, abs)) return null
+            return abs
+          }
+
+          /**
+           * 读会话标题 / 创建时间（派生资产登记用）。
+           *
+           * 为什么 Host 自己读、不靠前端传：粘贴走 document 级监听、裁剪走
+           * MediaPlayer 内部按钮，两处拿「当前对话组」的上下文方式不同，
+           * 前端每处都传一遍容易漏；这里按 sessionId 统一兜底，
+           * 前端传了就更优先（个别对话日志缺失时仍能正确归组）。
+           *
+           * 读不到就返回空标题 / 0，不抛错 —— 归组只靠 sessionId，
+           * 标题缺失最多退化成 sessionId 前 8 位，绝不能因此让粘贴失败。
+           */
+          async function sessionMetaOf(config, sessionId) {
+            const meta = { title: '', createdAt: 0 }
+            if (typeof sessionId !== 'string' || sessionId === '') return meta
+            const sessionsDir = typeof config?.sessionsDir === 'string' && config.sessionsDir !== ''
+              ? path.resolve(config.sessionsDir)
+              : DEFAULT_SESSIONS_DIR
+            try {
+              const dir = await locateSessionDir(sessionsDir, sessionId)
+              if (dir === null) return meta
+              try { meta.createdAt = (await fsp.stat(dir)).birthtimeMs || 0 } catch { /* 忽略 */ }
+              // v4 会话日志是 zstd 分帧，readSessionLogText 逐帧解压 + 按 mtime 缓存。
+              // 解压后实测 390 万字符，标题事件位置不固定（本次在第 9.8 万字符处），
+              // 所以用不 split 全文的 extractSessionTitleFast，别在粘贴热路径上白烧内存。
+              const text = await readSessionLogText(path.join(dir, 'session.v4.jsonl.zstd'))
+              meta.title = extractSessionTitleFast(text)
+            } catch { /* 会话目录不可读就当没有标题 */ }
+            return meta
+          }
+
+          /**
+           * 登记派生资产（粘贴 / 裁剪）到 frames.json，让它挂回产出它的对话。
+           *
+           * 🔴 不登记会发生什么（2026-11-13 老板实测）：文件确实落盘了，但全局资产
+           * 视图按「会话日志里出现过的路径」分组，日志里没有这条 → 掉进「未归类」
+           * （5000+ 条的历史池底部），界面上等于「粘贴/裁剪没生成」。同一份登记
+           * 同时解决「归到当前对话」和「自动标素材(input)」两件事。
+           *
+           * 登记失败不回滚文件：宁可归组不准，也不能让老板刚粘的素材凭空消失。
+           */
+          async function registerDerivedAsset(opts, entry) {
+            try {
+              await registerFrame(opts.settingsFile, {
+                relPath: entry.relPath,
+                kind: entry.kind,
+                // 粘贴进来的外部素材、裁剪出的片段一律算「素材」(input)
+                category: 'input',
+                sessionId: entry.sessionId,
+                sessionTitle: entry.sessionTitle ?? '',
+                sessionCreatedAt: entry.sessionCreatedAt ?? 0,
+                sourceRelPath: entry.sourceRelPath ?? '',
+                sourceName: entry.sourceName ?? '',
+                savedAt: Date.now(),
+              })
+              return true
+            } catch { return false }
+          }
+
+
+          /** 探测本机 ffmpeg；优先固定安装路径，其次 PATH；都没有返回 null。 */
+          async function findFfmpeg() {
+            const candidates = [
+              'G:/Program Files/ffmpeg/bin/ffmpeg.exe',
+              'G:/Program Files (x86)/ffmpeg/bin/ffmpeg.exe',
+            ]
+            for (const c of candidates) {
+              try {
+                const abs = path.resolve(c)
+                await fsp.access(abs, 0)
+                return abs
+              } catch { /* 换下一个 */ }
+            }
+            return 'ffmpeg'
+          }
+
+          /** 跑一次 ffmpeg，收集 stderr 便于失败定位；非 0 退出码视为失败。 */
+          function runFfmpeg(ffmpeg, args) {
+            return new Promise((resolve, reject) => {
+              let child
+              try { child = spawn(ffmpeg, args, { windowsHide: true }) } catch (err) { reject(err); return }
+              let stderr = ''
+              child.stderr?.on('data', (d) => { stderr += String(d) })
+              child.on('error', (err) => reject(err))
+              child.on('close', (code) => {
+                if (code === 0) resolve()
+                else reject(new Error('ffmpeg exit ' + code + ': ' + stderr.slice(-800)))
+              })
+            })
+          }
+
+          async function resolveSourceUnderRoots(opts, relPath) {
+            for (const root of opts.roots) {
+              if (typeof root !== 'string' || root === '') continue
+              const abs = path.resolve(root, relPath)
+              if (!isInside(root, abs)) continue
+              try { const st = await fsp.stat(abs); if (st.isFile()) return { abs, ownerRoot: root } } catch { /* 换下一个 */ }
+            }
+            return null
+          }
+
+          /** 在目标目录里找一个不重名的名字（重复时加 -n）。 */
+          async function uniqueName(dir, base) {
+            let name = base
+            let abs = path.join(dir, name)
+            let n = 2
+            while (n <= 999) {
+              let exists = true
+              try { await fsp.access(abs) } catch { exists = false }
+              if (!exists) break
+              name = bumpName(base, n)
+              abs = path.join(dir, name)
+              n += 1
+            }
+            return { name, abs }
+          }
+
+          // ---- 粘贴图片（剪贴板里的位图 / 截图，统一 PNG） ----
+          if (op === 'pasteImage') {
+            const opts = resolveOptions(config)
+            const sessionId = String(body?.sessionId ?? '')
+            const data = typeof body?.data === 'string' ? body.data : ''
+            const ext = (typeof body?.ext === 'string' && body.ext !== '') ? body.ext : 'png'
+            if (data === '') {
+              return json({ ok: false, error: { code: 'bad-request', message: '缺少图片数据' } }, 400)
+            }
+            const buf = pngBufferFrom(data)
+            if (buf === null) {
+              return json({ ok: false, error: { code: 'bad-png', message: '图片数据为空、超过 24 MB 或非 PNG' } }, 400)
+            }
+            const dir = await resolveSessionDir(config, sessionId)
+            if (dir === null) {
+              return json({ ok: false, error: { code: 'no-session-dir', message: '无法确定当前对话目录' } }, 400)
+            }
+            const { name, abs } = await uniqueName(dir, makeDerivedName('粘贴', ext))
+            const tmp = `${abs}.tmp-${process.pid}-${Date.now().toString(36)}`
+            try {
+              await fsp.mkdir(dir, { recursive: true })
+              await fsp.writeFile(tmp, buf)
+              await fsp.rename(tmp, abs)
+            } catch (error) {
+              try { await fsp.rm(tmp, { force: true }) } catch { /* 忽略 */ }
+              return json({ ok: false, error: { code: 'paste-write-failed', message: String(error?.message ?? error) } }, 500)
+            }
+            // v0.16.2：按落盘位置找所属根，多根环境不能赌 roots[0]
+            const root = rootOfAbs(opts.roots, abs)
+            const relPath = root === '' ? '' : path.relative(root, abs).split(path.sep).join('/')
+            // 登记归属，否则全局资产会把这张图扔进 5000+ 条的「未归类」池底部
+            const meta = await sessionMetaOf(config, sessionId)
+            const registered = await registerDerivedAsset(opts, {
+              relPath, kind: 'paste', sessionId,
+              sessionTitle: String(body?.sessionTitle ?? '') || meta.title,
+              sessionCreatedAt: Number(body?.sessionCreatedAt) || meta.createdAt,
+            })
+            listCache.clear()
+            return json({ ok: true, relPath, absPath: abs, name, registered })
+          }
+
+          // ---- 粘贴文件（剪贴板里复制的文件，Electron 给真实路径） ----
+          if (op === 'pasteFile') {
+            const opts = resolveOptions(config)
+            const sessionId = String(body?.sessionId ?? '')
+            const src = String(body?.srcPath ?? '').replace(/\\/g, '/')
+            const hint = typeof body?.name === 'string' && body.name !== '' ? body.name : null
+            if (src === '') {
+              return json({ ok: false, error: { code: 'bad-request', message: '缺少源文件路径' } }, 400)
+            }
+            const srcAbs = path.resolve(src)
+            let srcStat
+            try { srcStat = await fsp.stat(srcAbs) } catch {
+              return json({ ok: false, error: { code: 'src-not-found', message: '源文件不存在' } }, 404)
+            }
+            if (!srcStat.isFile()) {
+              return json({ ok: false, error: { code: 'bad-request', message: '源路径不是文件' } }, 400)
+            }
+            if (srcStat.size > 2 * 1024 * 1024 * 1024) {
+              return json({ ok: false, error: { code: 'too-large', message: '文件超过 2 GB，粘贴被拒绝' } }, 400)
+            }
+            const dir = await resolveSessionDir(config, sessionId)
+            if (dir === null) {
+              return json({ ok: false, error: { code: 'no-session-dir', message: '无法确定当前对话目录' } }, 400)
+            }
+            const base = (hint ?? path.basename(srcAbs)).replace(/[\\/:*?"<>|\r\n\t]/g, '_').trim() || 'file'
+            const { name, abs } = await uniqueName(dir, base)
+            try {
+              await fsp.mkdir(dir, { recursive: true })
+              await fsp.copyFile(srcAbs, abs)
+              // 🔴 与 pasteFiles 同口径：Windows CopyFile 保留源 mtime，画廊按时间窗过滤，
+              // 不刷新会让刚粘进来的旧素材在 global 视图里「消失」。粘贴 = 现在进入本对话。
+              try { const now = new Date(); await fsp.utimes(abs, now, now) } catch { /* 忽略 */ }
+            } catch (error) {
+              return json({ ok: false, error: { code: 'paste-write-failed', message: String(error?.message ?? error) } }, 500)
+            }
+            // v0.16.2：按落盘位置找所属根，多根环境不能赌 roots[0]
+            const root = rootOfAbs(opts.roots, abs)
+            const relPath = root === '' ? '' : path.relative(root, abs).split(path.sep).join('/')
+            // 与 pasteImage 同口径：登记归属，否则全局资产看不到这条粘贴
+            const meta = await sessionMetaOf(config, sessionId)
+            const registered = await registerDerivedAsset(opts, {
+              relPath, kind: 'paste', sessionId,
+              sessionTitle: String(body?.sessionTitle ?? '') || meta.title,
+              sessionCreatedAt: Number(body?.sessionCreatedAt) || meta.createdAt,
+            })
+            listCache.clear()
+            return json({ ok: true, relPath, absPath: abs, name, registered })
+          }
+
+          // ---- v0.16.0 复制资产到系统剪贴板（单文件右键 / 批量选择共用） ----
+          // 只接收 roots 内的相对路径，由 Host 解析绝对路径，前端不拼路径、防穿越。
+          if (op === 'copyAssets') {
+            const opts = resolveOptions(config)
+            const rels = Array.isArray(body?.paths) ? body.paths : []
+            const absList = []
+            const missed = []
+            for (const rp of rels.slice(0, 200)) {
+              const rel = String(rp ?? '').replace(/\\/g, '/')
+              if (rel === '') continue
+              const found = await resolveSourceUnderRoots(opts, rel)
+              if (found === null) missed.push(rel)
+              else absList.push(found.abs)
+            }
+            if (absList.length === 0) {
+              return json({ ok: false, error: { code: 'copy-no-source', message: '选中的文件都不在扫描根目录内' } }, 400)
+            }
+            const result = await writeClipboardFilePaths(absList)
+            return json({ ok: true, count: result.count, mode: result.mode, missed })
+          }
+
+          // ---- v0.16.0 读系统剪贴板里的文件列表（音视频 / 任意文件粘贴用） ----
+          // Chromium 的 paste 事件拿不到「资源管理器复制的文件」，只能从这里补。
+          // 系统剪贴板没有文件列表时，退回插件内部剪贴板（复制→粘贴仍闭环）。
+          if (op === 'clipboardFiles') {
+            let paths = await readClipboardFilePaths()
+            let mode = 'system'
+            if (paths.length === 0) {
+              paths = internalClipboardPaths()
+              mode = 'internal'
+            }
+            const files = []
+            for (const p of paths.slice(0, 200)) {
+              const abs = path.resolve(String(p ?? '').replace(/\\/g, '/'))
+              try {
+                const st = await fsp.stat(abs)
+                if (!st.isFile()) continue
+                files.push({ path: abs, name: path.basename(abs), size: st.size })
+              } catch { /* 剪贴板可能残留已删除的路径，跳过 */ }
+            }
+            return json({ ok: true, files, mode })
+          }
+
+          // ---- v0.16.0 批量把外部文件复制进当前对话目录（任意类型，含音视频） ----
+          // 与 pasteFile 同口径：2GB 上限、重名自增、原子目标不覆盖原件、自动标「素材」。
+          if (op === 'pasteFiles') {
+            const opts = resolveOptions(config)
+            const sessionId = String(body?.sessionId ?? '')
+            const srcs = Array.isArray(body?.srcPaths) ? body.srcPaths : []
+            const dir = await resolveSessionDir(config, sessionId)
+            if (dir === null) {
+              return json({ ok: false, error: { code: 'no-session-dir', message: '无法确定当前对话目录' } }, 400)
+            }
+            // v0.16.2：粘贴目标可能是别组、也可能是另一个产出根，按目录找根
+            const root = rootOfAbs(opts.roots, dir)
+            const { files: okFiles, failed } = await pasteFilesIntoDir(srcs, dir, root)
+            if (okFiles.length > 0) {
+              // 每个落盘文件都要单独登记（批量粘贴可能一次进来十几个）
+              const meta = await sessionMetaOf(config, sessionId)
+              const sessionTitle = String(body?.sessionTitle ?? '') || meta.title
+              const sessionCreatedAt = Number(body?.sessionCreatedAt) || meta.createdAt
+              for (const f of okFiles) {
+                f.registered = await registerDerivedAsset(opts, {
+                  relPath: f.relPath, kind: 'paste', sessionId, sessionTitle, sessionCreatedAt,
+                })
+              }
+              listCache.clear()
+            }
+            if (okFiles.length === 0) {
+              return json({
+                ok: false,
+                error: { code: 'paste-files-failed', message: failed[0]?.message ?? '没有可粘贴的文件' },
+                files: [], failed,
+              }, 500)
+            }
+            return json({ ok: true, files: okFiles, failed })
+          }
+
+          // ---- 裁剪图片（前端已按框裁好 PNG，写源同目录） ----
+          if (op === 'cropImage') {
+            const opts = resolveOptions(config)
+            const imageRel = String(body?.path ?? '').replace(/\\/g, '/')
+            const data = typeof body?.data === 'string' ? body.data : ''
+            if (imageRel === '' || data === '') {
+              return json({ ok: false, error: { code: 'bad-request', message: '缺少 path 或 data' } }, 400)
+            }
+            const buf = pngBufferFrom(data)
+            if (buf === null) {
+              return json({ ok: false, error: { code: 'bad-png', message: '图片数据为空、超过 24 MB 或非 PNG' } }, 400)
+            }
+            const src = await resolveSourceUnderRoots(opts, imageRel)
+            if (src === null) {
+              return json({ ok: false, error: { code: 'image-not-found', message: '源图不在扫描目录内' } }, 404)
+            }
+            const dir = path.dirname(src.abs)
+            const imageName = path.basename(src.abs)
+            const { name, abs } = await uniqueName(dir, makeDerivedName('裁剪-' + imageName.replace(/\.[^.]+$/, ''), 'png'))
+            const tmp = `${abs}.tmp-${process.pid}-${Date.now().toString(36)}`
+            try {
+              await fsp.mkdir(dir, { recursive: true })
+              await fsp.writeFile(tmp, buf)
+              await fsp.rename(tmp, abs)
+            } catch (error) {
+              try { await fsp.rm(tmp, { force: true }) } catch { /* 忽略 */ }
+              return json({ ok: false, error: { code: 'crop-write-failed', message: String(error?.message ?? error) } }, 500)
+            }
+            const relPath = path.relative(src.ownerRoot, abs).split(path.sep).join('/')
+            // 登记归属：裁剪产物同样不在会话日志里，不登记会掉进「未归类」
+            const sessionId = String(body?.sessionId ?? '')
+            const meta = await sessionMetaOf(config, sessionId)
+            const registered = await registerDerivedAsset(opts, {
+              relPath, kind: 'crop', sessionId,
+              sessionTitle: String(body?.sessionTitle ?? '') || meta.title,
+              sessionCreatedAt: Number(body?.sessionCreatedAt) || meta.createdAt,
+              sourceRelPath: imageRel,
+              sourceName: imageName,
+            })
+            listCache.clear()
+            return json({ ok: true, relPath, absPath: abs, name, registered })
+          }
+
+          // ---- 裁剪音视频（Host 调 ffmpeg 流拷贝切段，落源同目录） ----
+          if (op === 'cropMedia') {
+            const opts = resolveOptions(config)
+            const mediaRel = String(body?.path ?? '').replace(/\\/g, '/')
+            const start = Number(body?.start)
+            const end = Number(body?.end)
+            const kind = String(body?.kind ?? 'video')
+            if (mediaRel === '' || !Number.isFinite(start) || !Number.isFinite(end)) {
+              return json({ ok: false, error: { code: 'bad-request', message: '缺少 path 或起止时间' } }, 400)
+            }
+            if (start < 0 || end <= start) {
+              return json({ ok: false, error: { code: 'bad-request', message: '起止时间不合法（结束须大于开始）' } }, 400)
+            }
+            const src = await resolveSourceUnderRoots(opts, mediaRel)
+            if (src === null) {
+              return json({ ok: false, error: { code: 'media-not-found', message: '源音视频不在扫描目录内' } }, 404)
+            }
+            const ffmpeg = await findFfmpeg()
+            if (ffmpeg === null) {
+              return json({ ok: false, error: { code: 'ffmpeg-missing', message: '未找到 ffmpeg，无法裁剪音视频' } }, 500)
+            }
+            const mediaName = path.basename(src.abs)
+            const srcExt = path.extname(mediaName).replace(/^\./, '').toLowerCase()
+            const outExt = srcExt || (kind === 'audio' ? 'mp3' : 'mp4')
+            const { name, abs: outAbs } = await uniqueName(path.dirname(src.abs), makeDerivedName('裁剪-' + mediaName.replace(/\.[^.]+$/, ''), outExt))
+            // 🔴 临时文件**必须保留扩展名**：ffmpeg 靠扩展名推断输出容器，
+            // 写成 `xxx.mp4.tmp-123` 会报 "Unable to choose an output format" → HTTP 500。
+            // 命名规则抽到 derive.tmpPathFor，测试直接打真函数，防止再次漂移。
+            const tmpAbs = tmpPathFor(outAbs)
+            let mode = 'copy'
+            try {
+              await fsp.mkdir(path.dirname(outAbs), { recursive: true })
+              // 核心策略在 host/trim.js：先流拷贝，再用 ffprobe 校验时长，偏差 > 0.5s 才重编码。
+              // 抽出去是为了能对真 ffmpeg 做集成测试（copy 只认关键帧这点必须实测才发现）。
+              const result = await cropMediaFile({
+                ffmpeg, src: src.abs, start, end, out: tmpAbs, outExt, kind,
+              })
+              mode = result.mode
+              await fsp.rename(tmpAbs, outAbs)
+            } catch (error) {
+              try { await fsp.rm(tmpAbs, { force: true }) } catch { /* 忽略 */ }
+              return json({ ok: false, error: { code: 'crop-failed', message: String(error?.message ?? error) } }, 500)
+            }
+            const relPath = path.relative(src.ownerRoot, outAbs).split(path.sep).join('/')
+            // 与 cropImage 同口径：音视频片段也要挂回产出它的对话
+            const sessionId = String(body?.sessionId ?? '')
+            const meta = await sessionMetaOf(config, sessionId)
+            const registered = await registerDerivedAsset(opts, {
+              relPath, kind: 'crop', sessionId,
+              sessionTitle: String(body?.sessionTitle ?? '') || meta.title,
+              sessionCreatedAt: Number(body?.sessionCreatedAt) || meta.createdAt,
+              sourceRelPath: mediaRel,
+              sourceName: mediaName,
+            })
+            listCache.clear()
+            return json({ ok: true, relPath, absPath: outAbs, name, start, end, mode, registered })
+          }
 
           return json({ ok: false, error: { code: 'unknown-op', message: `未知操作：${op}` } }, 400)
 
