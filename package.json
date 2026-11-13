@@ -1,6 +1,6 @@
 {
   "name": "dsh-gallery",
-  "version": "0.16.2",
+  "version": "0.16.3",
   "type": "module",
   "description": "产出台：图片 / 文件 / 音视频实时可见、当场校验；原生产出标签（素材 / 过程稿 / 定稿 / 未归类）可手动改且持久生效，改标签动作与图上圈选批注攒进反馈篮，由人审核合并后发送，全程零自动发送；视频「截取当前帧」自动存入当前对话资产；图上左键画矩形框、右键多点闭合成实心多边形，可导出 ComfyUI 直接可用的 RGBA 遮罩（选区内 alpha=0、RGB 保留原图），另出红 / 绿 / 蓝纯色半透明填充预览图供目视核对；把图拖进对话框会自动带上文件名与绝对路径（含对应主遮罩名），Agent 不必扫目录找图；批注框跟随图片缩放平移，标注态按住鼠标中键可平移且框不脱框。Output gallery for DeepSeek Harness: live image/file/audio/video preview, persistent manual asset labels, region annotations and label changes queued in a human-approved feedback basket, one-click video frame capture filed into the current session, rectangle and multi-point polygon selections exported as ComfyUI-ready RGBA masks (alpha=0 inside the selection, original RGB kept) plus a colored translucent fill preview, drag-to-chat that carries the file name and absolute path so agents need no directory scan; annotation boxes follow image zoom/pan, and holding the middle mouse button pans the image while annotating without losing the boxes.",
   "repository": {
@@ -86,7 +86,9 @@
     "media-trim",
     "ffmpeg",
     "audio-trim",
-    "video-trim"
+    "video-trim",
+    "copy-file",
+    "viewer-shortcut"
   ],
   "publishConfig": {
     "access": "public",
