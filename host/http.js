@@ -39,6 +39,9 @@ const listCache = new Map()
 const listInflight = new Map()
 import { resolveReadable, serveMedia, contentTypeFor } from './media.js'
 import { MARK_ACTIONS, readMarks, writeMarks, setMark, setMarksBatch, marksFilePath } from './marks.js'
+import { readFeedback, setFeedback, setFeedbackBatch, ackFeedback, clearFeedback } from './feedback.js'
+// v0.16.4 A 档：把待处理反馈渲染成成稿文本（纯函数，不碰落盘数据）
+import { makeFeedback, renderFeedbackText } from './feedback-text.js'
 import { LABEL_CATEGORIES, readLabels, setLabel, setLabelsBatch, deleteLabels } from './labels.js'
 import {
   registerFrame, deleteFrames, frameTimecode, makeFrameName, makeMaskName, maskPolygonMeta,
@@ -64,6 +67,112 @@ function LOG_RESOLVE(label, detail) {
   if (process.env.DSH_GALLERY_DEBUG === '1') {
     try { console.info('dsh-gallery ' + label, JSON.stringify(detail)) } catch { /* 忽略 */ }
   }
+}
+
+/**
+ * 把相对路径解析成绝对路径（按 roots 依次试，第一个命中的即用）。
+ * 解析不出返回空串 —— 调用方自行决定要不要跳过。
+ */
+function absoluteOf(roots, relPath) {
+  if (!Array.isArray(roots)) return ''
+  for (const root of roots) {
+    if (typeof root !== 'string' || root === '') continue
+    const abs = path.resolve(root, relPath)
+    if (isInside(root, abs)) return abs
+  }
+  return ''
+}
+
+/**
+ * v0.16.4：按条件过滤资产（后置过滤，不重扫）。
+ *
+ * 为什么后置：扫描本身有缓存、且要按 roots 遍历；筛选只影响「返回哪些」，
+ * 放在扫描后最省。分组的 counts 会按过滤后的集合重算，保证台面显示与筛选结果一致。
+ *
+ * 筛选维度（AND 组合）：
+ *   label / category —— 生效分类（手动标签优先，与台面显示一致）
+ *   action          —— 判定动作（来自 marks）
+ *   confirmed       —— 是否已确认（来自 marks 的 confirmed 字段）
+ *   ext             —— 扩展名
+ *   q               —— 路径模糊匹配
+ */
+// v0.16.4: 导出以便真跑测试（纯函数，不改行为）
+export async function applyAssetFilter(value, opts) {
+  const {
+    filterLabel, filterCategory, filterAction, filterExt,
+    filterConfirmed, filterQuery, filterLimit, settingsFile,
+  } = opts
+
+  let marks = {}
+  try {
+    marks = (await readMarks(settingsFile)).marks ?? {}
+  } catch { marks = {} }
+
+  const labelSet = filterLabel !== '' ? new Set([filterLabel]) : null
+  const categorySet = filterCategory !== '' ? new Set([filterCategory]) : null
+
+  const keep = (f) => {
+    const category = String(f?.category ?? '')
+    if (labelSet !== null && !labelSet.has(category)) return false
+    if (categorySet !== null && !categorySet.has(category)) return false
+
+    const ext = String(f?.extension ?? '')
+    if (filterExt !== '' && !ext.toLowerCase().endsWith(filterExt)) return false
+
+    if (filterQuery !== '') {
+      const hay = `${f?.relPath ?? ''} ${f?.name ?? ''}`.toLowerCase()
+      if (!hay.includes(filterQuery)) return false
+    }
+
+    const mark = marks[f?.relPath]
+    if (filterAction !== '' && String(mark?.action ?? '') !== filterAction) return false
+    if (filterConfirmed !== null && (mark?.confirmed === true) !== filterConfirmed) return false
+
+    return true
+  }
+
+  const decorate = (f) => {
+    const mark = marks[f?.relPath]
+    return {
+      ...f,
+      confirmed: mark?.confirmed === true,
+      markAction: String(mark?.action ?? ''),
+    }
+  }
+
+  const out = { ...value }
+  out.filtered = true
+
+  if (Array.isArray(value?.groups)) {
+    const groups = []
+    for (const g of value.groups) {
+      const files = (Array.isArray(g.files) ? g.files : []).filter(keep).map(decorate)
+      if (files.length === 0) continue
+      groups.push({
+        ...g,
+        files,
+        counts: {
+          final: files.filter((f) => f.category === 'final').length,
+          input: files.filter((f) => f.category === 'input').length,
+          intermediate: files.filter((f) => f.category === 'intermediate').length,
+          unknown: files.filter((f) => f.category === 'unknown' || f.category === undefined).length,
+        },
+      })
+    }
+    out.groups = groups
+    out.total = groups.reduce((n, g) => n + g.files.length, 0)
+  }
+
+  if (Array.isArray(value?.items)) {
+    out.items = value.items.filter(keep).map(decorate).slice(0, filterLimit)
+  }
+
+  if (Array.isArray(value?.files)) {
+    out.files = value.files.filter(keep).map(decorate).slice(0, filterLimit)
+    out.total = out.files.length
+  }
+
+  return out
 }
 
 /** 统一 JSON 响应。 */
@@ -275,6 +384,20 @@ export function registerOpsRoute(ctx, config) {
 
               const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
 
+              // ── v0.16.4：检索维度 ──────────────────────────────────
+              // 目标：Agent 能按条件取资产（不只是「当前选中那一张」）。
+              // 全部可选、AND 组合；分类取的是**手动标签覆写后的生效值**（与台面显示一致）。
+              const filterLabel = typeof body?.label === 'string' ? body.label : ''
+              const filterCategory = typeof body?.category === 'string' ? body.category : ''
+              const filterAction = typeof body?.action === 'string' ? body.action : ''
+              const filterExt = typeof body?.ext === 'string' ? body.ext.toLowerCase() : ''
+              const filterConfirmed = body?.confirmed === true ? true
+                : body?.confirmed === false ? false : null
+              const filterQuery = typeof body?.q === 'string' ? body.q.trim().toLowerCase() : ''
+              const filterLimit = Math.max(1, Math.min(500, Math.trunc(Number(body?.limit)) || 100))
+              const hasFilter = filterLabel !== '' || filterCategory !== '' || filterAction !== ''
+                || filterExt !== '' || filterConfirmed !== null || filterQuery !== ''
+
               // 配置 / 隐藏列表写在 settingsFile 里，它的 mtime 变了就让缓存失效。
               // sessionId 必须在键里：切对话后不能复用上一会话的分组结果。
               let settingsStamp = 0
@@ -283,6 +406,8 @@ export function registerOpsRoute(ctx, config) {
                 kind, scope, sessionId, body?.page ?? 1,
                 resolved.roots, resolved.windowHours, resolved.maxDepth,
                 resolved.maxItems, settingsStamp,
+                filterLabel, filterCategory, filterAction, filterExt,
+                filterConfirmed, filterQuery, filterLimit,
               ])
               const hit = listCache.get(cacheKey)
               if (hit !== undefined && Date.now() - hit.at < LIST_CACHE_MS) return json(hit.value)
@@ -291,12 +416,21 @@ export function registerOpsRoute(ctx, config) {
 
               const task = scanGallery(config, kind, scope, sessionId, body?.page)
                 .then((value) => {
-                  listCache.set(cacheKey, { at: Date.now(), value })
-                  if (listCache.size > 24) {
-                    const oldest = listCache.keys().next().value
-                    if (oldest !== undefined) listCache.delete(oldest)
+                  // ── v0.16.4：按条件过滤 ────────────────────────────
+                  // 标记（判定 / 确认态）来自 marks 文件；手动标签已在 scan 阶段
+                  // 覆写到 item.category，所以这里直接用 category 即可。
+                  if (!hasFilter) {
+                    listCache.set(cacheKey, { at: Date.now(), value })
+                    return value
                   }
-                  return value
+                  return applyAssetFilter(value, {
+                    filterLabel, filterCategory, filterAction, filterExt,
+                    filterConfirmed, filterQuery, filterLimit,
+                    settingsFile: resolved.settingsFile,
+                  }).then((filtered) => {
+                    listCache.set(cacheKey, { at: Date.now(), value: filtered })
+                    return filtered
+                  })
                 })
                 .finally(() => { listInflight.delete(cacheKey) })
               listInflight.set(cacheKey, task)
@@ -865,6 +999,155 @@ export function registerOpsRoute(ctx, config) {
             const settingsFile = resolveOptions(config).settingsFile
             const stored = await readMarks(settingsFile)
             return json({ ok: true, marks: stored.marks })
+          }
+
+          if (op === 'setFeedback') {
+            /**
+             * 记一条待处理反馈（用户做判定时调）。
+             * 落盘 dsh-gallery-feedback.json —— 插件重启也不丢。
+             */
+            const relPath = String(body?.path ?? '')
+            if (relPath === '') {
+              return json({ ok: false, error: { code: 'bad-request', message: '缺少 path' } }, 400)
+            }
+            const item = body?.item
+            if (item !== null && item !== undefined && typeof item !== 'object') {
+              return json({ ok: false, error: { code: 'bad-request', message: 'item 不合法' } }, 400)
+            }
+            try {
+              const settingsFile = resolveOptions(config).settingsFile
+              const next = await setFeedback(settingsFile, relPath, item ?? null)
+              return json({ ok: true, count: Object.keys(next).length, feedback: next })
+            } catch (error) {
+              return json({ ok: false, error: { code: 'feedback-write-failed', message: String(error?.message ?? error) } }, 500)
+            }
+          }
+
+          if (op === 'setFeedbackBatch') {
+            /**
+             * 批量记待处理反馈（v0.16.4）：一次读改写 + 一次原子写。
+             * 改标签可能一次动几十张图，逐条发请求会拖慢且互相覆盖。
+             */
+            const updates = Array.isArray(body?.updates) ? body.updates : null
+            if (updates === null) {
+              return json({ ok: false, error: { code: 'bad-request', message: '缺少 updates' } }, 400)
+            }
+            try {
+              const settingsFile = resolveOptions(config).settingsFile
+              const next = await setFeedbackBatch(settingsFile, updates)
+              return json({ ok: true, count: Object.keys(next).length, feedback: next })
+            } catch (error) {
+              return json({ ok: false, error: { code: 'feedback-write-failed', message: String(error?.message ?? error) } }, 500)
+            }
+          }
+
+          if (op === 'getPendingFeedback') {
+            /**
+             * 取待处理反馈（**纯读**）。
+             *
+             * A 档：Agent 主动来拉。
+             * ⚠️ 这里**不**标记已读 —— Agent 拉走 ≠ 人处理完了。
+             * 清零的时机是「人点发送」或「人点清空反馈篮」，走 ackFeedback。
+             */
+            try {
+              const settingsFile = resolveOptions(config).settingsFile
+              const fb = await readFeedback(settingsFile)
+              const marks = (await readMarks(settingsFile)).marks ?? {}
+              /**
+               * v0.16.5：一条落盘记录可能带**多条框选批注**（annotations 数组）。
+               *
+               * 原来一条记录只对应一处 region，同一张图框两处时后写的把先写的覆盖了。
+               * 现在落盘按整组存，读取时展开成「一处理解一条 item」——
+               * 这样 Agent 拿到的条数与人在图上框的处数一致，
+               * 也和前端草稿里 `Annotation N` 的编号一一对应。
+               *
+               * 按图分组排序：同一张图的条目必须连续，不能被别的图的判定插进来，
+               * 否则草稿读起来是断的。排序键取该图第一条的时间。
+               */
+              const buckets = []
+              for (const entry of Object.entries(fb.feedback)) {
+                const relPath = entry[0]
+                const item = entry[1] ?? {}
+                const mark = marks[relPath]
+                const base = {
+                  relPath,
+                  absolute: absoluteOf(resolved.roots, relPath),
+                  reason: String(item.reason ?? ''),
+                  changeOnly: Array.isArray(item.changeOnly) ? item.changeOnly : [],
+                  keep: Array.isArray(item.keep) ? item.keep : [],
+                  preserve: Array.isArray(item.preserve) ? item.preserve : [],
+                  region: item.region ?? null,
+                  markedAt: Number(item.markedAt) || 0,
+                  // v0.16.4：带上分类与归属会话 —— Agent 拿到就能判断该改哪个文件、归哪条对话
+                  category: String(item.category ?? 'unknown'),
+                  sessionId: String(item.sessionId ?? ''),
+                  confirmed: mark?.confirmed === true,
+                }
+                const flatAction = String(item.action ?? '')
+                const annots = Array.isArray(item.annotations)
+                  ? item.annotations.filter((a) => a !== null && typeof a === 'object' && a.region)
+                  : []
+                const group = []
+                if (annots.length === 0) {
+                  // 旧格式 / 纯标记：一条记录就是一条
+                  group.push({ ...base, action: flatAction })
+                } else {
+                  // 该图还有一条独立判定（如「交付不合格」）时，先出这一条
+                  if (flatAction !== '' && flatAction !== 'annotate') {
+                    group.push({ ...base, action: flatAction })
+                  }
+                  for (const a of annots) {
+                    group.push({
+                      ...base,
+                      action: 'annotate',
+                      reason: typeof a.note === 'string' ? a.note : '',
+                      // 批注只管「这块改成什么」，不继承整图判定的只改 / 锁死
+                      changeOnly: [],
+                      keep: [],
+                      preserve: [],
+                      region: a.region,
+                      markedAt: Number(a.markedAt) || base.markedAt,
+                      annotId: String(a.id ?? ''),
+                    })
+                  }
+                }
+                buckets.push(group)
+              }
+              buckets.sort((x, y) => ((x[0]?.markedAt ?? 0) - (y[0]?.markedAt ?? 0)))
+              const items = buckets.flat()
+              /**
+               * draft：把待处理条目渲染成**可直接粘进 composer 的成稿文本**。
+               * Agent 不必自己拼格式；人也能直接拿去用。
+               * 渲染是纯函数，不影响落盘数据，也不触发任何发送。
+               */
+              let draft = ''
+              try {
+                const locale = body?.locale === 'en' ? 'en' : 'zh'
+                draft = renderFeedbackText(makeFeedback({ sessionId: '', items }), { locale })
+              } catch { draft = '' }
+              return json({ ok: true, schema: 1, count: items.length, items, draft })
+            } catch (error) {
+              return json({ ok: false, error: { code: 'feedback-read-failed', message: String(error?.message ?? error) } }, 500)
+            }
+          }
+
+          if (op === 'ackFeedback') {
+            /**
+             * 确认已处理 —— **人**点发送 / 人点清空反馈篮时调。
+             * 移除给定路径的待处理反馈；不传 paths 表示清空全部。
+             */
+            try {
+              const settingsFile = resolveOptions(config).settingsFile
+              const paths = Array.isArray(body?.paths)
+                ? body.paths.map((p) => String(p ?? '')).filter((p) => p !== '')
+                : null
+              const next = paths === null
+                ? await clearFeedback(settingsFile)
+                : await ackFeedback(settingsFile, paths)
+              return json({ ok: true, count: Object.keys(next).length })
+            } catch (error) {
+              return json({ ok: false, error: { code: 'feedback-ack-failed', message: String(error?.message ?? error) } }, 500)
+            }
           }
 
           if (op === 'marks') {
