@@ -736,7 +736,7 @@ async function encodeMaskPngBytes(imageData, width, height) {
       ctxHide: '隐藏（不再列出）',
       ctxUnhide: '取消隐藏',
       ctxReveal: '打开所在文件夹',
-      ctxCopy: '带路径复制',
+      ctxCopy: '写进输入框',
       ctxDelete: '删除文件',
       ctxDeleteConfirm: '确认删除？此操作不可恢复',
       ctxDeleteYes: '确认删除',
@@ -810,6 +810,7 @@ async function encodeMaskPngBytes(imageData, width, height) {
       feedbackGenerating: '正在生成…',
       feedbackGenerateHint: '生成草稿并写入输入框，由你确认后手动发送',
       feedbackDraftReady: '草稿已写入输入框（未发送）。确认无误请自行发送。',
+      dblClickHint: '双击 = 把带路径信息写进输入框（不自动发送）',
       feedbackDraftInClipboard: '草稿已复制到剪贴板（输入框通道不可用），请手动粘贴。',
       feedbackDraftFailed: '生成草稿失败',
       feedbackChangeOnly: '只改',
@@ -1119,7 +1120,7 @@ async function encodeMaskPngBytes(imageData, width, height) {
       ctxHide: 'Hide (stop listing)',
       ctxUnhide: 'Unhide',
       ctxReveal: 'Open containing folder',
-      ctxCopy: 'Copy with path',
+      ctxCopy: 'Write into chat input',
       ctxDelete: 'Delete file',
       ctxDeleteConfirm: 'Delete permanently? This cannot be undone',
       ctxDeleteYes: 'Delete',
@@ -1191,6 +1192,7 @@ async function encodeMaskPngBytes(imageData, width, height) {
       feedbackGenerating: 'Generating…',
       feedbackGenerateHint: 'Writes the draft into the composer; you confirm and send it yourself',
       feedbackDraftReady: 'Draft written into the composer (not sent). Review it and send when ready.',
+      dblClickHint: 'Double-click = write the asset path into the chat input (never auto-sends)',
       feedbackDraftInClipboard: 'Draft copied to clipboard (composer channel unavailable) — paste it manually.',
       feedbackDraftFailed: 'Could not generate the draft',
       feedbackChangeOnly: 'changeOnly',
@@ -1939,7 +1941,9 @@ async function encodeMaskPngBytes(imageData, width, height) {
   border-radius: 8px;
   box-sizing: border-box;
   pointer-events: none;
-  z-index: 6;
+  /* v0.17.0：从 6 降到 5 —— 分类边框不能盖住吸顶的会话标题
+     （组头 z-index 是 10，压低真凶是双保险）。 */
+  z-index: 5;
 }
 .dg-cardWrap[data-gallery-bucket="final"]::after { border-color: #4a9d5f; }
 /* v0.14.2：表态层下线，「已确认 / 待确认」两态合并为单一「定稿」 */
@@ -2001,7 +2005,11 @@ async function encodeMaskPngBytes(imageData, width, height) {
 .dg-group {
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 8px;
-  overflow: hidden;
+  /* v0.17.0：会话标题吸顶。
+     overflow 必须是 visible —— overflow:hidden 会让 position:sticky 完全失效。
+     圆角改用 clip-path 保住（clip-path 不创建滚动容器，sticky 仍可用）。 */
+  overflow: visible;
+  clip-path: inset(0 round 8px);
   background: var(--dsw-alias-bg-layer-1);
 }
 .dg-groupHead {
@@ -2012,15 +2020,23 @@ async function encodeMaskPngBytes(imageData, width, height) {
   padding: 9px 11px;
   background: var(--dsw-alias-bg-layer-2);
   border: none;
-  border-bottom: 1px solid transparent;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
   cursor: pointer;
   font: inherit;
   color: inherit;
   text-align: left;
   appearance: none;
+  /* v0.17.0：滚动时把当前会话标题钉在面板顶部，方便随时点它折叠。
+     top:-10px 抵消 .dg-body 的 padding:10px（sticky 相对 padding box 定位）。
+     z-index 让它盖住下方内容。 */
+  position: sticky;
+  top: -10px;
+  /* v0.17.0：z-index 必须高于 .dg-cardWrap::after 的 6 ——
+     分类边框（绿/橙/灰）画在伪元素上，z 比组头高就会「穿透」到标题上。
+     取 10：高于卡片内所有元素（组内上限是 .dg-maskNotice 的 7）。 */
+  z-index: 10;
 }
 .dg-groupHead:hover { background: var(--dsw-alias-bg-layer-3, var(--dsw-alias-bg-layer-2)); }
-.dg-groupHeadOpen { border-bottom-color: var(--dsw-alias-border-l1); }
 .dg-groupArrow {
   flex: 0 0 auto;
   font-size: 10px;
@@ -2187,7 +2203,12 @@ async function encodeMaskPngBytes(imageData, width, height) {
   border: 1px solid var(--dsw-alias-border-l1);
   font-weight: 500;
 }
-.dg-groupBody { padding: 10px; }
+.dg-groupBody {
+  padding: 10px;
+  /* v0.17.0：组内容整体排在吸顶组头之下（跨组时也稳） */
+  position: relative;
+  z-index: 0;
+}
 .dg-groupEmpty {
   padding: 14px 10px;
   font-size: 12px;
@@ -2494,6 +2515,29 @@ async function encodeMaskPngBytes(imageData, width, height) {
 .dg-viewerBody { position: relative; flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 10px 42px 10px 10px; }
 .dg-viewerBody img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
 .dg-viewerLayer { position: absolute; inset: 0; z-index: 30; background: var(--dsw-specific-sidebar-fill, #111); display: flex; flex-direction: column; }
+
+/* ===== v0.17.0 轻提示：写进输入框的结果反馈 =====
+   不打断操作，2.6 秒自动消失；贴在面板底部居中，不遮挡卡片。 */
+.dg-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 45;
+  max-width: calc(100% - 32px);
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+  pointer-events: none;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .22);
+  border: 1px solid var(--dsw-alias-border-l1, rgba(255, 255, 255, .12));
+  background: var(--dsw-alias-bg-layer-3, rgba(28, 26, 24, .96));
+  color: var(--dsw-alias-label-primary, #f2efe9);
+}
+.dg-toast-ok { border-color: var(--dsw-alias-brand-primary, #4f9d69); }
+.dg-toast-failed { border-color: var(--dsw-alias-state-error-primary, #d9534f); }
 .dg-viewerLayer .dg-viewer { flex: 1 1 auto; min-height: 0; }
 .dg-viewerBody { touch-action: none; }
 .dg-textBody { display: block; overflow: auto; padding: 12px 14px; user-select: text; touch-action: auto; }
@@ -4638,7 +4682,7 @@ function serializeFeedback(feedback) {
      * 音频没有画面，只显示音符图标。
      */
 
-    function MediaCard({ item, t, absPath, onPlay, onContextMenu }) {
+    function MediaCard({ item, t, absPath, onPlay, onContextMenu, onDoubleClick }) {
       const isVideo = item.mediaType === 'video'
       const [thumb, setThumb] = React.useState(null)
       const nodeRef = React.useRef(null)
@@ -4741,6 +4785,10 @@ function serializeFeedback(feedback) {
         'data-gallery-relpath': item.relPath,
         'data-gallery-media-type': item.mediaType ?? '',
         onClick: () => onPlay(item),
+        // v0.17.0：双击 → 写进输入框
+        onDoubleClick: typeof onDoubleClick === 'function'
+          ? (event) => { event.preventDefault(); onDoubleClick(item, event) }
+          : undefined,
         onContextMenu: (event) => {
           event.preventDefault()
           event.stopPropagation()
@@ -5373,7 +5421,7 @@ function serializeFeedback(feedback) {
       return MEDIA_ROUTE + '?path=' + encodeURIComponent(relPath) + '&v=' + stamp
     }
 
-    function FileCard({ item, t, absPath, onOpenFolder, onPreview, onContextMenu }) {
+    function FileCard({ item, t, absPath, onOpenFolder, onPreview, onContextMenu, onDoubleClick }) {
       const ext = (item.extension ?? '').replace(/^\./, '').toLowerCase()
       const badge = (ext === '' ? 'FILE' : ext).slice(0, 4).toUpperCase()
       const [copied, setCopied] = React.useState(false)
@@ -5409,6 +5457,10 @@ function serializeFeedback(feedback) {
 ${absPath}
 点击在 DSH 右侧栏预览`,
         onClick: () => onPreview(absPath),
+        // v0.17.0：双击 → 写进输入框
+        onDoubleClick: typeof onDoubleClick === 'function'
+          ? (event) => { event.preventDefault(); onDoubleClick(item, event) }
+          : undefined,
         onContextMenu: (event) => {
           event.preventDefault()
           event.stopPropagation()
@@ -5458,9 +5510,14 @@ ${absPath}
     }
 
     /** 单张缩略图卡片：独立加载、独立失败，互不影响。 */
-    function Card({ item, t, onOpen, limiter, onContextMenu }) {
+    function Card({ item, t, onOpen, limiter, onContextMenu, onDoubleClick }) {
       const [state, setState] = React.useState({ status: 'pending' })
       const [node, setNode] = React.useState(null)
+      // v0.17.0：单击延迟计时器（双击时取消，避免「闪一下大图」）
+      const clickTimer = React.useRef(null)
+      React.useEffect(() => () => {
+        if (clickTimer.current !== null) clearTimeout(clickTimer.current)
+      }, [])
 
       React.useEffect(() => {
         if (node === null) return undefined
@@ -5527,7 +5584,27 @@ ${absPath}
         'data-gallery-card': item.relPath,
         'data-gallery-relpath': item.relPath,
         'data-gallery-category': item.category || '',
-        onClick: (event) => onOpen(item, event.currentTarget),
+        // v0.17.0：单击延迟 220ms 才开查看器。
+        // 双击 = 写进输入框；浏览器会先发两次 click 再发 dblclick，
+        // 若立即开查看器，用户会看到「闪一下大图又被关掉」。
+        // 第二次 click（event.detail > 1）取消计时器 → 查看器从未打开。
+        onClick: (event) => {
+          if (typeof onDoubleClick !== 'function') { onOpen(item, event.currentTarget); return }
+          if (event.detail > 1) {
+            if (clickTimer.current !== null) { clearTimeout(clickTimer.current); clickTimer.current = null }
+            return
+          }
+          if (clickTimer.current !== null) clearTimeout(clickTimer.current)
+          const anchor = event.currentTarget
+          clickTimer.current = setTimeout(() => {
+            clickTimer.current = null
+            onOpen(item, anchor)
+          }, 220)
+        },
+        // v0.17.0：双击 → 把「文件名 + 绝对路径 + 主遮罩」写进输入框草稿
+        onDoubleClick: typeof onDoubleClick === 'function'
+          ? (event) => { event.preventDefault(); onDoubleClick(item, event) }
+          : undefined,
         onContextMenu: (event) => {
           event.preventDefault()
           event.stopPropagation()
@@ -6436,6 +6513,8 @@ ${absPath}
                 },
               }, cropActive ? `✂ ${t('cropExit')}` : `✂ ${t('cropEnter')}`)
             : null,
+          // 「拖到对话」确定性入口：Viewer 大图本身 draggable:false + pointerEvents:none
+          // （标注态的中键平移 / 右键多边形都依赖它），所以不改大图，另给一个可拖按钮。
           // v0.17.0：删掉查看器顶部的「⇥ 拖到对话」按钮。
           // 原来它存在是因为 Viewer 大图本身 draggable:false + pointerEvents:none
           // （标注态的中键平移 / 右键多边形都依赖它），需要一个可拖的把手。
@@ -7584,6 +7663,58 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
     function GalleryBody(props) {
       const { t, sessionId } = props
       const [view, setView] = React.useState({ status: 'loading' })
+      // v0.17.0：本面板自己的轻提示（写进输入框的结果反馈）。
+      // 不能用 FeedbackBasket 的 setNotice —— 那是另一个组件的局部 state。
+      const [toast, setToast] = React.useState(null)
+      const toastTimer = React.useRef(null)
+      const showToast = React.useCallback((kind, text) => {
+        setToast({ kind, text })
+        if (toastTimer.current !== null) clearTimeout(toastTimer.current)
+        toastTimer.current = setTimeout(() => {
+          toastTimer.current = null
+          setToast(null)
+        }, 2600)
+      }, [])
+      React.useEffect(() => () => {
+        if (toastTimer.current !== null) clearTimeout(toastTimer.current)
+      }, [])
+
+        /**
+         * v0.17.0：把「文件名 + 绝对路径 + 主遮罩」写进输入框草稿。
+         *
+         * 为什么用输入框而不是剪贴板：DSH 的拖放通道会把 : \ | 等字符洗成 _，
+         * Windows 绝对路径传过去必然残缺；双击 / 右键走 composer 纯文本，路径原样送达。
+         *
+         * 绝不自动发送：只写草稿，发送由人自己按。
+         */
+        const writeAssetToComposer = (target, abs) => {
+          const info = target ?? {}
+          // 预览图 / 原图没有自己的 maskOf，按 overlayRelPath / sourceRelPath 反查主遮罩
+          const linked = dragMaskByOverlay.get(info.relPath) ?? dragMaskBySource.get(info.relPath) ?? null
+          const hasMask = info?.maskOf !== null && info?.maskOf !== undefined
+          const enriched = (!hasMask && linked !== null)
+            ? { ...info, maskOf: { ...linked, linkedMask: true } }
+            : info
+          const text = dragNameOf(enriched, abs)
+          void writeDraftToComposer(text, sessionId).then((result) => {
+            // 写不进 composer 就放剪贴板，人自己粘
+            if (!result.ok) void copyText(text)
+            showToast(result.ok ? 'ok' : 'failed',
+              result.ok ? t('feedbackDraftReady') : t('feedbackDraftInClipboard'))
+          }).catch((error) => {
+            console.warn('dsh-gallery: 写输入框失败，已退回剪贴板', error)
+            void copyText(text)
+            showToast('failed', t('feedbackDraftInClipboard'))
+          })
+        }
+
+        const handleCardDoubleClick = (target, event) => {
+          const abs = (typeof target?.absPath === 'string' && target.absPath !== ''
+            ? target.absPath
+            : buildAbsPath(data.root, target.relPath))
+          writeAssetToComposer(target, abs)
+        }
+
       const [refreshing, setRefreshing] = React.useState(false)
       const [viewer, setViewer] = React.useState(null)
       // 音视频播放器（v0.10.1）：独立于图片查看器，因为交互与 DOM 完全不同
@@ -9197,6 +9328,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         }
 
         if (useGroups) {
+
           const cardFor = (item, groupKey, listForViewer, groupMeta) => {
             // 分组里的文件也走同一套卡片组件
             const enriched = {
@@ -9221,6 +9353,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
                 // v0.16.2：选段产物跟来源组走（groupKey 就是该组 sessionId）
                 onPlay: (target) => setMediaPlaying({ ...target, originSessionId: groupKey }),
                 onContextMenu: openContextMenu,
+                // v0.17.0：双击写进输入框
+                onDoubleClick: (target, event) => { handleCardDoubleClick(target, event) },
               }), item, `${groupKey}:${item.relPath}`)
             }
             if (kind === 'file') {
@@ -9233,6 +9367,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           : buildAbsPath(data.root, item.relPath)),
                 onOpenFolder: () => { void callHost('reveal', { path: item.relPath }).catch((e) => console.error('dsh-gallery: reveal 失败', e)) },
                 onContextMenu: openContextMenu,
+                // v0.17.0：双击写进输入框
+                onDoubleClick: (target, event) => { handleCardDoubleClick(target, event) },
                 onPreview: (abs) => {
                   const address = sessionFileAddressOf(sessionId, abs)
                   try {
@@ -9252,6 +9388,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
               t,
               limiter: limiter.current,
               onContextMenu: openContextMenu,
+              // v0.17.0：双击写进输入框
+              onDoubleClick: (target, event) => { handleCardDoubleClick(target, event) },
               onOpen: (opened, anchorEl) => {
                 // 用**该组当前可见的文件**作为查看器列表：
                 // 左右切图应在本组内循环，而不是跳到别的对话的图。
@@ -9413,6 +9551,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           ? item.absPath
           : buildAbsPath(data === null ? '' : data.root, item.relPath)),
         onPlay: (target) => setMediaPlaying(target),
+        // v0.17.0：双击写进输入框（当前对话的媒体卡）
+        onDoubleClick: (target, event) => { handleCardDoubleClick(target, event) },
         onContextMenu: openContextMenu,
       }), item, item.relPath))
 
@@ -9426,6 +9566,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           : buildAbsPath(data.root, item.relPath)),
               onOpenFolder: (abs) => { void callHost('reveal', { path: item.relPath }).catch((e) => console.error('dsh-gallery: reveal 失败', e)) },
               onContextMenu: openContextMenu,
+              // v0.17.0：双击写进输入框（当前对话的文件卡）
+              onDoubleClick: (target, event) => { handleCardDoubleClick(target, event) },
               onPreview: (abs) => {
                 const address = sessionFileAddressOf(sessionId, abs)
                 try {
@@ -9443,6 +9585,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
               t,
               limiter: limiter.current,
               onContextMenu: openContextMenu,
+              // v0.17.0：双击写进输入框（扁平视图）
+              onDoubleClick: (target, event) => { handleCardDoubleClick(target, event) },
               onOpen: (opened, anchorEl) => openViewer(visibleItems.indexOf(opened), anchorEl, visibleItems),
             }), item, item.relPath))
         // 网格区外面包一层定位容器，右侧放滚动辅助列（无滚轮场景用）
@@ -9739,9 +9883,9 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
                 : undefined,
               onHide: () => { void doHide(ctxMenu.item) },
               onReveal: () => { void doReveal(ctxMenu.item) },
-              // v0.17.0：复制【结构化信息】而不是裸路径 —— 与拖图带的信息同格式，
-              // 粘到对话框里，Agent 一次就拿到 文件名 / 绝对路径 / 主遮罩。
-              onCopy: () => { void copyText(dragNameOf(ctxMenu.item, ctxMenu.absPath)) },
+              // v0.17.0：【写进输入框】而不是复制到剪贴板 —— 少一步粘贴。
+              // 写不进 composer 时自动退回剪贴板（见 writeAssetToComposer）。
+              onCopy: () => { writeAssetToComposer(ctxMenu.item, ctxMenu.absPath) },
               // v0.16.0 单文件复制：写系统剪贴板文件列表，可在别的对话粘贴
               onCopyFile: () => { void doCopyAssets([ctxMenu.item.relPath]) },
               onDelete: () => setDeleteTarget({ item: ctxMenu.item, busy: false }),
@@ -9800,6 +9944,15 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         : null
 
       return h('div', { className: 'dg-root', 'data-gallery-root': true }, [
+        // v0.17.0：写进输入框的结果提示（轻量浮层，不打断操作）
+        toast === null
+          ? null
+          : h('div', {
+              className: `dg-toast dg-toast-${toast.kind}`,
+              key: 'toast',
+              role: 'status',
+              'data-gallery-toast': toast.kind,
+            }, toast.text),
         header,
         basketToggle,
         pendingBadge,
@@ -10338,6 +10491,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
             // 拖完在输入框 Ctrl+V 能粘出「产出台·…」= 新代码确实执行过、dragstart 命中；
             // 粘不出 = 面板仍加载旧模块，需重载窗口。编码 / 写入失败时它就是唯一可用通道。
             void copyText(name)
+            // 从 Viewer「拖到对话」按钮拖出时，取预览大图而不是按钮内的节点；
+            // 列表卡片则仍用自己那张缩略图。两者都是同源 blob URL，canvas 不会被污染。
             const img = card.hasAttribute('data-gallery-dragviewer')
               ? document.querySelector('.dg-viewerBody img')
               : (target.matches('img') ? target : target.querySelector('img'))
