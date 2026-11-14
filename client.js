@@ -544,8 +544,8 @@ async function encodeMaskPngBytes(imageData, width, height) {
       refresh: '刷新',
       preview: '预览',
       previewInSidebar: '在 DSH 右侧栏预览该文件',
-      copy: '复制路径',
-      copyPath: '复制该文件的绝对路径',
+      copy: '带路径复制',
+      copyPath: '复制文件名+绝对路径+关联遮罩（可直接粘进对话框）',
       copied: '已复制',
       openFolder: '打开所在文件夹',
       kindImage: '图片',
@@ -736,7 +736,7 @@ async function encodeMaskPngBytes(imageData, width, height) {
       ctxHide: '隐藏（不再列出）',
       ctxUnhide: '取消隐藏',
       ctxReveal: '打开所在文件夹',
-      ctxCopy: '复制路径',
+      ctxCopy: '带路径复制',
       ctxDelete: '删除文件',
       ctxDeleteConfirm: '确认删除？此操作不可恢复',
       ctxDeleteYes: '确认删除',
@@ -770,6 +770,8 @@ async function encodeMaskPngBytes(imageData, width, height) {
       feedbackBasketToggleHint: '打开/关闭反馈篮，可在此生成决策草稿',
       feedbackBasketTitleN: '反馈篮 · {n} 条',
       feedbackBasketEmpty: '还没有可发的条目。在卡片上右键选择动作，或在图片上框选批注，都会进这里。',
+      pendingFeedbackBadge: '{n} 条待处理',
+      pendingFeedbackBadgeHint: '有 {n} 条反馈还没处理。点这里打开反馈篮；生成草稿或清空后归零。',
       feedbackTargetSession: '将发往会话：{title}',
       feedbackForeignWarn: '有 {n} 条来自其他会话，不能一起提交（请先切到那个会话）。',
       feedbackForeignWarnShort: '含其他会话的条目，已禁用提交',
@@ -926,8 +928,8 @@ async function encodeMaskPngBytes(imageData, width, height) {
       refresh: 'Refresh',
       preview: 'Preview',
       previewInSidebar: 'Preview this file in the DSH sidebar',
-      copy: 'Copy path',
-      copyPath: 'Copy the absolute path of this file',
+      copy: 'Copy with path',
+      copyPath: 'Copy file name + absolute path + linked mask (pasteable into chat)',
       copied: 'Copied',
       openFolder: 'Open containing folder',
       kindImage: 'Images',
@@ -1117,7 +1119,7 @@ async function encodeMaskPngBytes(imageData, width, height) {
       ctxHide: 'Hide (stop listing)',
       ctxUnhide: 'Unhide',
       ctxReveal: 'Open containing folder',
-      ctxCopy: 'Copy path',
+      ctxCopy: 'Copy with path',
       ctxDelete: 'Delete file',
       ctxDeleteConfirm: 'Delete permanently? This cannot be undone',
       ctxDeleteYes: 'Delete',
@@ -1149,6 +1151,8 @@ async function encodeMaskPngBytes(imageData, width, height) {
       feedbackBasketToggleHint: 'Toggle the feedback basket to generate a draft',
       feedbackBasketTitleN: 'Feedback basket · {n} item(s)',
       feedbackBasketEmpty: 'Nothing to send yet. Right-click a card for an action, or box an area on an image — both land here.',
+      pendingFeedbackBadge: '{n} pending',
+      pendingFeedbackBadgeHint: '{n} feedback item(s) waiting. Click to open the basket; it clears after you generate a draft or empty it.',
       feedbackTargetSession: 'Will be sent to session: {title}',
       feedbackForeignWarn: '{n} item(s) belong to another session and cannot be sent together.',
       feedbackForeignWarnShort: 'Contains items from another session — submit disabled',
@@ -2893,6 +2897,24 @@ async function encodeMaskPngBytes(imageData, width, height) {
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
 }
 .dg-basketToggle[data-gallery-basket-count="0"] { color: #a9b1bd; }
+/* v0.16.4 · B 档：待处理反馈角标（挂在反馈篮入口旁，点它=打开反馈篮） */
+.dg-pendingBadge {
+  /* 反馈篮按钮是 fixed right:16px bottom:16px；角标放它正上方，不抢点击 */
+  position: fixed; right: 16px; bottom: 56px; z-index: 45;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  border: 0;
+  border-radius: 999px;
+  padding: 1px 8px;
+  margin-left: 6px;
+  font-size: 11px;
+  line-height: 18px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #7a3d00;
+  background: #ffe1b8;
+}
+.dg-pendingBadge:hover { background: #ffd39a; }
+.dg-pendingBadge:focus-visible { outline: 2px solid #ff9f43; outline-offset: 1px; }
 
 /* ---------- v0.13.7：分类开关 / 确认角标 / 批量 / 删除对话框 ---------- */
 
@@ -4039,7 +4061,7 @@ function serializeFeedback(feedback) {
      */
     function FeedbackBasket({ t, items, currentSessionId, targetSessionTitle,
                               onClose, onRemove, onEdit, onClear, onEditSave,
-                              onRemoveAnnotation, onClearAll }) {
+                              onRemoveAnnotation, onClearAll, onAck }) {
       // 语言判断：用 t 探测一个已知键 —— 命中中文就按 zh 渲染，否则 en。
       // （不引入 detectLocale，插件没有这个工具函数）
       const [locale] = React.useState(() => {
@@ -4122,6 +4144,16 @@ function serializeFeedback(feedback) {
                 ? t('feedbackDraftReady')
                 : t('feedbackDraftInClipboard'),
             })
+            /**
+             * v0.16.4：草稿已经写进 composer —— 这批反馈交到人手里了。
+             * 此时才把「待处理」清掉（B 档角标归零）。
+             * 注意：marks / labels 一个都不动，人还能继续看、继续改。
+             */
+            if (typeof onAck === 'function') {
+              try {
+                await onAck(items.map((it) => it.relPath))
+              } catch { /* ack 失败不影响草稿已经写进去这个事实 */ }
+            }
           } else {
             setNotice({ kind: 'failed', text: t('feedbackDraftFailed') })
           }
@@ -4130,7 +4162,7 @@ function serializeFeedback(feedback) {
         } finally {
           setBusy(false)
         }
-      }, [canSubmit, items, currentSessionId, locale, targetSessionTitle, t])
+      }, [canSubmit, items, currentSessionId, locale, targetSessionTitle, t, onAck])
 
       return h('div', { className: 'dg-feedbackLayer', key: 'feedbackLayer' }, [
         h('div', {
@@ -5354,7 +5386,10 @@ function serializeFeedback(feedback) {
 
       const onCopy = async (event) => {
         event.stopPropagation()
-        const ok = await copyText(absPath)
+        // v0.17.0：复制【结构化信息】而不是裸路径 —— 与拖图带的信息同格式，
+        // 粘到对话框里，Agent 一次就拿到 文件名 / 绝对路径 / 主遮罩。
+        const name = dragNameOf(item, absPath)
+        const ok = await copyText(name)
         setCopied(ok)
       }
       const onEye = (event) => {
@@ -6401,20 +6436,11 @@ ${absPath}
                 },
               }, cropActive ? `✂ ${t('cropExit')}` : `✂ ${t('cropEnter')}`)
             : null,
-          // 「拖到对话」确定性入口：Viewer 大图本身 draggable:false + pointerEvents:none
-          // （标注态的中键平移 / 右键多边形都依赖它），所以不改大图，另给一个可拖按钮。
-          // 这个按钮同时是「新 client.js 已加载」的可见标记 —— 看到它就说明面板不是旧模块。
-          h('button', {
-            type: 'button',
-            className: 'dg-btn',
-            key: 'dragAsset',
-            draggable: true,
-            'data-gallery-relpath': item.relPath,
-            'data-gallery-dragviewer': true,
-            title: '拖到对话：附带绝对路径 / 主遮罩 / 填充预览文件名',
-            'aria-label': '拖到对话',
-            onClick: (event) => event.stopPropagation(),
-          }, '⇥ 拖到对话'),
+          // v0.17.0：删掉查看器顶部的「⇥ 拖到对话」按钮。
+          // 原来它存在是因为 Viewer 大图本身 draggable:false + pointerEvents:none
+          // （标注态的中键平移 / 右键多边形都依赖它），需要一个可拖的把手。
+          // 现在：列表卡片本身就能拖（dragstart 拦截照旧，会带绝对路径 / 主遮罩），
+          // 查看器里改用工具条「⧉ 复制」或右键「带路径复制」拿同样信息。
           // v0.16.3：Ctrl+C 复制当前文件；按钮是这条快捷键的可见入口（远程控制也能点）
           h('button', {
             type: 'button',
@@ -7629,12 +7655,24 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
        *   unknown         —— 未归类
        */
       // v0.14.2：表态层下线，只剩 4 个原生标签（定稿 / 素材 / 过程稿 / 未归类）
-      const [categoryFilter, setCategoryFilter] = React.useState({
-        final: true,
-        input: true,
-        intermediate: true,
-        unknown: true,
-      })
+      /**
+       * v0.16.5：分类显隐**按看板类型分开记**（老板 2026-11-13 报）。
+       *
+       * 原来的坑：一份 categoryFilter 三类共用。在「文件」里关掉过程稿 / 素材
+       * （文件一般只看终稿），切回「图片」时图片的过程稿和素材也跟着没了 ——
+       * 得来回点开关。两类资产的正常看法本来就不同，开关不该互相牵连。
+       *
+       * 现在按 kind 各存一份：image / file / media 互不影响。
+       * 「只记本次使用、不持久化」这条不变 —— 重开面板仍从全显示开始
+       * （用户若忘了自己关过哪一类，会以为文件丢了）。
+       */
+      const [categoryFilterMap, setCategoryFilterMap] = React.useState(() => ({
+        image: { final: true, input: true, intermediate: true, unknown: true },
+        file: { final: true, input: true, intermediate: true, unknown: true },
+        media: { final: true, input: true, intermediate: true, unknown: true },
+      }))
+      // 取值失败兜底到 image 那份（正常情况三种 kind 都建过桶，走不到这里）
+      const categoryFilter = categoryFilterMap[kind] ?? categoryFilterMap.image
       /** 批量选择（v0.13.7）：选中的 relPath 集合。清空条件：切 kind / 切 scope / 刷新后失效项自动剔除。 */
       const [selected, setSelected] = React.useState(new Set())
       /** 批量模式：用户显式开启，或已有选中项时自动生效（避免勾了看不见批量条）。 */
@@ -7642,10 +7680,72 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       /**
        * 框选批注（v0.14.0）：按 relPath 存，一次查看器内可加多条。
        *
-       * 只记在内存 + 走草稿通道输出，**不落盘**（批注是"这次要跟 Agent 说的话"，
-       * 不是需要长期保留的状态；确认态才落盘，两者语义不同）。
+       * v0.16.4 起批注会写进「待处理反馈」落盘（A 档要 Agent 拉得到）。
+       * v0.16.5 修：同一张图的多条批注**必须整组写**——
+       *   原来每加一条就写一条 item，而 feedback.json 的键是 relPath，
+       *   后写的把先写的覆盖掉，一张图框三处只剩最后一条。
+       *   现在每次写「该图的完整批注数组」，Host 侧再展开成多条。
+       *
+       * 🔴 为什么必须有 ref：setAnnotations 的 updater 是异步的，
+       *    写完马上要拿「加上这一条之后」的完整数组去落盘，读 state 会读到旧值。
        */
       const [annotations, setAnnotations] = React.useState({})
+      const annotationsRef = React.useRef({})
+      /**
+       * recordPendingFeedback 定义在本段之后，但批注落盘要用它。
+       * 用 ref 转一手，避免「先声明后使用」的顺序倒挂（TDZ）。
+       */
+      const recordPendingFeedbackRef = React.useRef(null)
+      /** 批注的落盘形态：只留坐标与说明，id / markedAt 用于前端对号。 */
+      const toStoredAnnot = React.useCallback((a) => ({
+        id: String(a?.id ?? ''),
+        note: typeof a?.note === 'string' ? a.note : '',
+        region: {
+          x: Number(a?.x) || 0,
+          y: Number(a?.y) || 0,
+          w: Number(a?.w) || 0,
+          h: Number(a?.h) || 0,
+        },
+        markedAt: Number(a?.createdAt) || Date.now(),
+      }), [])
+      /** 某图当前批注的落盘形态（没有就返回空数组）。 */
+      const storedAnnotsFor = React.useCallback((relPath) => {
+        const list = annotationsRef.current?.[relPath]
+        return Array.isArray(list) ? list.map(toStoredAnnot) : []
+      }, [toStoredAnnot])
+      /**
+       * 同一条 relPath 上的批注写入「待处理」。
+       *
+       * action 语义：
+       *   · 该图还没有别的判定 → 'annotate'（按框选区域改）
+       *   · 该图已经有一条非 annotate 的判定（比如「交付不合格」）→ 保留原 action
+       *     草稿里 mark 行与批注行本来就会各占一行，落盘这边也不能把前者冲掉。
+       */
+      const writePendingAnnotations = React.useCallback((relPath, list, meta) => {
+        // ref 在渲染期挂载；理论上此时必然就绪，兜一手避免极端时序下抛错
+        const fire = recordPendingFeedbackRef.current
+        if (typeof fire !== 'function') return
+        const annots = Array.isArray(list) ? list.map(toStoredAnnot) : []
+        if (annots.length === 0) {
+          void fire([{ path: relPath, item: null }])
+          return
+        }
+        const prevAction = meta?.action ?? ''
+        const keepAction = prevAction !== '' && prevAction !== 'annotate'
+        void fire([{
+          path: relPath,
+          item: {
+            ...(keepAction ? { action: prevAction } : { action: 'annotate' }),
+            ...(keepAction && meta?.reason ? { reason: meta.reason } : {}),
+            // 兼容旧读法：顶层 region 仍放最后一条，只读 region 的老逻辑不会空
+            region: annots[annots.length - 1].region,
+            annotations: annots,
+            category: meta?.category ?? 'unknown',
+            sessionId: meta?.sessionId ?? '',
+            markedAt: Date.now(),
+          },
+        }])
+      }, [toStoredAnnot])
       /**
        * 遮罩「原图 → 资产」的内存兜底（v0.14.5）：导出成功后立刻登记，
        * 不用等列表重扫 / 翻页，反馈草稿马上就能带出遮罩路径。刷新后由扫描侧
@@ -7678,6 +7778,16 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       const [labelDialog, setLabelDialog] = React.useState(null)
       // 反馈篮是否打开
       const [basketOpen, setBasketOpen] = React.useState(false)
+      /**
+       * v0.16.4 · 待处理反馈条数（B 档角标）。
+       *
+       * 注意与 markedCount 的区别：
+       *   · markedCount = 反馈篮里现在有几条（来自 marks ∪ annotations，**持久状态**）
+       *   · pendingCount = 自上次「处理完」以来有几条新判定（**一次性消息**）
+       * 人生成草稿 / 清空篮子后 pendingCount 归零，marks 保留 ——
+       * 两者混同就会重演「删一条反馈把定好的标签也撤了」的错。
+       */
+      const [pendingCount, setPendingCount] = React.useState(0)
       // 编辑中的条目（null 表示不编辑）
       const [editingItem, setEditingItem] = React.useState(null)
       // 网格滚动位置：打开查看器前记录，关闭后恢复，让视图停在原缩略图处
@@ -7699,6 +7809,13 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
             if (payload?.labels !== null && typeof payload?.labels === 'object') setLabels(payload.labels)
           })
           .catch((error) => console.warn('dsh-gallery: getLabels 失败', error))
+        // v0.16.4 · B 档：台面打开时读一次待处理条数（纯读，不标记已读）
+        callHost('getPendingFeedback', {})
+          .then((payload) => {
+            if (!alive || payload?.ok === false) return
+            setPendingCount(Number.isFinite(payload?.count) ? payload.count : 0)
+          })
+          .catch((error) => console.warn('dsh-gallery: getPendingFeedback 失败', error))
         return () => { alive = false }
       }, [])
 
@@ -7717,10 +7834,13 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         return 'unknown'
       }, [])
 
-      /** 切一个分类的显隐。 */
+      /** 切一个分类的显隐（v0.16.5：只作用于当前看板类型，三类各记各的）。 */
       const toggleCategory = React.useCallback((key) => {
-        setCategoryFilter((prev) => ({ ...prev, [key]: !prev[key] }))
-      }, [])
+        setCategoryFilterMap((prev) => {
+          const cur = prev[kind] ?? prev.image
+          return { ...prev, [kind]: { ...cur, [key]: !cur[key] } }
+        })
+      }, [kind])
 
       /** 批量选择切换。 */
       const toggleSelect = React.useCallback((relPath) => {
@@ -7749,6 +7869,64 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           ?? grouped.find((it) => it.relPath === paths[0])
         setLabelDialog({ item: first ?? null, paths, category: first?.category ?? 'unknown' })
       }, [selected])
+
+      /**
+       * 取某资产归属的会话 id（全局分组视图里组才有 sessionId，扁平列表没有）。
+       *
+       * ⚠️ 依赖只能用 `view`，**不能用 `data`**：`data` 在本组件后半段才声明，
+       * 而依赖数组是渲染时立即求值的 —— 写 `[data, sessionId]` 会直接
+       * `Cannot access 'data' before initialization`（渲染冒烟当场炸）。
+       */
+      const sessionIdOfPath = React.useCallback((relPath) => {
+        const groups = (view.status === 'ready' && Array.isArray(view.data?.groups))
+          ? view.data.groups
+          : []
+        for (const g of groups) {
+          if (Array.isArray(g.files) && g.files.some((f) => f.relPath === relPath)) {
+            return String(g.sessionId ?? '')
+          }
+        }
+        return String(sessionId ?? '')
+      }, [view, sessionId])
+
+      /**
+       * v0.16.4 · A 档地基：把「人对资产的判定」镜像进待处理反馈。
+       *
+       * 为什么不复用 marks 当数据源：marks 是**持久状态**（改过就一直生效），
+       * 而待处理反馈是**一次性消息**（人处理完就该消失）。Agent 要拉的是后者 ——
+       * 「有新意见待处理」和「这张图当前是什么状态」是两件事。
+       *
+       * 全程只写反馈文件，不发送、不注入、不碰 composer。
+       *
+       * @param updates - [{ path, item }]，item 传 null 表示从待处理里摘掉该条
+       */
+      const recordPendingFeedback = React.useCallback(async (updates) => {
+        if (!Array.isArray(updates) || updates.length === 0) return
+        try {
+          const res = await callHost('setFeedbackBatch', { updates })
+          if (res?.ok === false) throw new Error(res?.error?.message ?? 'setFeedbackBatch failed')
+          if (Number.isFinite(res?.count)) setPendingCount(res.count)
+        } catch (error) {
+          // 落盘失败不能拦住主流程（标签/标记已经写成功了），但要留下线索
+          console.warn('dsh-gallery: 待处理反馈落盘失败', error)
+        }
+      }, [])
+      // 批注落盘那段（定义在本函数之前）要转一手调用，这里把最新引用挂上去
+      recordPendingFeedbackRef.current = recordPendingFeedback
+
+      /**
+       * v0.16.4：人已经处理完这批反馈（草稿进 composer / 清空篮子）→ 从待处理里移除。
+       * **只有人能触发这个**；Agent 拉取（getPendingFeedback）绝不走这里。
+       */
+      const ackPending = React.useCallback(async (paths) => {
+        try {
+          const res = await callHost('ackFeedback', { paths: Array.isArray(paths) ? paths : [] })
+          if (res?.ok === false) throw new Error(res?.error?.message ?? 'ackFeedback failed')
+          if (Number.isFinite(res?.count)) setPendingCount(res.count)
+        } catch (error) {
+          console.warn('dsh-gallery: 确认待处理反馈失败', error)
+        }
+      }, [])
 
       /**
        * 手动改标签的主逻辑（v0.14.2）。
@@ -7821,6 +7999,21 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
             const mp = await callHost('marksBatch', { updates: markUpdates })
             if (mp?.ok === false) throw new Error(mp?.error?.message ?? t('errorTitle'))
             if (mp?.marks !== undefined) setMarks(mp.marks)
+            // v0.16.4 · A 档：这些判定进「待处理」（一次性），Agent 才拉得到。
+            // 注意仍**不发送** —— 发送永远由人在反馈篮里点。
+            await recordPendingFeedback(markUpdates.map((u) => ({
+              path: u.path,
+              item: {
+                action: u.mark.action,
+                ...(u.mark.reason !== undefined ? { reason: u.mark.reason } : {}),
+                // v0.16.5：这张图上已有的框选批注要一起带上，
+                // 否则「先框两处、再改标签」会把批注从待处理里冲掉
+                ...(storedAnnotsFor(u.path).length > 0 ? { annotations: storedAnnotsFor(u.path) } : {}),
+                category: u.mark.category ?? 'unknown',
+                sessionId: sessionIdOfPath(u.path),
+                markedAt: u.mark.markedAt ?? Date.now(),
+              },
+            })))
           }
         } catch (error) {
           console.warn('dsh-gallery: 改标签落盘失败', error)
@@ -7830,7 +8023,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         setBatchMode(false)
         // refresh 定义在本函数之后：不放进依赖数组，实际调用时早已初始化
         void refresh()
-      }, [labelDialog, t])
+      }, [labelDialog, t, recordPendingFeedback, sessionIdOfPath, storedAnnotsFor])
 
       /**
        * 更新一条标记的附加字段（理由 / 只改 / 锁死）。
@@ -7850,8 +8043,23 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           } catch (error) {
             console.warn('dsh-gallery: 更新标记失败', error)
           }
+          // v0.16.4 · A 档：编辑理由/只改/锁死也算一次新判定 → 刷新待处理里的那份
+          await recordPendingFeedback([{
+            path: relPath,
+            item: {
+              action: nextMark.action,
+              ...(nextMark.reason !== undefined ? { reason: nextMark.reason } : {}),
+              ...(Array.isArray(nextMark.changeOnly) && nextMark.changeOnly.length > 0 ? { changeOnly: nextMark.changeOnly } : {}),
+              ...(Array.isArray(nextMark.keep) && nextMark.keep.length > 0 ? { keep: nextMark.keep } : {}),
+              // v0.16.5：编辑判定时把这张图上的批注一起带上，别冲掉
+              ...(storedAnnotsFor(relPath).length > 0 ? { annotations: storedAnnotsFor(relPath) } : {}),
+              category: nextMark.category ?? 'unknown',
+              sessionId: sessionIdOfPath(relPath),
+              markedAt: nextMark.markedAt ?? Date.now(),
+            },
+          }])
         }
-      }, [])
+      }, [recordPendingFeedback, sessionIdOfPath, storedAnnotsFor])
 
       /** 恢复自动判定：只删 labels 覆写，不动反馈篮里的任何条目。 */
       const resetLabels = React.useCallback(async () => {
@@ -7877,40 +8085,86 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       // v0.14.2：表态层的「确认 / 取消确认 / 单张表态」回调已整体移除，
       // 人的判断现在直接落在标签上（labels 覆写），表达走反馈篮。
 
-      /** 加一条批注（v0.14.0）。 */
+      /** 加一条批注（v0.14.0）。v0.16.5：整组写盘，不再一条覆盖一条。 */
       const addAnnotation = React.useCallback((item, annot) => {
         const relPath = item.relPath
-        setAnnotations((prev) => {
-          const cur = prev[relPath] ?? []
-          if (cur.length >= 50) return prev   // 与契约上限一致
-          return { ...prev, [relPath]: [...cur, annot] }
+        const cur = annotationsRef.current[relPath] ?? []
+        if (cur.length >= 50) return   // 与契约上限一致
+        const next = [...cur, annot]
+        const nextAll = { ...annotationsRef.current, [relPath]: next }
+        // 先同步 ref 再 setState：落盘要读「加上这一条之后」的完整数组
+        annotationsRef.current = nextAll
+        setAnnotations(nextAll)
+        // v0.16.4 · A 档：框选批注同样是判定 → 进待处理。
+        // v0.16.5：整组写，Agent 才拿得到同一张图上的每一处；
+        //         若该图已有非批注判定（如「交付不合格」），保留那条 action 不被冲掉。
+        const existing = marks[relPath]
+        writePendingAnnotations(relPath, next, {
+          category: item.category ?? 'unknown',
+          sessionId: sessionIdOfPath(relPath),
+          action: existing?.action ?? '',
+          reason: existing?.reason ?? '',
         })
-      }, [])
+      }, [marks, sessionIdOfPath, writePendingAnnotations])
 
-      /** 删一条批注。 */
+      /** 删一条批注。v0.16.5：删完把剩下的整组回写，别让待处理里留着已删的那条。 */
       const removeAnnotation = React.useCallback((item, id) => {
         const relPath = item.relPath
-        setAnnotations((prev) => {
-          const cur = prev[relPath] ?? []
-          const next = cur.filter((a) => a.id !== id)
-          const out = { ...prev }
-          if (next.length === 0) delete out[relPath]
-          else out[relPath] = next
-          return out
-        })
-      }, [])
+        const cur = annotationsRef.current[relPath] ?? []
+        const next = cur.filter((a) => a.id !== id)
+        const nextAll = { ...annotationsRef.current }
+        if (next.length === 0) delete nextAll[relPath]
+        else nextAll[relPath] = next
+        annotationsRef.current = nextAll
+        setAnnotations(nextAll)
+        if (next.length === 0) {
+          void recordPendingFeedback([{ path: relPath, item: null }])
+        } else {
+          writePendingAnnotations(relPath, next, {
+            category: item?.category ?? 'unknown',
+            sessionId: sessionIdOfPath(relPath),
+            action: marks[relPath]?.action ?? '',
+            reason: marks[relPath]?.reason ?? '',
+          })
+        }
+      }, [marks, recordPendingFeedback, sessionIdOfPath, writePendingAnnotations])
 
       /** 删一条批注（按 relPath，反馈篮用；查看器走带 item 的那个）。 */
       const removeAnnotationById = React.useCallback((relPath, id) => {
-        setAnnotations((prev) => {
-          const cur = prev[relPath] ?? []
-          const next = cur.filter((a) => a.id !== id)
-          const out = { ...prev }
-          if (next.length === 0) delete out[relPath]
-          else out[relPath] = next
-          return out
-        })
-      }, [])
+        const cur = annotationsRef.current[relPath] ?? []
+        const next = cur.filter((a) => a.id !== id)
+        const nextAll = { ...annotationsRef.current }
+        if (next.length === 0) delete nextAll[relPath]
+        else nextAll[relPath] = next
+        annotationsRef.current = nextAll
+        setAnnotations(nextAll)
+        if (next.length === 0) {
+          // 批注清空了，但若这张图还有标记判定，判定本身要留着
+          const m = marks[relPath]
+          if (m === undefined) void recordPendingFeedback([{ path: relPath, item: null }])
+          else {
+            void recordPendingFeedback([{
+              path: relPath,
+              item: {
+                action: m.action,
+                ...(m.reason !== undefined ? { reason: m.reason } : {}),
+                ...(Array.isArray(m.changeOnly) && m.changeOnly.length > 0 ? { changeOnly: m.changeOnly } : {}),
+                ...(Array.isArray(m.keep) && m.keep.length > 0 ? { keep: m.keep } : {}),
+                category: m.category ?? 'unknown',
+                sessionId: sessionIdOfPath(relPath),
+                markedAt: m.markedAt ?? Date.now(),
+              },
+            }])
+          }
+        } else {
+          writePendingAnnotations(relPath, next, {
+            category: 'unknown',
+            sessionId: sessionIdOfPath(relPath),
+            action: marks[relPath]?.action ?? '',
+            reason: marks[relPath]?.reason ?? '',
+          })
+        }
+      }, [marks, recordPendingFeedback, sessionIdOfPath, writePendingAnnotations])
 
       /** 取某文件的批注列表（给查看器用）。 */
       const annotationsOf = React.useCallback((item) => {
@@ -7929,7 +8183,20 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         } catch (error) {
           console.warn('dsh-gallery: 清除标记失败', error)
         }
-      }, [])
+        // v0.16.4：人主动撤掉一条 → 它也一并从「待处理」里摘掉。
+        // v0.16.5：只摘「标记」，别连坐这张图上的批注 —— 撤掉判定不等于把框选说明也删了。
+        const leftAnnots = annotationsRef.current[relPath] ?? []
+        if (leftAnnots.length > 0) {
+          writePendingAnnotations(relPath, leftAnnots, {
+            category: 'unknown',
+            sessionId: sessionIdOfPath(relPath),
+            action: '',
+            reason: '',
+          })
+        } else {
+          await recordPendingFeedback([{ path: relPath, item: null }])
+        }
+      }, [recordPendingFeedback, sessionIdOfPath, writePendingAnnotations])
 
       /** 清空全部标记。 */
       const clearMarks = React.useCallback(async () => {
@@ -7937,6 +8204,17 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         setMarks({})
         for (const relPath of paths) {
           try { await callHost('marks', { path: relPath, mark: null }) } catch { /* 忽略单条失败 */ }
+        }
+        /**
+         * v0.16.4：人点「清空反馈篮」= 明确表示这批已经处理完。
+         * 待处理反馈一并清掉（不传 paths 即清空全部）；
+         * 手动标签 labels 不动 —— 那是持久状态，与「有没有待办」无关。
+         */
+        try {
+          await callHost('ackFeedback', {})
+          setPendingCount(0)
+        } catch (error) {
+          console.warn('dsh-gallery: 清空待处理反馈失败', error)
         }
       }, [marks])
 
@@ -7946,7 +8224,9 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         lastContextRelPath.current = item.relPath
         setCtxMenu({
           item,
-          absPath: absPath ?? buildAbsPath(view.status === 'ready' ? view.data.root : '', item.relPath),
+          absPath: absPath ?? (typeof item?.absPath === 'string' && item.absPath !== ''
+            ? item.absPath
+            : buildAbsPath(view.status === 'ready' ? view.data.root : '', item.relPath)),
           x: event.clientX,
           y: event.clientY,
         })
@@ -7975,12 +8255,21 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           }
         }
         // 只保留查看器需要的字段，避免把整个分组对象塞进 state
+        //
+        // 🔴 这个白名单是「查看器能拿到什么」的唯一来源：字段没进来，
+        // 下游就永远是 undefined。v0.16.4 踩过 —— 批注落盘要写 category，
+        // 而这里没带，结果 `item.category ?? 'unknown'` 一路兜底成 unknown，
+        // 磁盘上两条裁剪批注的分类全丢了（登记里明明是 input）。
+        // 以后要给批注 / 遮罩加字段，先加到这里。
         const snapshot = list.map((it) => ({
           relPath: it.relPath,
           name: it.name ?? it.relPath.split('/').pop(),
           extension: it.extension ?? ('.' + (it.relPath.split('.').pop() || '')),
           width: it.width ?? null,
           height: it.height ?? null,
+          // v0.16.4：分类（素材 / 过程稿 / 定稿），批注落盘与草稿都要用
+          category: it.category ?? 'unknown',
+          categoryManual: it.categoryManual === true,
         }))
         // v0.16.2：记住这张图属于哪个对话组 —— 裁剪产物要跟着来源组落盘，
         // 不能一律塞进当前对话（否则在历史对话的图上裁剪，产物跑到别的对话）。
@@ -8406,7 +8695,13 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           }
           const rel = String(it?.relPath ?? '')
           if (rel !== '' && !dragAssetIndex.has(rel)) {
-            dragAssetIndex.set(rel, { item: it, absPath: buildAbsPath(root, rel) })
+            // v0.17.0：优先用 Host 下发的 absPath —— Host 用 rootOfAbs 按文件真实落盘位置
+            // 算，是权威值。原来用 buildAbsPath(root, rel) 拿【第一个 root】去拼，
+            // 文件在别的 root 下时拼出的是不存在的路径（实测三次都踩）。
+            const realAbs = (typeof it?.absPath === 'string' && it.absPath !== '')
+              ? it.absPath
+              : buildAbsPath(root, rel)
+            dragAssetIndex.set(rel, { item: it, absPath: realAbs })
           }
         }
         if (Array.isArray(data.items)) data.items.forEach(put)
@@ -8556,6 +8851,27 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       }, markedCount > 0
         ? format(t('feedbackBasketToggleN'), { n: markedCount })
         : t('feedbackBasketToggle'))
+
+      /**
+       * v0.16.4 · B 档：待处理反馈角标。
+       *
+       * 为什么要和上面那个「反馈篮 · N 条」并存：
+       *   · 按钮上的 N = 篮子里现在有几条（持久）
+       *   · 角标上的 N = 自上次处理完以来有几条新判定（一次性）
+       * 人做完一轮后按钮还显示条数（标记还在），但角标归零 —— 表示「没有待办了」。
+       * 点角标 = 打开反馈篮，**不会**自动拉给 Agent。
+       */
+      const pendingBadge = pendingCount > 0
+        ? h('button', {
+            type: 'button',
+            className: 'dg-pendingBadge',
+            key: 'pendingBadge',
+            'data-gallery-pending-count': pendingCount,
+            title: format(t('pendingFeedbackBadgeHint'), { n: pendingCount }),
+            'aria-label': format(t('pendingFeedbackBadgeHint'), { n: pendingCount }),
+            onClick: () => setBasketOpen(true),
+          }, format(t('pendingFeedbackBadge'), { n: pendingCount }))
+        : null
 
       /**
        * 各分类的全局计数（供顶部开关显示数字 + 判断「已显示 N / 共 M」）。
@@ -8899,7 +9215,9 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
                     ?? (VIDEO_EXTS.includes(String(enriched.extension ?? '').toLowerCase()) ? 'video' : 'audio'),
                 },
                 t,
-                absPath: buildAbsPath(data.root, item.relPath),
+                absPath: (typeof item?.absPath === 'string' && item.absPath !== ''
+          ? item.absPath
+          : buildAbsPath(data.root, item.relPath)),
                 // v0.16.2：选段产物跟来源组走（groupKey 就是该组 sessionId）
                 onPlay: (target) => setMediaPlaying({ ...target, originSessionId: groupKey }),
                 onContextMenu: openContextMenu,
@@ -8910,7 +9228,9 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
                 key: `${groupKey}:${item.relPath}`,
                 item: enriched,
                 t,
-                absPath: buildAbsPath(data.root, item.relPath),
+                absPath: (typeof item?.absPath === 'string' && item.absPath !== ''
+          ? item.absPath
+          : buildAbsPath(data.root, item.relPath)),
                 onOpenFolder: () => { void callHost('reveal', { path: item.relPath }).catch((e) => console.error('dsh-gallery: reveal 失败', e)) },
                 onContextMenu: openContextMenu,
                 onPreview: (abs) => {
@@ -8922,7 +9242,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
                     void copyText(abs)
                   }
                 },
-                onCopy: (abs) => { void copyText(abs) },
+                // v0.17.0：同右键菜单，复制结构化信息（文件名 + 绝对路径 + 关联遮罩）
+                onCopy: (abs) => { void copyText(dragNameOf(item, abs)) },
               }), item, `${groupKey}:${item.relPath}`)
             }
             return wrapCard(h(Card, {
@@ -9088,7 +9409,9 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         item,
         t,
         limiter: limiter.current,
-        absPath: buildAbsPath(data === null ? '' : data.root, item.relPath),
+        absPath: (typeof item?.absPath === 'string' && item.absPath !== ''
+          ? item.absPath
+          : buildAbsPath(data === null ? '' : data.root, item.relPath)),
         onPlay: (target) => setMediaPlaying(target),
         onContextMenu: openContextMenu,
       }), item, item.relPath))
@@ -9098,7 +9421,9 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
               key: item.relPath,
               item,
               t,
-              absPath: buildAbsPath(data.root, item.relPath),
+              absPath: (typeof item?.absPath === 'string' && item.absPath !== ''
+          ? item.absPath
+          : buildAbsPath(data.root, item.relPath)),
               onOpenFolder: (abs) => { void callHost('reveal', { path: item.relPath }).catch((e) => console.error('dsh-gallery: reveal 失败', e)) },
               onContextMenu: openContextMenu,
               onPreview: (abs) => {
@@ -9370,7 +9695,14 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
             // 批注：属于反馈侧，删一条只动内存，不碰 marks
             onRemoveAnnotation: (relPath, annotId) => { removeAnnotationById(relPath, annotId) },
             // 「清空反馈篮」= 表态 + 批注一起清，否则批注留在图上、篮子却空了
-            onClearAll: () => { void clearMarks(); setAnnotations({}) },
+            onClearAll: () => {
+              // ref 与 state 必须一起清：ref 是落盘读的那份，漏了就会把已清空的批注又写回去
+              annotationsRef.current = {}
+              void clearMarks()
+              setAnnotations({})
+            },
+            // v0.16.4：草稿进 composer 后把待处理清零（人已处理完这批）
+            onAck: (paths) => { void ackPending(paths) },
           })
         : null
 
@@ -9407,7 +9739,9 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
                 : undefined,
               onHide: () => { void doHide(ctxMenu.item) },
               onReveal: () => { void doReveal(ctxMenu.item) },
-              onCopy: () => { void copyText(ctxMenu.absPath) },
+              // v0.17.0：复制【结构化信息】而不是裸路径 —— 与拖图带的信息同格式，
+              // 粘到对话框里，Agent 一次就拿到 文件名 / 绝对路径 / 主遮罩。
+              onCopy: () => { void copyText(dragNameOf(ctxMenu.item, ctxMenu.absPath)) },
               // v0.16.0 单文件复制：写系统剪贴板文件列表，可在别的对话粘贴
               onCopyFile: () => { void doCopyAssets([ctxMenu.item.relPath]) },
               onDelete: () => setDeleteTarget({ item: ctxMenu.item, busy: false }),
@@ -9468,6 +9802,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       return h('div', { className: 'dg-root', 'data-gallery-root': true }, [
         header,
         basketToggle,
+        pendingBadge,
         batchBar,
         discardEntry,
         discardDialogNode,
@@ -9836,6 +10171,104 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         getFeedbackDraft() {
           return draftRef.current ?? ''
         },
+        /**
+         * v0.16.4 · A 档：按条件取资产（**结构化**，不是渲染文本）。
+         *
+         * 为什么给结构化：Agent 要自己判断「这批图够不够用」，
+         * 只给一坨文字它没法筛、没法排序、没法拿路径去喂工作流。
+         *
+         * 走既有的 `list` op（Host 侧做筛选与缓存），**不新增扫描路径**。
+         * 纯读：不写任何文件、不发消息、不影响台面状态。
+         *
+         * @param filter - {
+         *   kind?: 'image'|'file'|'media', scope?: 'global'|'session', sessionId?: string,
+         *   label?: 'input'|'intermediate'|'final',  // 与 category 同义，取生效值（手动标签优先）
+         *   category?: 同上, confirmed?: boolean, action?: string,
+         *   ext?: '.png', q?: string, limit?: number, page?: number
+         * }
+         * @returns { schema, items, count, total, error? }
+         */
+        async listAssets(filter) {
+          const f = (filter !== null && typeof filter === 'object') ? filter : {}
+          try {
+            const payload = await callHost('list', f)
+            if (payload?.ok === false) {
+              return { schema: 1, items: [], count: 0, total: 0, error: String(payload?.error?.message ?? 'list failed') }
+            }
+            // 全局分组视图下文件在 groups[].files，扁平视图下在 items —— 两种都摊平
+            const flat = []
+            if (Array.isArray(payload?.items)) for (const it of payload.items) flat.push(it)
+            if (Array.isArray(payload?.groups)) {
+              for (const g of payload.groups) {
+                if (!Array.isArray(g?.files)) continue
+                for (const it of g.files) {
+                  flat.push({
+                    ...it,
+                    sessionId: it.sessionId ?? g.sessionId,
+                    sessionTitle: it.sessionTitle ?? g.title,
+                  })
+                }
+              }
+            }
+            const seen = new Set()
+            const items = []
+            for (const it of flat) {
+              const relPath = String(it?.relPath ?? '')
+              if (relPath === '' || seen.has(relPath)) continue
+              seen.add(relPath)
+              items.push({
+                relPath,
+                // absolute 必须给：Agent 要拿它去改文件 / 喂工作流
+                absolute: String(it.absPath ?? ''),
+                name: String(it.name ?? relPath.split('/').pop() ?? relPath),
+                category: String(it.category ?? 'unknown'),
+                categoryManual: it.categoryManual === true,
+                confirmed: it.confirmed === true,
+                action: String(it.markAction ?? ''),
+                ext: String(it.extension ?? ''),
+                size: Number(it.size) || 0,
+                mtime: Number(it.mtime) || 0,
+                width: it.width ?? null,
+                height: it.height ?? null,
+                sessionId: String(it.sessionId ?? ''),
+                sessionTitle: String(it.sessionTitle ?? ''),
+              })
+            }
+            const wanted = Number(f.limit)
+            const limit = Number.isFinite(wanted) && wanted > 0 ? Math.trunc(wanted) : 0
+            const sliced = limit > 0 ? items.slice(0, limit) : items
+            return { schema: 1, items: sliced, count: sliced.length, total: items.length }
+          } catch (error) {
+            return { schema: 1, items: [], count: 0, total: 0, error: String(error?.message ?? error) }
+          }
+        },
+        /**
+         * v0.16.4 · A 档：取待处理反馈（**纯读**）。
+         *
+         * 🔴 Agent 拉走 ≠ 人处理完。这里**不** ack、**不**清零 ——
+         * 清零只发生在人点「生成草稿」或「清空反馈篮」时。
+         * 否则 Agent 看一眼就把用户的意见吞了。
+         *
+         * @returns { schema, items, count, draft }
+         *   items[i] = { relPath, absolute, action, reason, changeOnly, keep, region, markedAt, category, sessionId, confirmed }
+         *   draft    = 已渲染好的成稿文本（可直接用，省得自己拼）
+         */
+        async getPendingFeedback() {
+          try {
+            const payload = await callHost('getPendingFeedback', {})
+            if (payload?.ok === false) {
+              return { schema: 1, items: [], count: 0, draft: '', error: String(payload?.error?.message ?? 'failed') }
+            }
+            return {
+              schema: Number(payload?.schema) || 1,
+              items: Array.isArray(payload?.items) ? payload.items : [],
+              count: Number.isFinite(payload?.count) ? payload.count : 0,
+              draft: String(payload?.draft ?? ''),
+            }
+          } catch (error) {
+            return { schema: 1, items: [], count: 0, draft: '', error: String(error?.message ?? error) }
+          }
+        },
       }
       window.dshGallerySeam = seam
       return seam
@@ -9905,8 +10338,6 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
             // 拖完在输入框 Ctrl+V 能粘出「产出台·…」= 新代码确实执行过、dragstart 命中；
             // 粘不出 = 面板仍加载旧模块，需重载窗口。编码 / 写入失败时它就是唯一可用通道。
             void copyText(name)
-            // 从 Viewer「拖到对话」按钮拖出时，取预览大图而不是按钮内的节点；
-            // 列表卡片则仍用自己那张缩略图。两者都是同源 blob URL，canvas 不会被污染。
             const img = card.hasAttribute('data-gallery-dragviewer')
               ? document.querySelector('.dg-viewerBody img')
               : (target.matches('img') ? target : target.querySelector('img'))
