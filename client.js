@@ -938,6 +938,10 @@ async function encodeMaskPngBytes(imageData, width, height) {
       cropSaved: '已裁剪：{name}（已加入「{target}」素材）',
       cropFailed: '裁剪失败：{message}',
       cropMinSize: '选区太小',
+      cropCoord: '坐标',
+      cropColor: '色值',
+      cropCopyColor: '按 Ctrl+C 复制色值',
+      cropCopied: '已复制 {hex}',
       trimEnter: '裁剪片段',
       trimExit: '退出裁剪',
       trimPreview: '从入点播放',
@@ -1328,6 +1332,10 @@ async function encodeMaskPngBytes(imageData, width, height) {
       cropSaved: 'Cropped: {name} (added to "{target}" assets)',
       cropFailed: 'Crop failed: {message}',
       cropMinSize: 'Selection too small',
+      cropCoord: 'Position',
+      cropColor: 'Color',
+      cropCopyColor: 'Press Ctrl+C to copy the color',
+      cropCopied: 'Copied {hex}',
       trimEnter: 'Trim clip',
       trimExit: 'Exit trim',
       trimPreview: 'Play from in',
@@ -3121,9 +3129,9 @@ async function encodeMaskPngBytes(imageData, width, height) {
 .dg-annotSvg.dg-annotActive { background: rgba(74, 124, 255, 0.04); }
 .dg-btnActive { background: #4a7cff !important; color: #fff !important; border-color: #4a7cff !important; }
 
-/* 批注列表 */
+/* 批注列表。离边也统一 20px：原来 8px，跟右上提示条一高一低，看着歪。 */
 .dg-annotList {
-  position: absolute; left: 8px; top: 8px; z-index: 5;
+  position: absolute; left: 20px; top: 20px; z-index: 5;
   max-width: 300px; max-height: 40%; overflow: auto;
   background: rgba(27, 30, 36, 0.95); border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 8px; padding: 6px; display: flex; flex-direction: column; gap: 4px;
@@ -3133,23 +3141,28 @@ async function encodeMaskPngBytes(imageData, width, height) {
 .dg-annotIndex { color: #8fb6ff; font-weight: 600; }
 .dg-annotText { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dg-annotItem .dg-btn { flex: 0 0 auto; }
-/* 遮罩导出结果提示：避开左上批注列表与底部批注输入框，不受 svg 缩放平移影响 */
+/* 遮罩导出结果提示：避开左上批注列表与右下角确认框，不受 svg 缩放平移影响。
+   边距跟那三个确认框统一成 20px —— 整块界面只有一套网格。 */
 .dg-maskNotice {
-  position: absolute; right: 8px; top: 8px; z-index: 7;
+  position: absolute; right: 20px; top: 20px; z-index: 7;
   max-width: min(360px, 70%); padding: 6px 10px; border-radius: 6px;
   font-size: 11px; line-height: 1.5; color: #e8eaed;
   background: rgba(27, 30, 36, 0.96); border: 1px solid rgba(255, 255, 255, 0.18);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  animation: dg-panelIn 0.14s ease-out;
 }
 .dg-maskNotice-ok { border-color: rgba(94, 214, 150, 0.65); }
 .dg-maskNotice-failed { border-color: rgba(255, 107, 107, 0.85); color: #ffd7d7; }
 
-/* 批注输入框：贴底居中，别挡住刚圈出来的框 */
+/* 批注输入框（左键拖框选完的状态确认框）。位置口径同裁剪/多边形：
+   钉在右下角、离边 20px、宽 300、松手后淡入。
+   原来贴底居中 —— 框要是圈在画面下半部，正好被它压住，等于边看边被挡。 */
 .dg-annotEditor {
-  position: absolute; left: 50%; bottom: 14px; top: auto; transform: translateX(-50%); z-index: 6;
-  width: min(340px, 80%); background: #1b1e24; color: #e8eaed;
+  position: absolute; right: 20px; bottom: 20px; left: auto; top: auto; transform: none; z-index: 6;
+  width: 300px; max-width: calc(100% - 40px); background: #1b1e24; color: #e8eaed;
   border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 8px; padding: 10px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6);
+  animation: dg-panelIn 0.14s ease-out;
 }
 .dg-annotEditorHead { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
 .dg-annotInput {
@@ -3158,6 +3171,8 @@ async function encodeMaskPngBytes(imageData, width, height) {
   font-size: 12px; font-family: inherit;
 }
 .dg-annotInput:focus { outline: 2px solid #4a7cff; outline-offset: -1px; }
+/* 深色底上浏览器默认的 placeholder 灰几乎看不见，跟 .dg-input 用同一个色 */
+.dg-annotInput::placeholder { color: #9aa8b8; opacity: 1; }
 .dg-annotEditorOps { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
 
 
@@ -3180,13 +3195,24 @@ async function encodeMaskPngBytes(imageData, width, height) {
 .dg-annotEditorOps .dg-annotSave:hover:not(:disabled) { background: #6a92ff !important; }
 .dg-annotPendingHint { font-size: 11px; color: #ffd166; margin: -2px 0 8px; }
 
-/* v0.14.6 右键多边形选区操作条：贴右下，避开左上批注列表与底部矩形输入框 */
+/* 右下角确认框统一淡入：与裁剪面板那条同参（0.14s / 上移 6px），
+   三个「选完才问你要不要确认」的框出现的手感必须一模一样。 */
+@keyframes dg-panelIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* v0.14.6 多边形选区操作条（区域标记 / 填充遮罩共用）。
+   位置口径 2026-11-16 统一：和裁剪确认面板一样钉在**窗口右下角**、
+   离右边和下边各 20px、宽 300 —— 原来贴 8/14，跟另外两个框错位，眼睛要重新找。
+   拖动顶点时整块让开（组件里按 polyDrag 门控），松手再淡入。 */
 .dg-polyPanel {
-  position: absolute; right: 8px; bottom: 14px; z-index: 6;
-  width: min(320px, 76%); box-sizing: border-box;
+  position: absolute; right: 20px; bottom: 20px; z-index: 6;
+  width: 300px; max-width: calc(100% - 40px); box-sizing: border-box;
   background: #1b1e24; color: #e8eaed;
   border: 1px solid rgba(94, 214, 150, 0.55); border-radius: 8px; padding: 10px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6);
+  animation: dg-panelIn 0.14s ease-out;
 }
 .dg-polyPanelHead { font-size: 12px; font-weight: 600; color: #9fe1cb; margin-bottom: 6px; }
 .dg-polyPanelInfo { font-size: 11px; line-height: 1.5; word-break: break-all; }
@@ -3210,6 +3236,7 @@ async function encodeMaskPngBytes(imageData, width, height) {
   padding: 5px 7px; font-size: 11px; outline: none;
 }
 .dg-polyNoteInput:focus { border-color: #5ed696; }
+.dg-polyNoteInput::placeholder { color: #9aa8b8; opacity: 1; }
 
 /* v0.16.0 粘贴结果提示 */
 .dg-pasteNotice {
@@ -3222,37 +3249,71 @@ async function encodeMaskPngBytes(imageData, width, height) {
 .dg-pasteOk { border-color: rgba(94,214,150,0.6); }
 .dg-pasteFail { border-color: rgba(255,107,107,0.6); color: #ffd2d2; }
 
-/* v0.16.0 图片裁剪层 + 微信式圆形放大镜
+/* v1.0.2 图片裁剪层：绿框 + 八向手柄 + 像素级取色放大镜（照老板给的参考图对齐）
    坐标系说明：裁剪框/放大镜都用 getBoundingClientRect 的**视口坐标**定位，
    所以这一层必须 fixed 铺满视口，absolute 会相对 stage 偏移导致框错位。 */
 .dg-cropLayer { position: fixed; inset: 0; z-index: 60; cursor: crosshair; }
+/* 框外不再压暗：参考图里整张图亮度不变，靠绿线与手柄识别边界 */
 .dg-cropRect {
-  position: absolute; border: 1px solid #6a92ff;
-  box-shadow: 0 0 0 9999px rgba(0,0,0,0.5); box-sizing: border-box;
-  cursor: move; background: rgba(106,146,255,0.06);
+  position: absolute; border: 1px solid #00e676;
+  box-sizing: border-box; cursor: move; background: transparent;
 }
 .dg-cropHandle {
-  position: absolute; width: 13px; height: 13px; background: #6a92ff;
-  border: 2px solid #fff; border-radius: 2px; box-sizing: border-box;
+  position: absolute; width: 9px; height: 9px; background: #00e676;
+  border: 1px solid rgba(0,0,0,0.65); border-radius: 1px; box-sizing: border-box;
+  z-index: 2;
 }
-.dg-cropHandleNW { left: -7px; top: -7px; cursor: nwse-resize; }
-.dg-cropHandleNE { right: -7px; top: -7px; cursor: nesw-resize; }
-.dg-cropHandleSW { left: -7px; bottom: -7px; cursor: nesw-resize; }
-.dg-cropHandleSE { right: -7px; bottom: -7px; cursor: nwse-resize; }
+.dg-cropHandleNW { left: -5px; top: -5px; cursor: nwse-resize; }
+.dg-cropHandleNE { right: -5px; top: -5px; cursor: nesw-resize; }
+.dg-cropHandleSW { left: -5px; bottom: -5px; cursor: nesw-resize; }
+.dg-cropHandleSE { right: -5px; bottom: -5px; cursor: nwse-resize; }
+/* 四边中点：只沿一个轴拖，免得「只想收一下高度」却把宽度也带歪 */
+.dg-cropHandleN { left: 50%; top: -5px; margin-left: -5px; cursor: ns-resize; }
+.dg-cropHandleS { left: 50%; bottom: -5px; margin-left: -5px; cursor: ns-resize; }
+.dg-cropHandleW { left: -5px; top: 50%; margin-top: -5px; cursor: ew-resize; }
+.dg-cropHandleE { right: -5px; top: 50%; margin-top: -5px; cursor: ew-resize; }
+/* 尺寸标签：贴在框左上角外侧，白字带阴影，深底浅底都看得清 */
+.dg-cropSize {
+  position: absolute; padding: 1px 4px; border-radius: 3px;
+  font-size: 11px; line-height: 1.4; font-variant-numeric: tabular-nums;
+  color: #fff; background: rgba(0,0,0,0.42); text-shadow: 0 1px 2px rgba(0,0,0,0.9);
+  pointer-events: none; white-space: nowrap;
+}
+/* 像素放大镜（方形）+ 坐标色值卡：参考图里两者是一体的，所以外层包一个定位容器 */
+.dg-cropMagWrap { position: absolute; width: 148px; pointer-events: none; }
 .dg-cropMagnifier {
-  position: absolute; width: 130px; height: 130px; border-radius: 50%;
-  border: 2px solid #fff; box-shadow: 0 4px 16px rgba(0,0,0,0.6);
-  pointer-events: none; overflow: hidden; background: #000; transform: translate(-50%, -50%);
+  width: 148px; height: 148px; border-radius: 3px;
+  border: 1px solid rgba(255,255,255,0.5); box-shadow: 0 4px 16px rgba(0,0,0,0.55);
+  overflow: hidden; background: #000;
 }
-.dg-cropMagnifier canvas { display: block; width: 100%; height: 100%; }
+.dg-cropMagnifier canvas {
+  display: block; width: 100%; height: 100%;
+  image-rendering: pixelated;   /* 不做硬边就成了糊图，取色就不准了 */
+}
+.dg-cropMagInfo {
+  margin-top: 3px; box-sizing: border-box; width: 148px;
+  background: rgba(255,255,255,0.94); color: #1a1c20;
+  border-radius: 3px; padding: 4px 6px; font-size: 11px; line-height: 1.5;
+  display: grid; grid-template-columns: auto 1fr; column-gap: 10px;
+  font-variant-numeric: tabular-nums; box-shadow: 0 2px 10px rgba(0,0,0,0.4);
+}
+.dg-cropMagInfoKey { color: #6b7280; }
+.dg-cropMagInfoVal { color: #111318; font-weight: 600; text-align: right; }
+.dg-cropMagHint { grid-column: 1 / -1; color: #6b7280; margin-top: 2px; font-size: 10px; }
+.dg-cropMagHintOk { color: #0a7d52; font-weight: 600; }
 .dg-cropPanel {
-  /* 位置由组件按裁剪框实时算好、以内联 left/top 注入：贴在选区下方，
-     靠窗口下沿时自动翻到选区上方。千万别写死 left/bottom ——
-     cropLayer 是 fixed inset:0，写死就会跑到视口左下角，离选区十万八千里。 */
+  /* 位置由组件以内联 right/bottom 注入：**固定在窗口右下角**（老板 2026-11-16
+     要求「靠边固定，跟随鼠标会挡住预览」）。这里千万别再写死 left/bottom 数值 ——
+     cropLayer 是 fixed inset:0，CSS 里的值会和内联的叠在一起把面板顶跑位。 */
   position: absolute; z-index: 6; width: 300px;
+  animation: dg-cropPanelIn 0.14s ease-out;   /* 松手后才挂载，正好有「弹出来」的手感 */
   box-sizing: border-box; background: #1b1e24; color: #e8eaed;
   border: 1px solid rgba(106,146,255,0.55); border-radius: 8px; padding: 10px;
   box-shadow: 0 8px 28px rgba(0,0,0,0.6);
+}
+@keyframes dg-cropPanelIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
 }
 .dg-cropPanelHead { font-size: 12px; font-weight: 600; color: #a9c4ff; margin-bottom: 6px; }
 .dg-cropPanelHint { font-size: 11px; color: #b9c2cf; line-height: 1.5; margin-top: 6px; }
@@ -3429,6 +3490,22 @@ async function encodeMaskPngBytes(imageData, width, height) {
       let text = ''
       try { text = String(clipboardData.getData('text/plain') ?? '') } catch { return false }
       return text !== ''
+    }
+
+    /**
+     * 从 MIME / dataURL 推真实扩展名（2026-11-15）。
+     *
+     * 以前统一写死 ext:'png'，遇到 JPEG 位图会被 Host 的 PNG 校验拒掉。
+     * 这里只做「上报」，Host 仍按真实魔数复核，写错也不会产生坏文件。
+     */
+    function imageExtOf(mime, dataUrl) {
+      const fromUrl = /^data:([^;,]+)/i.exec(String(dataUrl ?? ''))
+      const m = String(mime ?? '').toLowerCase() || (fromUrl === null ? '' : fromUrl[1].toLowerCase())
+      if (m === 'image/jpeg' || m === 'image/jpg' || m === 'image/pjpeg') return 'jpg'
+      if (m === 'image/webp') return 'webp'
+      if (m === 'image/gif') return 'gif'
+      if (m === 'image/bmp' || m === 'image/x-ms-bmp') return 'bmp'
+      return 'png'
     }
 
     /** 把 File/Blob 读成 dataURL（含 `data:…;base64,` 前缀）。 */
@@ -5754,13 +5831,28 @@ ${absPath}
      *   · 裁剪结果（归一化矩形）交给上层 callHost('cropImage')，落盘到源图同目录并标素材。
      *   · 零自动发送红线不变：本组件只产出 PNG，落盘与登记由 Host 完成。
      */
+    /** 裁剪放大镜：148px 见方、每格 4px，因此覆盖原图 37×37 像素。
+     *  为什么是这几个数（老板 11-16：10 倍太夸张、像素块太粗不好用，改回 4 倍）：
+     *  ① 格宽 4px 既能看出「一格 = 一个像素」，又不至于几格就占满一片；
+     *  ② 4 倍下要看 37 格才填满，37 是奇数 → 光标那格正好落在正中，绿十字压得准；
+     *  ③ 37 × 4 = 148，size 必须是 factor 的整数倍，否则光标格会偏半格、十字压到缝上。
+     *  三个数互相咬死：改倍率就得同时重算 size（tests/crop-frame-ui.test.mjs 有断言钉住）。 */
+    const CROP_MAG_SIZE = 148
+    const CROP_MAG_FACTOR = 4
+
     function ImageCropper({ t, item, imgRef, onCrop, onCancel }) {
       const [rect, setRect] = React.useState(null) // {x,y,w,h} 归一化 0–1（相对图片宽高）
-      const [drag, setDrag] = React.useState(null) // { mode:'new'|'move'|'nw'|'ne'|'sw'|'se', sx, sy, startRect }
+      // mode：new 新建 / move 整体挪 / 四角 nw ne sw se / 四边 n s w e（只动单侧）
+      const [drag, setDrag] = React.useState(null) // { mode, sx, sy, startRect }
       const [mag, setMag] = React.useState(null)   // { cx, cy(视口), nx, ny(归一化) }
       const [full, setFull] = React.useState(null) // 全分辨率 HTMLImageElement
       const [busy, setBusy] = React.useState(false)
+      const [copied, setCopied] = React.useState('') // 复制回执，1.4 秒后自动消失
       const magCanvasRef = React.useRef(null)
+      // 取色用的 1×1 离屏画布：只读一个像素，比重建整块画布便宜得多
+      const probeCanvasRef = React.useRef(null)
+      // 光标处色值放 ref：快捷键 effect 不必因颜色变化反复重挂
+      const colorRef = React.useRef('')
 
       // 载入全分辨率源图（放大镜取真实像素 + 最终裁图）
       React.useEffect(() => {
@@ -5820,6 +5912,11 @@ ${absPath}
         else if (d.mode === 'ne') { y = n.y; w = n.x - s.x; h = (s.y + s.h) - n.y }
         else if (d.mode === 'sw') { x = n.x; w = (s.x + s.w) - n.x; h = n.y - s.y }
         else if (d.mode === 'nw') { x = n.x; y = n.y; w = (s.x + s.w) - n.x; h = (s.y + s.h) - n.y }
+        // 四边中点：另一个轴原样不动，这才能「只收高度、不把宽度带歪」
+        else if (d.mode === 'n') { y = n.y; h = (s.y + s.h) - n.y }
+        else if (d.mode === 's') { h = n.y - s.y }
+        else if (d.mode === 'w') { x = n.x; w = (s.x + s.w) - n.x }
+        else if (d.mode === 'e') { w = n.x - s.x }
         if (w < 0) { x += w; w = -w }
         if (h < 0) { y += h; h = -h }
         x = clamp01(x); y = clamp01(y); w = clamp01(w); h = clamp01(h)
@@ -5851,29 +5948,74 @@ ${absPath}
       }
       const onLayerUp = () => setDrag(null)
 
-      // 放大镜绘制：从全分辨率源图取光标处的 3× 局部放大；越界区域填黑（与相机放大镜一致）。
+      /**
+       * 放大镜绘制：按整数像素格放大（4×），并关掉插值。
+       * 不关插值就成了糊图、取色看着「不准」；4 倍下每格 4px，看得出格子又不像 10 倍那么粗。
+       * 十字线用绿色高亮（白的在浅色招牌上根本看不见）。
+       */
       React.useEffect(() => {
         const canvas = magCanvasRef.current
         if (canvas === null || full === null || mag === null) return
         const ctx = canvas.getContext('2d')
         if (ctx === null) return
         const SIZE = canvas.width
-        const FACTOR = 3
+        const FACTOR = CROP_MAG_FACTOR
+        const SPAN = SIZE / FACTOR            // 源图取样边长（像素）
         const FW = full.naturalWidth
         const FH = full.naturalHeight
-        const halfSrc = (SIZE / FACTOR) / 2
-        const sx = clampNum(mag.nx * FW - halfSrc, 0, Math.max(0, FW - SIZE / FACTOR))
-        const sy = clampNum(mag.ny * FH - halfSrc, 0, Math.max(0, FH - SIZE / FACTOR))
+        // 让光标所在像素成为正中间那格：左右各取 floor(SPAN/2) 格
+        const half = Math.floor(SPAN / 2)
+        const px = clampNum(Math.round(mag.nx * FW), 0, Math.max(0, FW - 1))
+        const py = clampNum(Math.round(mag.ny * FH), 0, Math.max(0, FH - 1))
+        const sx = clampNum(px - half, 0, Math.max(0, FW - SPAN))
+        const sy = clampNum(py - half, 0, Math.max(0, FH - SPAN))
+        ctx.imageSmoothingEnabled = false
         ctx.fillStyle = '#000'
         ctx.fillRect(0, 0, SIZE, SIZE)
-        ctx.drawImage(full, sx, sy, SIZE / FACTOR, SIZE / FACTOR, 0, 0, SIZE, SIZE)
-        ctx.strokeStyle = 'rgba(255,255,255,0.85)'
-        ctx.lineWidth = 1
+        ctx.drawImage(full, sx, sy, SPAN, SPAN, 0, 0, SIZE, SIZE)
+        // 绿十字：压在正中那一格的中线上，线宽 2 才够醒目
+        const mid = SIZE / 2
+        ctx.strokeStyle = 'rgba(0,230,118,0.95)'
+        ctx.lineWidth = 2
         ctx.beginPath()
-        ctx.moveTo(SIZE / 2, 0); ctx.lineTo(SIZE / 2, SIZE)
-        ctx.moveTo(0, SIZE / 2); ctx.lineTo(SIZE, SIZE / 2)
+        ctx.moveTo(mid, 0); ctx.lineTo(mid, SIZE)
+        ctx.moveTo(0, mid); ctx.lineTo(SIZE, mid)
         ctx.stroke()
       }, [mag, full])
+
+      /**
+       * 裁剪态按键：Ctrl+C 复制光标处色值；左右键不翻页。
+       * 翻页会把框套到另一张图上（框还在、图换了），所以必须拦住。
+       * 走捕获阶段 + stopImmediatePropagation：查看器自己的 Ctrl+C 是「复制文件」，
+       * 不先截住就会把文件写进剪贴板，而不是色值。
+       */
+      React.useEffect(() => {
+        const onKey = (event) => {
+          if (isTypingTarget(event.target)) return
+          const key = String(event.key ?? '')
+          if ((event.ctrlKey || event.metaKey) && (key === 'c' || key === 'C')) {
+            const hex = colorRef.current
+            if (hex === '') return
+            event.preventDefault()
+            event.stopImmediatePropagation()
+            copyText(hex)
+            setCopied(hex)
+            return
+          }
+          if (key === 'ArrowLeft' || key === 'ArrowRight') {
+            event.stopImmediatePropagation()
+          }
+        }
+        window.addEventListener('keydown', onKey, true)
+        return () => window.removeEventListener('keydown', onKey, true)
+      }, [])
+
+      // 复制回执：1.4 秒后自动收起，避免一直挂在那里
+      React.useEffect(() => {
+        if (copied === '') return undefined
+        const timer = setTimeout(() => setCopied(''), 1400)
+        return () => clearTimeout(timer)
+      }, [copied])
 
       const confirmCrop = () => {
         if (full === null || rect === null || rect.w < 0.02 || rect.h < 0.02) return
@@ -5919,44 +6061,108 @@ ${absPath}
             height: `${rect.h * r.height}px`,
           }
         : {}
-      const magX = mag !== null ? clampNum(mag.cx + 72, 72, (typeof window !== 'undefined' ? window.innerWidth : 9999) - 72) : 0
-      const magY = mag !== null ? clampNum(mag.cy - 72, 72, (typeof window !== 'undefined' ? window.innerHeight : 9999) - 72) : 0
+      const vw = Number(typeof window !== 'undefined' ? window.innerWidth : 0) || 1280
+      const vh = Number(typeof window !== 'undefined' ? window.innerHeight : 0) || 800
+
+      // 尺寸标签写的是「裁下来多少像素」，所以按原图自然尺寸 × 归一化比例算，不是屏幕像素
+      const cropSize = (rect !== null && full !== null)
+        ? {
+            w: Math.max(1, Math.round(rect.w * full.naturalWidth)),
+            h: Math.max(1, Math.round(rect.h * full.naturalHeight)),
+          }
+        : null
+
+      /** 光标处的原图像素坐标 + 色值。1×1 离屏画布取一个像素；
+       *  图是 blob: 同源地址，不会污染画布，getImageData 可读。 */
+      const probe = React.useMemo(() => {
+        if (full === null || mag === null) return null
+        const FW = full.naturalWidth
+        const FH = full.naturalHeight
+        if (FW <= 0 || FH <= 0) return null
+        const px = clampNum(Math.round(mag.nx * FW), 0, FW - 1)
+        const py = clampNum(Math.round(mag.ny * FH), 0, FH - 1)
+        let hex = ''
+        try {
+          let canvas = probeCanvasRef.current
+          if (canvas === null) {
+            canvas = document.createElement('canvas')
+            canvas.width = 1
+            canvas.height = 1
+            probeCanvasRef.current = canvas
+          }
+          const c2d = canvas.getContext('2d')
+          if (c2d !== null) {
+            c2d.clearRect(0, 0, 1, 1)
+            c2d.drawImage(full, px, py, 1, 1, 0, 0, 1, 1)
+            const d = c2d.getImageData(0, 0, 1, 1).data
+            hex = '#' + [d[0], d[1], d[2]].map((v) => v.toString(16).padStart(2, '0')).join('').toUpperCase()
+          }
+        } catch { hex = '' }
+        return { px, py, hex }
+      }, [mag, full])
+      colorRef.current = probe !== null ? probe.hex : ''
+
+      // 尺寸标签贴框左上角外侧；顶上没空间就挪进框内，别让它被视口裁掉
+      const sizeStyle = (() => {
+        if (rect === null || r === null) return {}
+        const boxLeft = r.left + rect.x * r.width
+        const boxTop = r.top + rect.y * r.height
+        const above = boxTop - 20
+        return {
+          left: `${clampNum(boxLeft, 4, Math.max(4, vw - 96))}px`,
+          top: `${above >= 4 ? above : boxTop + 3}px`,
+        }
+      })()
 
       /**
-       * 操作面板跟着选区走（微信截图式）：水平居中于裁剪框、贴在框下方 12px；
-       * 若框贴着窗口下沿，翻到框上方。还没画框时贴在图片下沿中央。
-       * 全部用视口坐标 —— cropLayer 是 fixed inset:0，absolute 子元素即相对视口。
+       * 操作面板**固定在窗口右下角**，不再跟着选区跑（老板 2026-11-16：
+       * 「裁剪的这个状态确认框让靠边固定吧，跟随鼠标会挡住预览」）。
+       * 原来按选区水平居中、贴框下方（微信截图式），实测选区在中间或偏下时
+       * 正好压住要靠细节的那块，拖框时它还跟着晃、眼睛要一直追。
+       * 现在钉在角落：位置可预期、永远不挡正在调的那块。
+       * 用 right/bottom 而不是算好的 left/top —— 面板高度随提示文字换行变化，
+       * 写死 top 一旦文字变长就会顶出窗口下沿。cropLayer 是 fixed inset:0，
+       * absolute 子元素自然相对视口。
        */
       const PANEL_W = 300
-      const PANEL_H = 118
-      const panelStyle = (() => {
-        const vw = Number(typeof window !== 'undefined' ? window.innerWidth : 0) || 1280
-        const vh = Number(typeof window !== 'undefined' ? window.innerHeight : 0) || 800
-        const maxLeft = Math.max(8, vw - PANEL_W - 8)
-        const maxTop = Math.max(8, vh - PANEL_H - 8)
-        const hasBox = rect !== null && r !== null && rect.w > 0.02 && rect.h > 0.02
-        let cx
-        let boxTop
-        let boxBottom
-        if (hasBox) {
-          boxTop = r.top + rect.y * r.height
-          const boxLeft = r.left + rect.x * r.width
-          cx = boxLeft + (rect.w * r.width) / 2
-          boxBottom = boxTop + rect.h * r.height
-        } else if (r !== null) {
-          cx = r.left + r.width / 2
-          boxTop = r.top
-          boxBottom = r.bottom - PANEL_H - 16
-        } else {
-          cx = vw / 2
-          boxTop = 0
-          boxBottom = vh - PANEL_H - 20
+      const PANEL_H = 118                     // 估算值，只用于「别让放大镜压上去」
+      const PANEL_MARGIN = 20
+      const panelStyle = { right: `${PANEL_MARGIN}px`, bottom: `${PANEL_MARGIN}px` }
+      // 拖动过程中先不显示面板（老板 2026-11-16：「或者选完后在弹出状态确认」）。
+      // 拖的时候画面完全干净；松手才出现，位置永远在右下角，不跟鼠标跑。
+      const showPanel = drag === null
+      const canConfirm = rect !== null && rect.w >= 0.02 && rect.h >= 0.02
+      // 面板实际矩形（估算，够判断重叠）：右下角、宽 300、高约 118
+      const panelLeft = Math.max(8, vw - PANEL_W - PANEL_MARGIN)
+      const panelTop = Math.max(8, vh - PANEL_H - PANEL_MARGIN)
+
+      // 放大镜默认贴光标右下方（参考图即如此）；放不下、或会压住面板，就换另一侧
+      const MAG_W = CROP_MAG_SIZE
+      const MAG_H = CROP_MAG_SIZE + 76      // 放大镜 + 间距 + 坐标色值卡
+      const hitsPanel = (left, top) => left < panelLeft + PANEL_W && left + MAG_W > panelLeft
+        && top < panelTop + PANEL_H && top + MAG_H > panelTop
+      const magPos = (() => {
+        if (mag === null) return { left: 0, top: 0 }
+        const gap = 18
+        // 四个候选按「右下 → 左下 → 右上 → 左上」的偏好序试，跟人眼找位置的顺序一致
+        const spots = [
+          { left: mag.cx + gap, top: mag.cy + gap },
+          { left: mag.cx - gap - MAG_W, top: mag.cy + gap },
+          { left: mag.cx + gap, top: mag.cy - gap - MAG_H },
+          { left: mag.cx - gap - MAG_W, top: mag.cy - gap - MAG_H },
+        ]
+        const inView = (s) => s.left >= 8 && s.left + MAG_W <= vw - 8
+          && s.top >= 8 && s.top + MAG_H <= vh - 8
+        const picked = spots.find((s) => inView(s) && !hitsPanel(s.left, s.top))
+          ?? spots.find((s) => !hitsPanel(s.left, s.top))
+          ?? spots[0]
+        return {
+          left: clampNum(picked.left, 8, Math.max(8, vw - MAG_W - 8)),
+          top: clampNum(picked.top, 8, Math.max(8, vh - MAG_H - 8)),
         }
-        const left = clampNum(cx - PANEL_W / 2, 8, maxLeft)
-        let top = hasBox ? boxBottom + 12 : boxBottom
-        if (hasBox && top + PANEL_H > vh - 8) top = boxTop - PANEL_H - 12
-        return { left: `${left}px`, top: `${clampNum(top, 8, maxTop)}px` }
       })()
+      const magLeft = magPos.left
+      const magTop = magPos.top
 
       return h('div', {
         className: 'dg-cropLayer',
@@ -5976,20 +6182,50 @@ ${absPath}
             style: rectStyle,
             onPointerDown: (e) => startDrag(e, 'move'),
           }, [
-            h('div', { className: 'dg-cropHandle dg-cropHandleNW', key: 'nw', onPointerDown: (e) => startDrag(e, 'nw') }),
-            h('div', { className: 'dg-cropHandle dg-cropHandleNE', key: 'ne', onPointerDown: (e) => startDrag(e, 'ne') }),
-            h('div', { className: 'dg-cropHandle dg-cropHandleSW', key: 'sw', onPointerDown: (e) => startDrag(e, 'sw') }),
-            h('div', { className: 'dg-cropHandle dg-cropHandleSE', key: 'se', onPointerDown: (e) => startDrag(e, 'se') }),
+            // 四角：斜着调
+            h('div', { className: 'dg-cropHandle dg-cropHandleNW', key: 'nw', 'data-gallery-crop-handle': 'nw', onPointerDown: (e) => startDrag(e, 'nw') }),
+            h('div', { className: 'dg-cropHandle dg-cropHandleNE', key: 'ne', 'data-gallery-crop-handle': 'ne', onPointerDown: (e) => startDrag(e, 'ne') }),
+            h('div', { className: 'dg-cropHandle dg-cropHandleSW', key: 'sw', 'data-gallery-crop-handle': 'sw', onPointerDown: (e) => startDrag(e, 'sw') }),
+            h('div', { className: 'dg-cropHandle dg-cropHandleSE', key: 'se', 'data-gallery-crop-handle': 'se', onPointerDown: (e) => startDrag(e, 'se') }),
+            // 四边中点：单边调（参考图上共八个手柄）
+            h('div', { className: 'dg-cropHandle dg-cropHandleN', key: 'n', 'data-gallery-crop-handle': 'n', onPointerDown: (e) => startDrag(e, 'n') }),
+            h('div', { className: 'dg-cropHandle dg-cropHandleS', key: 's', 'data-gallery-crop-handle': 's', onPointerDown: (e) => startDrag(e, 's') }),
+            h('div', { className: 'dg-cropHandle dg-cropHandleW', key: 'w', 'data-gallery-crop-handle': 'w', onPointerDown: (e) => startDrag(e, 'w') }),
+            h('div', { className: 'dg-cropHandle dg-cropHandleE', key: 'e', 'data-gallery-crop-handle': 'e', onPointerDown: (e) => startDrag(e, 'e') }),
           ])
           : null,
-        mag !== null && full !== null
+        // 左上角尺寸标签：显示裁下来是多少像素
+        rect !== null && cropSize !== null
           ? h('div', {
-            className: 'dg-cropMagnifier',
-            key: 'mag',
-            style: { left: `${magX}px`, top: `${magY}px` },
-          }, h('canvas', { ref: magCanvasRef, width: 130, height: 130, key: 'magCanvas' }))
+            className: 'dg-cropSize',
+            key: 'size',
+            'data-gallery-crop-size': true,
+            style: sizeStyle,
+          }, `${cropSize.w} × ${cropSize.h}`)
           : null,
-        h('div', {
+        mag !== null && full !== null && probe !== null
+          ? h('div', {
+            className: 'dg-cropMagWrap',
+            key: 'mag',
+            'data-gallery-crop-mag': true,
+            style: { left: `${magLeft}px`, top: `${magTop}px` },
+          }, [
+            h('div', { className: 'dg-cropMagnifier', key: 'canvas' },
+              h('canvas', { ref: magCanvasRef, width: CROP_MAG_SIZE, height: CROP_MAG_SIZE, key: 'magCanvas' })),
+            h('div', { className: 'dg-cropMagInfo', key: 'info' }, [
+              h('span', { className: 'dg-cropMagInfoKey', key: 'kx' }, t('cropCoord')),
+              h('span', { className: 'dg-cropMagInfoVal', key: 'vx', 'data-gallery-crop-coord': true }, `${probe.px}, ${probe.py}`),
+              h('span', { className: 'dg-cropMagInfoKey', key: 'kc' }, t('cropColor')),
+              h('span', { className: 'dg-cropMagInfoVal', key: 'vc', 'data-gallery-crop-color': true }, probe.hex === '' ? '—' : probe.hex),
+              h('span', {
+                className: copied === '' ? 'dg-cropMagHint' : 'dg-cropMagHint dg-cropMagHintOk',
+                key: 'hint',
+                'data-gallery-crop-copyhint': true,
+              }, copied === '' ? t('cropCopyColor') : format(t('cropCopied'), { hex: copied })),
+            ]),
+          ])
+          : null,
+        showPanel ? h('div', {
           className: 'dg-cropPanel',
           key: 'panel',
           'data-gallery-crop-panel': true,
@@ -6006,12 +6242,13 @@ ${absPath}
               onClick: (e) => { e.stopPropagation(); onCancel() },
             }, t('cropCancel')),
             h('button', {
-              type: 'button', className: 'dg-btn dg-btnPrimary', key: 'ok', disabled: busy,
+              type: 'button', className: 'dg-btn dg-btnPrimary', key: 'ok',
+              disabled: busy || !canConfirm,   // 还没拖出框就点不动，避免点了没反应像坏了
               'data-gallery-crop-confirm': true,
               onClick: (e) => { e.stopPropagation(); confirmCrop() },
             }, busy ? t('cropSaving') : t('cropConfirm')),
           ]),
-        ]),
+        ]) : null,
       ])
     }
 
@@ -7192,7 +7429,9 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
   /** 多边形选区操作条：点数 / 外接框 / 面积实时可见，闭合前可撤销、可清空。 */
   const polyBox = poly.length > 0 ? polygonBBox(poly) : null
   const isNoteMode = polyMode === 'note'
-  const polyPanel = poly.length === 0 ? null : h('div', {
+  // 拖顶点时先把面板藏起来（老板 2026-11-16：确认框别挡正在看的那块），
+  // 松手立刻回来、带淡入；位置本来就钉在右下角，只在拖动这一瞬让开。
+  const polyPanel = (poly.length === 0 || polyDrag !== null) ? null : h('div', {
     className: 'dg-polyPanel', key: 'polyPanel',
     'data-gallery-poly-panel': true,
     'data-gallery-poly-mode': polyMode,
@@ -7915,6 +8154,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
               ? { relPath: String(linkedMask.relPath ?? '') } : null),
             sessionId: String(current.sessionId ?? viewer.originSid ?? ''),
             sessionTitle: String(current.sessionTitle ?? viewer.originTitle ?? ''),
+            // 第二档：文件自身改动时间（后台按活跃度排「最近看过的图」时要用）
+            mtime: Number(current.mtime) || 0,
           },
         }).catch((error) => {
           console.warn('dsh-gallery: 同步「正在看的图」失败（不影响看图）', error)
@@ -8006,6 +8247,36 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       }))
       // 取值失败兜底到 image 那份（正常情况三种 kind 都建过桶，走不到这里）
       const categoryFilter = categoryFilterMap[kind] ?? categoryFilterMap.image
+      /**
+       * 2026-11-16 第二档：把「面板此刻长什么样」同步给后台。
+       * 人切视图、改分类开关、翻页时防抖上报，模型才知道您眼前筛掉了哪几类、
+       * 一共多少张、分几个对话组 —— 否则它只能瞎猜「产出台里现在有什么」。
+       * 纯状态同步：600ms 防抖，失败只记日志，绝不影响列表本身。
+       */
+      React.useEffect(() => {
+        if (view.status !== 'ready' || view.data === null) return
+        const timer = setTimeout(() => {
+          const data = view.data
+          void callHost('setPanel', {
+            panel: {
+              scope,
+              kind,
+              page,
+              total: Number(data.total) || 0,
+              groupCount: Array.isArray(data.groups) ? data.groups.length : 0,
+              categories: {
+                final: categoryFilter.final !== false,
+                input: categoryFilter.input !== false,
+                intermediate: categoryFilter.intermediate !== false,
+                unknown: categoryFilter.unknown !== false,
+              },
+            },
+          }).catch((error) => {
+            console.warn('dsh-gallery: 同步面板状态失败（不影响使用）', error)
+          })
+        }, 600)
+        return () => clearTimeout(timer)
+      }, [view, scope, kind, page, categoryFilter])
       /** 批量选择（v0.13.7）：选中的 relPath 集合。清空条件：切 kind / 切 scope / 刷新后失效项自动剔除。 */
       const [selected, setSelected] = React.useState(new Set())
       /** 批量模式：用户显式开启，或已有选中项时自动生效（避免勾了看不见批量条）。 */
@@ -8804,6 +9075,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         let okCount = 0
         let lastErr = ''
         let skipped = 0
+        // 空壳位图（只有名字没内容）标记：交给系统剪贴板读真实文件路径兜底
+        let needClipboardFallback = false
         for (const file of images) {
           // 没有磁盘路径、MIME 又不是图片的（如复制的 PDF/zip）：读成 base64 也过不了
           // PNG 校验，直接跳过并计数，最后给一条明确的「请拖入画廊」提示。
@@ -8813,7 +9086,10 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
             const dataUrl = await fileToDataUrl(file)
             const comma = dataUrl.indexOf(',')
             const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl
-            const payload = await callHost('pasteImage', { sessionId: pasteTargetSid(), data: base64, ext: 'png' })
+            // 空壳（Electron 对某些来源只给文件名、不给内容）：别硬发空 base64，
+            // 改走系统剪贴板按真实路径复制，任何格式都能原样搬过去。
+            if (base64 === '' || Number(file?.size ?? 0) === 0) { needClipboardFallback = true; continue }
+            const payload = await callHost('pasteImage', { sessionId: pasteTargetSid(), data: base64, ext: imageExtOf(mime, dataUrl) })
             if (payload?.ok === true) { okCount += 1; showPasteNotice('ok', format(t('pasteImageOk'), { name: payload.name ?? '', target: pasteTargetLabel() })) }
             else lastErr = payload?.error?.message ?? 'pasteImage failed'
           } catch (error) {
@@ -8832,14 +9108,21 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         if (okCount > 0) {
           void refresh()
           if (lastErr !== '') console.warn('dsh-gallery: 部分粘贴失败', lastErr)
-        } else if (lastErr !== '') {
+          return
+        }
+        // 事件里是空壳：退回系统剪贴板，Host 用 PowerShell 读 CF_HDROP 拿真实路径
+        if (needClipboardFallback) {
+          const got = await pasteFromClipboard()
+          if (got) return
+        }
+        if (lastErr !== '') {
           showPasteNotice('fail', format(t('pasteFailed'), { message: lastErr }))
         } else if (skipped > 0) {
           showPasteNotice('fail', t('pasteUnsupported'))
         } else {
           showPasteNotice('fail', t('pasteEmpty'))
         }
-      }, [sessionId, refresh, t, showPasteNotice])
+      }, [sessionId, refresh, t, showPasteNotice, pasteFromClipboard])
 
       /** Ctrl+V：优先吃 paste 事件的图片/文件；事件没给文件信息时退到系统剪贴板。 */
       const doPasteEvent = React.useCallback(async (clipboardData, event) => {
@@ -9477,8 +9760,26 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
             emptyText = t('emptySession')
           }
         }
-        body = h('div', { className: 'dg-body', key: 'body' },
-          h('p', { className: 'dg-status' }, emptyText))
+        // 新对话空状态也要能粘贴：和「有图」分支一样接三样 ——
+        //   ① 外层 bodyWrap 的 hover 标记，否则 document 级 Ctrl+V 门控直接忽略；
+        //   ② onPaste / onContextMenu，右键菜单与 Ctrl+V 都走这里。
+        // onBodyPaste / onBodyContextMenu / hoveringRef 都在本分支之前声明，无 TDZ。
+        body = h('div', {
+          className: 'dg-bodyWrap',
+          key: 'bodyWrap',
+          onMouseEnter: () => { hoveringRef.current = true },
+          onMouseLeave: () => { hoveringRef.current = false; pasteTargetRef.current = null },
+        }, [
+          h('div', {
+            className: `dg-body${kind === 'file' ? ' dg-fileBody' : ''}`,
+            key: 'body',
+            'data-gallery-body': true,
+            onPaste: onBodyPaste,
+            onContextMenu: onBodyContextMenu,
+          }, [
+            h('p', { className: 'dg-status' }, emptyText),
+          ]),
+        ])
       } else {
         // 全局模式 + 有分组数据 → 按对话分组渲染（可折叠）
         const useGroups = scope === 'global' && Array.isArray(data.groups) && data.groups.length > 0

@@ -24,7 +24,7 @@ import { scanGallery, resolveSessionScope, parentDirOf } from './scan.js'
 import { locateSessionDir, readSessionLogText } from './session.js'
 import { extractSessionTitleFast } from './session-index.js'
 import { DEFAULT_SESSIONS_DIR } from './constants.js'
-import { makeDerivedName, bumpName, pngBufferFrom, tmpPathFor } from './derive.js'
+import { makeDerivedName, bumpName, pngBufferFrom, imageBufferFrom, tmpPathFor } from './derive.js'
 import { readClipboardFilePaths, writeClipboardFilePaths, internalClipboardPaths, pasteFilesIntoDir } from './clipboard.js'
 import { buildLinkedMaskIndex, framesFilePath } from './frames.js'
 
@@ -119,7 +119,7 @@ import { resolveReadable, serveMedia, contentTypeFor } from './media.js'
 import { MARK_ACTIONS, readMarks, writeMarks, setMark, setMarksBatch, marksFilePath } from './marks.js'
 import { readFeedback, setFeedback, setFeedbackBatch, ackFeedback, clearFeedback } from './feedback.js'
 // 阶段 3 / C1：记下「人正在看哪张图」，单独一份临时状态文件
-import { writeContext } from './context.js'
+import { writeContext, writePanel } from './context.js'
 // v0.16.4 A 档：把待处理反馈渲染成成稿文本（纯函数，不碰落盘数据）
 import { makeFeedback, renderFeedbackText } from './feedback-text.js'
 import { LABEL_CATEGORIES, readLabels, setLabel, setLabelsBatch, deleteLabels, labelsFilePath } from './labels.js'
@@ -176,30 +176,94 @@ function absoluteOf(roots, relPath) {
  *   q               —— 关键词（文件名 / 路径 / 对话标题 / 遮罩关联名）
  */
 /**
+ * 2026-11-16 第一档：把用户/模型给的关键词拆成多个词。
+ * 支持空格、逗号、顿号、分号、竖线、斜杠分隔；没有分隔符时整串当一个词。
+ * 返回小写、去重、最多 8 段，避免一段超长输入把打分拖慢。
+ */
+export function splitQuery(q) {
+  const rawq = String(q ?? '').toLowerCase().trim()
+  if (rawq === '') return []
+  const seen = new Set()
+  const out = []
+  for (const piece of rawq.split(/[\s,，、;；|/\\]+/)) {
+    const term = piece.trim()
+    if (term === '' || seen.has(term)) continue
+    seen.add(term)
+    out.push(term)
+    if (out.length >= 8) break
+  }
+  return out
+}
+
+/**
+ * 中文连着写没有分隔符时（如「门头定稿」），整串在文件名里通常不存在。
+ * 这时退化成「两字一组」：门头 / 头定 / 定稿，任一组命中就算候选。
+ * 只在整词一个都没命中时才启用，绝不会把整库都放进来。
+ */
+export function bigramFallback(term) {
+  const s = String(term ?? '').trim()
+  if (s.length < 3) return []
+  const seen = new Set()
+  const out = []
+  for (let i = 0; i + 2 <= s.length; i += 1) {
+    const gram = s.slice(i, i + 2)
+    if (seen.has(gram)) continue
+    seen.add(gram)
+    out.push(gram)
+    if (out.length >= 6) break
+  }
+  return out
+}
+
+/** 一条资产能被搜到的全部文本（一次拼好，多词复用）。 */
+export function haystackOf(f) {
+  return [
+    f?.relPath, f?.name, f?.extension, f?.sessionTitle,
+    f?.maskOf?.sourceName, f?.maskOf?.sourceRelPath,
+  ].filter((x) => typeof x === 'string' && x !== '').join(' ').toLowerCase()
+}
+
+/**
  * 阶段 2：关键词命中打分（纯函数，导出给工具与测试复用）。
  * 文件名 3 分 / 路径 2 分 / 对话标题 2 分 / 遮罩关联名 2 分，
  * 再加 0~1 分的新鲜度；同分按时间倒序，再同分保持原顺序。
  */
+/**
+ * 2026-11-16 第一档：关键词拆成多个词后再算分。
+ * 旧做法把整串当一个词去找（`hay.includes(整串)`）：「门头 定稿」这种带空格的
+ * 输入必然落空。现在每个词单独算，命中词越多分越高，全中的排最前。
+ * 打分口径不变：文件名 3 / 路径 2 / 对话标题 2 / 遮罩来源名 2；每多命中一个词再加 4。
+ */
 export function relevanceScore(f, q, maskNameOf) {
-  const query = String(q ?? '').toLowerCase()
-  if (query === '') return 0
+  const terms = Array.isArray(q) ? q : splitQuery(q)
+  if (terms.length === 0) return 0
   const name = String(f?.name ?? '').toLowerCase()
   const rel = String(f?.relPath ?? '').toLowerCase()
   const title = String(f?.sessionTitle ?? '').toLowerCase()
   const mask = String((maskNameOf ? maskNameOf(f) : f?.maskOf?.sourceName) ?? '').toLowerCase()
   let score = 0
-  if (name.includes(query)) score += 3
-  if (rel.includes(query)) score += 2
-  if (title.includes(query)) score += 2
-  if (mask !== '' && mask.includes(query)) score += 2
+  let hit = 0
+  for (const term of terms) {
+    let local = 0
+    if (name.includes(term)) local += 3
+    if (rel.includes(term)) local += 2
+    if (title.includes(term)) local += 2
+    if (mask !== '' && mask.includes(term)) local += 2
+    if (local > 0) {
+      hit += 1
+      score += local
+    }
+  }
+  score += Math.max(0, hit - 1) * 4
   return score
 }
 
 /** 有关键词时按相关性排；没关键词时保持调用方给的顺序。 */
+/** 有关键词时按相关性排；没关键词时保持调用方给的顺序。接受字符串或已拆好的词数组。 */
 export function sortByRelevance(list, q, maskNameOf) {
-  const query = String(q ?? '').toLowerCase()
+  const terms = Array.isArray(q) ? q : splitQuery(q)
   const arr = Array.isArray(list) ? list.slice() : []
-  if (query === '' || arr.length === 0) return arr
+  if (terms.length === 0 || arr.length === 0) return arr
   let min = Infinity
   let max = -Infinity
   for (const f of arr) {
@@ -210,7 +274,7 @@ export function sortByRelevance(list, q, maskNameOf) {
   const span = max - min || 1
   const scored = arr.map((f, i) => ({
     f, i,
-    s: relevanceScore(f, query, maskNameOf) + ((Number(f?.mtime) || 0) - min) / span,
+    s: relevanceScore(f, terms, maskNameOf) + ((Number(f?.mtime) || 0) - min) / span,
   }))
   scored.sort((a, b) => (b.s - a.s)
     || ((Number(b.f?.mtime) || 0) - (Number(a.f?.mtime) || 0))
@@ -230,6 +294,28 @@ export async function applyAssetFilter(value, opts) {
     marks = (await readMarks(settingsFile)).marks ?? {}
   } catch { marks = {} }
 
+  // 2026-11-16 第一档：先按整词匹配；整库一个都没命中、且是中文连着写时，
+  // 才退化成「两字一组」再试一次。这样「门头定稿」能命中「门头_效果图_定稿.png」，
+  // 但不会因为模糊而把一堆无关资产塞进结果。
+  const terms = splitQuery(filterQuery)
+  let activeTerms = terms
+  let queryFuzzy = false
+  if (terms.length === 1 && terms[0].length >= 3) {
+    const probe = []
+    if (Array.isArray(value?.groups)) {
+      for (const g of value.groups) if (Array.isArray(g?.files)) probe.push(...g.files)
+    }
+    if (Array.isArray(value?.items)) probe.push(...value.items)
+    if (Array.isArray(value?.files)) probe.push(...value.files)
+    if (probe.length > 0 && !probe.some((f) => haystackOf(f).includes(terms[0]))) {
+      const grams = bigramFallback(terms[0])
+      if (grams.length > 0) {
+        activeTerms = grams
+        queryFuzzy = true
+      }
+    }
+  }
+
   const labelSet = filterLabel !== '' ? new Set([filterLabel]) : null
   const categorySet = filterCategory !== '' ? new Set([filterCategory]) : null
 
@@ -241,13 +327,15 @@ export async function applyAssetFilter(value, opts) {
     const ext = String(f?.extension ?? '')
     if (filterExt !== '' && !ext.toLowerCase().endsWith(filterExt)) return false
 
-    if (filterQuery !== '') {
-      // 阶段 2：除了文件名与路径，也搜对话标题、扩展名、遮罩关联名与来源路径
-      const hay = [
-        f?.relPath, f?.name, f?.extension, f?.sessionTitle,
-        f?.maskOf?.sourceName, f?.maskOf?.sourceRelPath,
-      ].filter((x) => typeof x === 'string' && x !== '').join(' ').toLowerCase()
-      if (!hay.includes(filterQuery)) return false
+    if (activeTerms.length > 0) {
+      // 第一档：拆成多个词后「任一命中」即留下；多词全中靠打分往前排，
+      // 不再要求文件名里原样出现整串关键词（那样多词必然落空）。
+      const hay = haystackOf(f)
+      let hit = false
+      for (const term of activeTerms) {
+        if (hay.includes(term)) { hit = true; break }
+      }
+      if (!hit) return false
     }
 
     const mark = marks[f?.relPath]
@@ -264,10 +352,13 @@ export async function applyAssetFilter(value, opts) {
     }
   }
 
-  const orderByQuery = (arr) => sortByRelevance(arr, filterQuery)
+  const orderByQuery = (arr) => sortByRelevance(arr, activeTerms)
 
   const out = { ...value }
   out.filtered = true
+  // 把实际用的词带回去：查图工具按同一套词排序，模糊兜底时两边口径才一致
+  out.queryTerms = activeTerms
+  out.queryFuzzy = queryFuzzy
 
   if (Array.isArray(value?.groups)) {
     const groups = []
@@ -656,6 +747,11 @@ export function registerOpsRoute(ctx, config) {
                   .sort((a, b) => b.length - a.length)[0] ?? ''
                 if (owner !== '') maskAbs = path.resolve(owner, maskRel.split('/').join(path.sep))
               }
+              // 第二档：文件自身改动时间也带上，活跃度排序要用它
+              let fileMtime = Number(raw?.mtime) || 0
+              if (fileMtime <= 0 && abs !== '') {
+                try { fileMtime = (await fsp.stat(abs)).mtimeMs } catch { fileMtime = 0 }
+              }
               await writeContext(resolved.settingsFile, {
                 relPath: rel,
                 absPath: abs,
@@ -666,10 +762,23 @@ export function registerOpsRoute(ctx, config) {
                 maskAbsPath: maskAbs,
                 sessionId: String(raw?.sessionId ?? ''),
                 sessionTitle: String(raw?.sessionTitle ?? ''),
+                mtime: fileMtime,
               })
               return json({ ok: true })
             } catch (error) {
               return json({ ok: false, error: { code: 'context-failed', message: String(error?.message ?? error) } }, 500)
+            }
+          }
+
+          // 第二档：面板此刻长什么样（视图 / 类型 / 页码 / 总数 / 组数 / 分类开关）。
+          // 只记界面状态，不碰任何资产；人切视图、改筛选时由前端防抖上报。
+          if (op === 'setPanel') {
+            try {
+              const saved = await writePanel(resolved.settingsFile, body?.panel ?? null)
+              if (saved === null) return json({ ok: false, error: { code: 'bad-panel', message: '缺少 panel' } }, 400)
+              return json({ ok: true, panel: saved })
+            } catch (error) {
+              return json({ ok: false, error: { code: 'panel-failed', message: String(error?.message ?? error) } }, 500)
             }
           }
 
@@ -1913,6 +2022,39 @@ export function registerOpsRoute(ctx, config) {
           }
 
           /**
+           * 新对话「空状态」粘贴兜底目录（2026-11-15，本机补丁，未进 1.0.0 发布包）。
+           *
+           * 背景：resolveSessionDir 靠会话日志里出现过的路径反推落点目录；新对话还没有
+           * 任何产出时反推不出来，返回 null，三个粘贴入口直接报「无法确定当前对话目录」，
+           * 形成死锁 —— 想放素材进来，却因为里面没素材而不让放。
+           *
+           * 兜底策略：落在第一个真实存在的产出根下 `_对话素材/<会话短id>/`。
+           *   · 目录在 root 内 → rootOfAbs / relPath / 扫描都正常，粘进去的文件看得见；
+           *   · 带会话短 id → 多个新对话各落各的，互不串；
+           *   · 正常解析出的目录优先，这里只在拿不到时才用，不改 resolveSessionDir 原语义；
+           *   · 归属仍靠调用方 registerDerivedAsset(sessionId) + 扫描 frameByRel 收进当前对话。
+           */
+          async function resolveFallbackDir(config, sessionId) {
+            const opts = resolveOptions(config)
+            const roots = (opts.roots ?? []).filter((r) => typeof r === "string" && r !== "")
+            if (roots.length === 0) return null
+            // 会话短 id：清洗到安全字符集，空则给固定名，避免路径注入
+            const sidRaw = typeof sessionId === "string" ? sessionId : ""
+            const sid = sidRaw.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 12) || "current"
+            for (const root of roots) {
+              try {
+                const absRoot = path.resolve(root)
+                const st = await fsp.stat(absRoot)
+                if (!st.isDirectory()) continue
+                const dir = path.join(absRoot, "_对话素材", sid)
+                if (!isInside(absRoot, dir)) continue
+                return dir
+              } catch { /* 这个根不可用，试下一个 */ }
+            }
+            return null
+          }
+
+          /**
            * 读会话标题 / 创建时间（派生资产登记用）。
            *
            * 为什么 Host 自己读、不靠前端传：粘贴走 document 级监听、裁剪走
@@ -2033,15 +2175,19 @@ export function registerOpsRoute(ctx, config) {
             const opts = resolveOptions(config)
             const sessionId = String(body?.sessionId ?? '')
             const data = typeof body?.data === 'string' ? body.data : ''
-            const ext = (typeof body?.ext === 'string' && body.ext !== '') ? body.ext : 'png'
             if (data === '') {
               return json({ ok: false, error: { code: 'bad-request', message: '缺少图片数据' } }, 400)
             }
-            const buf = pngBufferFrom(data)
-            if (buf === null) {
-              return json({ ok: false, error: { code: 'bad-png', message: '图片数据为空、超过 24 MB 或非 PNG' } }, 400)
+            // 2026-11-15 放宽：剪贴板位图可能是 JPEG / WebP / GIF / BMP，不再只认 PNG；
+            // 扩展名以真实魔数为准（不信前端传的 ext），避免后缀与内容不符。
+            const img = imageBufferFrom(data)
+            if (img === null) {
+              return json({ ok: false, error: { code: 'bad-image', message: '图片数据为空、超过 24 MB，或不是 PNG / JPG / WebP / GIF / BMP' } }, 400)
             }
-            const dir = await resolveSessionDir(config, sessionId)
+            const buf = img.buf
+            const ext = img.ext
+            let dir = await resolveSessionDir(config, sessionId)
+            if (dir === null) dir = await resolveFallbackDir(config, sessionId)
             if (dir === null) {
               return json({ ok: false, error: { code: 'no-session-dir', message: '无法确定当前对话目录' } }, 400)
             }
@@ -2089,7 +2235,8 @@ export function registerOpsRoute(ctx, config) {
             if (srcStat.size > 2 * 1024 * 1024 * 1024) {
               return json({ ok: false, error: { code: 'too-large', message: '文件超过 2 GB，粘贴被拒绝' } }, 400)
             }
-            const dir = await resolveSessionDir(config, sessionId)
+            let dir = await resolveSessionDir(config, sessionId)
+            if (dir === null) dir = await resolveFallbackDir(config, sessionId)
             if (dir === null) {
               return json({ ok: false, error: { code: 'no-session-dir', message: '无法确定当前对话目录' } }, 400)
             }
@@ -2167,7 +2314,8 @@ export function registerOpsRoute(ctx, config) {
             const opts = resolveOptions(config)
             const sessionId = String(body?.sessionId ?? '')
             const srcs = Array.isArray(body?.srcPaths) ? body.srcPaths : []
-            const dir = await resolveSessionDir(config, sessionId)
+            let dir = await resolveSessionDir(config, sessionId)
+            if (dir === null) dir = await resolveFallbackDir(config, sessionId)
             if (dir === null) {
               return json({ ok: false, error: { code: 'no-session-dir', message: '无法确定当前对话目录' } }, 400)
             }

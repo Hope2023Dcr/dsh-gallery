@@ -43,6 +43,35 @@ export function isFreshSince(stat, sessionStartMs) {
   return newest >= since
 }
 
+/**
+ * 2026-11-16 第一档：限流并发执行。
+ * scan 阶段每个文件都要读一次 stat，串行时五千多个文件要 7 秒左右；
+ * 这里用固定数量的「工人」同时干，结果按下标回填，顺序与串行完全一致。
+ */
+export async function mapPool(items, limit, fn) {
+  const list = Array.isArray(items) ? items : []
+  const out = new Array(list.length)
+  if (list.length === 0) return out
+  const width = Math.max(1, Math.min(Math.trunc(Number(limit) || 1), list.length))
+  let cursor = 0
+  const workers = []
+  for (let w = 0; w < width; w += 1) {
+    workers.push((async () => {
+      for (;;) {
+        const i = cursor
+        cursor += 1
+        if (i >= list.length) return
+        out[i] = await fn(list[i], i)
+      }
+    })())
+  }
+  await Promise.all(workers)
+  return out
+}
+
+/** 并发读 stat 的路数：本地盘 32 路收益已接近上限，再高只增加抢占。 */
+export const SCAN_CONCURRENCY = 32
+
 export function categoryForSessionAsset(autoCategory, externalAsset) {
   return autoCategory ?? (externalAsset ? ASSET_CATEGORY.INPUT : null)
 
@@ -449,6 +478,8 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
   const hiddenSet = new Set(await readHiddenList(opts.settingsFile))
 
   const matches = []
+  // 2026-11-16 第一档：两阶段扫描的候选路径暂存（先收集、再并发 stat）
+  const candidates = []
   let directories = 0
   let entries = 0
   let capped = false
@@ -509,46 +540,64 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
         const relPath = path.relative(rootDir, fullPath).split(path.sep).join('/')
         // 当前对话：精确路径白名单优先；不在白名单但落在「本对话用过的目录」里，
         // 视作外部放进来的素材放行（v0.14.7）。其它目录一律不进当前对话。
-        let externalAsset = false
         let looseDirHit = false
         if (sessionRelSet !== null && !sessionRelSet.has(relPath.toLowerCase())) {
           if (sessionDirSet === null || !sessionDirSet.has(parentDirOf(relPath))) continue
           looseDirHit = true
         }
-        let stat
-        try {
-          stat = await fsp.stat(fullPath)
-        } catch {
-          continue
-        }
-        // 2026-11-15：同目录放宽只收本对话期间新出现 / 改动的图；
-        // 否则只读查一次图，就会把该目录里几百张历史图全算进这个新对话。
-        if (looseDirHit && !isFreshSince(stat, sessionStartMs)) continue
-        if (looseDirHit) externalAsset = true
-        if (stat.size <= 0 || stat.mtimeMs < cutoff) continue
-        // 音视频：超过体积上限的直接跳过（视频可能几百 MB，列出来点开就卡）
-        if (isMedia && stat.size > opts.maxMediaBytes) continue
         // 被隐藏的直接跳过（隐藏只影响列表展示，文件仍在磁盘上）
         if (hiddenSet.has(relPath)) continue
-        matches.push({
+        // 第一阶段只登记路径，stat 留到全部收集完再统一并发读（第一档性能优化）
+        candidates.push({
+          fullPath,
           relPath,
-          relKey: `${opts.roots.indexOf(rootDir)}:${relPath}`,
+          entryName,
           rootDir,
           rootIndex: opts.roots.indexOf(rootDir),
-          name: entryName,
-          size: stat.size,
-          mtime: stat.mtimeMs,
-          // 手工拷贝旧文件时 mtime 仍是老的，但创建时间是新的；
-          // 两个视图的同目录放宽判据都看它，不能只给 mtime 造成一边有一边没有。
-          birthtimeMs: stat.birthtimeMs,
           extension: ext,
-          // v0.14.7：外部素材标记，扫描阶段据此给出「素材」标签
-          ...(externalAsset ? { externalAsset: true } : {}),
-          // 音视频区分「视频 / 音频」，客户端据此选 <video> 还是 <audio>
-          ...(isMedia ? { mediaType: VIDEO_EXTS.includes(ext) ? 'video' : 'audio' } : {}),
+          looseDirHit,
         })
       }
     }
+  }
+
+  // 2026-11-16 第一档：第二阶段限流并发读 stat。
+  // 全库五千多个文件逐个 await 要 7 秒左右，几十路并发能压到 1 秒内；
+  // 过滤条件（时间窗口 / 体积 / 隐藏 / 同目录新鲜度）与串行时完全一致，
+  // 只是把「等待」叠起来做，不改变任何一条判定。
+  const statted = await mapPool(candidates, SCAN_CONCURRENCY, async (c) => {
+    let stat
+    try {
+      stat = await fsp.stat(c.fullPath)
+    } catch {
+      return null
+    }
+    // 2026-11-15：同目录放宽只收本对话期间新出现 / 改动的图；
+    // 否则只读查一次图，就会把该目录里几百张历史图全算进这个新对话。
+    if (c.looseDirHit && !isFreshSince(stat, sessionStartMs)) return null
+    if (stat.size <= 0 || stat.mtimeMs < cutoff) return null
+    // 音视频：超过体积上限的直接跳过（视频可能几百 MB，列出来点开就卡）
+    if (isMedia && stat.size > opts.maxMediaBytes) return null
+    return {
+      relPath: c.relPath,
+      relKey: `${c.rootIndex}:${c.relPath}`,
+      rootDir: c.rootDir,
+      rootIndex: c.rootIndex,
+      name: c.entryName,
+      size: stat.size,
+      mtime: stat.mtimeMs,
+      // 手工拷贝旧文件时 mtime 仍是老的，但创建时间是新的；
+      // 两个视图的同目录放宽判据都看它，不能只给 mtime 造成一边有一边没有。
+      birthtimeMs: stat.birthtimeMs,
+      extension: c.extension,
+      // v0.14.7：外部素材标记，扫描阶段据此给出「素材」标签
+      ...(c.looseDirHit ? { externalAsset: true } : {}),
+      // 音视频区分「视频 / 音频」，客户端据此选 <video> 还是 <audio>
+      ...(isMedia ? { mediaType: VIDEO_EXTS.includes(c.extension) ? 'video' : 'audio' } : {}),
+    }
+  })
+  for (const item of statted) {
+    if (item !== null) matches.push(item)
   }
 
   const rootMissing = !anyRootExists
