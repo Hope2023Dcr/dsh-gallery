@@ -629,6 +629,26 @@ async function encodeMaskPngBytes(imageData, width, height) {
       batchModeExit: '退出批量',
       batchModeEnterHint: '批量模式：直接点卡片即可选中/取消（此时点卡片不会打开大图），选好后批量改标签',
       batchModeExitHint: '退出批量模式并清空已选',
+      // ---- 前后对比（2026-11-17）----
+      cmpEnter: '对比',
+      cmpExit: '结束对比',
+      cmpPickTitle: '选一张来对比',
+      cmpPickHint: '同尺寸排前面；标「推荐」的是刚圈过遮罩、或时间最接近的那几张',
+      cmpPickEmpty: '这一组里没有别的图可以对比',
+      cmpSameSize: '同尺寸',
+      cmpSizeDiff: '尺寸不同',
+      cmpModeSlider: '滑块',
+      cmpModeTile: '平铺',
+      cmpSliderHint: '拖分割线 · 点轨道跳转 · ← → 微调',
+      cmpSwap: '对调',
+      cmpBefore: '前',
+      cmpAfter: '后',
+      cmpLoading: '正在载入对比图…',
+      cmpFailed: '对比图载入失败',
+      cmpRecommend: '推荐',
+      cmpSizeWarn: '两张尺寸不同，对齐仅供参考',
+      cmpBatchEnter: '对比两张',
+      cmpBatchHint: '选中两张后进对比',
       cardConfirm: '✓ 定稿',
       cardConfirmed: '✓ 已定稿',
       cardConfirmHint: '把这张定为「已定稿」（只写标记，不动文件，也不发送消息）',
@@ -1028,6 +1048,26 @@ async function encodeMaskPngBytes(imageData, width, height) {
       batchModeExit: 'Exit batch',
       batchModeEnterHint: 'Batch mode: click any card to select/deselect (clicking no longer opens the viewer), then edit labels in batch',
       batchModeExitHint: 'Leave batch mode and clear the selection',
+      // ---- before / after compare (2026-11-17) ----
+      cmpEnter: 'Compare',
+      cmpExit: 'Exit compare',
+      cmpPickTitle: 'Pick an image to compare',
+      cmpPickHint: 'Same-size files first; "Suggested" had a mask or are closest in time',
+      cmpPickEmpty: 'No other image in this group to compare',
+      cmpSameSize: 'Same size',
+      cmpSizeDiff: 'Different size',
+      cmpModeSlider: 'Slider',
+      cmpModeTile: 'Side by side',
+      cmpSliderHint: 'Drag the divider, click the track to jump, arrow keys to nudge',
+      cmpSwap: 'Swap',
+      cmpBefore: 'Before',
+      cmpAfter: 'After',
+      cmpLoading: 'Loading comparison image...',
+      cmpFailed: 'Comparison image failed to load',
+      cmpRecommend: 'Suggested',
+      cmpSizeWarn: 'Different sizes, alignment is approximate',
+      cmpBatchEnter: 'Compare two',
+      cmpBatchHint: 'Select two images to compare',
       cardConfirm: '✓ Finalize',
       cardConfirmed: '✓ Finalized',
       cardConfirmHint: 'Mark this as finalized (marks only; no file changes, no message sent)',
@@ -2590,6 +2630,45 @@ async function encodeMaskPngBytes(imageData, width, height) {
 .dg-toast-failed { border-color: var(--dsw-alias-state-error-primary, #d9534f); }
 .dg-viewerLayer .dg-viewer { flex: 1 1 auto; min-height: 0; }
 .dg-viewerBody { touch-action: none; }
+
+/* ---- 前后对比（2026-11-17）----
+   两个关键点：
+     ① .dg-cmpClip 不参与 transform —— 分割线按屏幕坐标切，放大后不跟着图跑
+     ② .dg-cmpImg 用 imgBox 的绝对位置 + 与主图同一组 pan/zoom，两层像素级重合
+   配色一律硬编码高对比：宿主 --dsw-alias-* 未定义时 var() 兜底会整体发暗。 */
+.dg-cmpClip { position: absolute; inset: 0; z-index: 2; overflow: hidden; pointer-events: none; }
+.dg-cmpImg { position: absolute; max-width: none; max-height: none; object-fit: contain; pointer-events: none; user-select: none; transform-origin: center center; }
+.dg-cmpUi { position: absolute; inset: 0; z-index: 6; pointer-events: none; }
+.dg-cmpTag { position: absolute; top: 10px; padding: 2px 8px; border-radius: 4px; font-size: 11px; line-height: 16px; color: #e8f5ee; background: rgba(10, 14, 18, 0.74); border: 0.5px solid rgba(0, 230, 118, 0.45); }
+.dg-cmpTagL { left: 10px; }
+.dg-cmpTagR { right: 10px; }
+.dg-cmpHandle { position: absolute; top: 0; bottom: 0; width: 34px; margin-left: -17px; pointer-events: auto; cursor: ew-resize; touch-action: none; }
+.dg-cmpLine { position: absolute; top: 0; bottom: 0; left: 50%; margin-left: -1px; width: 2px; background: #00e676; }
+.dg-cmpGrip { position: absolute; top: 50%; left: 50%; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 50%; background: rgba(8, 12, 16, 0.92); border: 2px solid #00e676; display: flex; align-items: center; justify-content: center; color: #00e676; font-size: 13px; line-height: 1; }
+.dg-cmpArrow { display: block; transform: scaleY(1.35); }
+.dg-cmpMsg { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); padding: 4px 10px; border-radius: 4px; font-size: 11px; color: #e8f5ee; background: rgba(10, 14, 18, 0.82); }
+/* 平铺模式：左右各一格，共用同一组 pan/zoom */
+.dg-cmpTile { position: absolute; inset: 0; z-index: 4; display: flex; gap: 4px; padding: 4px; background: var(--dsw-specific-sidebar-fill, #111); }
+.dg-cmpPane { position: relative; flex: 1 1 0; min-width: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; border-radius: 4px; background: rgba(0, 0, 0, 0.28); }
+.dg-cmpPaneImg { max-width: 100%; max-height: 100%; object-fit: contain; pointer-events: none; user-select: none; transform-origin: center center; }
+.dg-cmpPaneTag { position: absolute; top: 8px; left: 8px; padding: 1px 7px; border-radius: 4px; font-size: 11px; color: #e8f5ee; background: rgba(10, 14, 18, 0.74); border: 0.5px solid rgba(0, 230, 118, 0.45); }
+.dg-cmpPaneMsg { font-size: 12px; color: #9aa8b8; }
+/* 选图面板 */
+.dg-cmpPicker { position: absolute; inset: 0; z-index: 20; display: flex; flex-direction: column; gap: 8px; padding: 14px; overflow: auto; background: rgba(8, 11, 15, 0.95); }
+.dg-cmpPickerHead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.dg-cmpPickerTitle { font-size: 13px; font-weight: 600; color: #eef2f6; }
+.dg-cmpPickerHint { font-size: 11px; line-height: 1.5; color: #8b98a8; }
+.dg-cmpPickerEmpty { padding: 18px 4px; font-size: 12px; color: #8b98a8; }
+.dg-cmpPickerGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 8px; }
+.dg-cmpCard { position: relative; display: flex; flex-direction: column; gap: 0; padding: 0; border: 0.5px solid rgba(255, 255, 255, 0.14); border-radius: 6px; background: rgba(255, 255, 255, 0.04); cursor: pointer; overflow: hidden; text-align: left; }
+.dg-cmpCard:hover { border-color: #00e676; background: rgba(0, 230, 118, 0.08); }
+.dg-cmpCardThumb { display: block; width: 100%; height: 84px; background: rgba(0, 0, 0, 0.35); }
+.dg-cmpCardThumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.dg-cmpCardRec { position: absolute; top: 4px; left: 4px; padding: 1px 6px; border-radius: 3px; font-size: 10px; color: #06120a; background: #00e676; }
+.dg-cmpCardMeta { display: flex; flex-direction: column; gap: 1px; padding: 4px 6px 6px; }
+.dg-cmpCardName { font-size: 11px; color: #dfe6ee; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dg-cmpCardSize { font-size: 10px; color: #7f8b9a; }
+.dg-cmpCardSizeDiff { color: #e6a23c; }
 .dg-textBody { display: block; overflow: auto; padding: 12px 14px; user-select: text; touch-action: auto; }
 
 /* ===== 文件卡片 v2：三段式 ===== */
@@ -5175,6 +5254,7 @@ function serializeFeedback(feedback) {
                 text: format(t('mediaGrabFrameSaved'), { name: payload?.name ?? '', timecode: payload?.timecode ?? '' }),
               })
               // 立刻重扫：新资产出现在当前对话组，可马上点开批注 / 进反馈篮
+              kickChanges()
               if (typeof onSaved === 'function') onSaved(payload)
             } catch (error) {
               setGrabNotice({ kind: 'failed', text: format(t('mediaGrabFrameFailed'), { message: String(error?.message ?? error) }) })
@@ -6252,7 +6332,97 @@ ${absPath}
       ])
     }
 
-    function Viewer({ items, index, onClose, onStep, t, initialOriginal, annotations, onAddAnnotation, onRemoveAnnotation, onExportMask, onCrop, onCopyFile }) {
+    /**
+     * 对比选图面板（2026-11-17）。
+     * 老板要求「选图要方便快捷」，所以只做一件事：格子一列，点一下就进对比，选完立即关。
+     * 缩略图沿用卡片那套 fetchRaw + makeScaled，不额外开后端路由。
+     */
+    function ComparePicker({ t, candidates, onPick, onClose }) {
+      return h('div', {
+        className: 'dg-cmpPicker',
+        'data-gallery-compare-picker': true,
+        onClick: (event) => event.stopPropagation(),
+      }, [
+        h('div', { key: 'head', className: 'dg-cmpPickerHead' }, [
+          h('span', { key: 'title', className: 'dg-cmpPickerTitle' }, t('cmpPickTitle')),
+          h('button', {
+            key: 'close',
+            type: 'button',
+            className: 'dg-btn dg-btnTiny',
+            'data-gallery-compare-picker-close': true,
+            onClick: (event) => { event.stopPropagation(); onClose() },
+          }, '\u2715'),
+        ]),
+        h('div', { key: 'hint', className: 'dg-cmpPickerHint' }, t('cmpPickHint')),
+        candidates.length === 0
+          ? h('div', { key: 'empty', className: 'dg-cmpPickerEmpty' }, t('cmpPickEmpty'))
+          : h('div', { key: 'grid', className: 'dg-cmpPickerGrid' },
+              candidates.map((cand, i) => h(ComparePickCard, {
+                key: cand.item.relPath,
+                t,
+                cand,
+                recommend: i < 3,
+                onPick,
+              }))),
+      ])
+    }
+
+    /** 单个候选：缩略图 + 文件名 + 尺寸（不同尺寸标出来，免得以为没对齐是 bug）。 */
+    function ComparePickCard({ t, cand, recommend, onPick }) {
+      const [url, setUrl] = React.useState(null)
+      const relPath = String(cand.item.relPath ?? '')
+      React.useEffect(() => {
+        if (relPath === '') return undefined
+        let cancelled = false
+        let objUrl = null
+        const controller = new AbortController()
+        fetchRaw(relPath, controller.signal)
+          .then(async (blob) => {
+            const thumb = await makeScaled(blob, THUMB_SIZE, true)
+            if (cancelled) {
+              if (thumb.url !== null) URL.revokeObjectURL(thumb.url)
+              return
+            }
+            objUrl = thumb.url
+            setUrl(thumb.url)
+          })
+          .catch(() => {})
+        return () => {
+          cancelled = true
+          controller.abort()
+          if (objUrl !== null) URL.revokeObjectURL(objUrl)
+        }
+      }, [relPath])
+
+      const w = Number(cand.item.width) || 0
+      const hh = Number(cand.item.height) || 0
+      return h('button', {
+        type: 'button',
+        className: 'dg-cmpCard',
+        'data-gallery-compare-cand': relPath,
+        'data-gallery-compare-samesize': cand.sameSize ? '1' : '0',
+        title: relPath,
+        onClick: (event) => {
+          event.stopPropagation()
+          onPick(cand.item)
+        },
+      }, [
+        h('span', { key: 'thumb', className: 'dg-cmpCardThumb' },
+          url === null ? null : h('img', { key: 'i', src: url, alt: '', draggable: false })),
+        recommend === true
+          ? h('span', { key: 'rec', className: 'dg-cmpCardRec' }, t('cmpRecommend'))
+          : null,
+        h('span', { key: 'meta', className: 'dg-cmpCardMeta' }, [
+          h('span', { key: 'name', className: 'dg-cmpCardName' }, String(cand.item.name ?? '')),
+          h('span', {
+            key: 'size',
+            className: 'dg-cmpCardSize' + (cand.sameSize ? '' : ' dg-cmpCardSizeDiff'),
+          }, cand.sameSize ? w + '\u00d7' + hh : t('cmpSizeDiff')),
+        ]),
+      ])
+    }
+
+    function Viewer({ items, index, onClose, onStep, t, initialOriginal, initialCompare, annotations, onAddAnnotation, onRemoveAnnotation, onExportMask, onCrop, onCopyFile }) {
       const item = items[index]
       // 文件预览已改走 DSH 原生侧栏（session 地址）；此处 Viewer 仅处理图片，isText 恒 false，
       // 下面的文本分支保留为死代码，供 v0.2 若需插件内预览时复用
@@ -6260,11 +6430,173 @@ ${absPath}
       const [state, setState] = React.useState({ status: 'pending' })
       const [zoom, setZoom] = React.useState(1)
       const [pan, setPan] = React.useState({ x: 0, y: 0 })
+      // 视图状态镜像：滚轮用原生监听，且绝不能把 setPan 嵌进 setZoom 的 updater。
+      // updater 必须是纯函数；React 严格模式会把它跑两遍，pan 就被算两次 ——
+      // 表现正是「平铺下以鼠标为中心缩放失灵」（实测漂移约 15px）。改用 ref 读当前值、
+      // 算好后分别 set；渲染体每帧回写，让拖拽/按钮的改动也能同步进 ref。
+      const viewRef = React.useRef({ zoom: 1, pan: { x: 0, y: 0 } })
+      viewRef.current.zoom = zoom
+      viewRef.current.pan = pan
       const [dragging, setDragging] = React.useState(false)
       const bodyRef = React.useRef(null)
       const imgRef = React.useRef(null)
       /** 图片在预览容器里的真实布局盒（不含 transform）；批注层据此对齐，1:1 也不跑偏。 */
       const [imgBox, setImgBox] = React.useState(null)
+
+      // ---- 前后对比（2026-11-17）----
+      // 老板口径：手动选两张为主路，智能推荐为辅（优先「生成遮罩的原素材 ↔ 成稿」）。
+      // 对比图单独走一次 fetchRaw，跟「原图模式」互不复用，换图即释放。
+      const [cmpTarget, setCmpTarget] = React.useState(null)
+      const [cmpMode, setCmpMode] = React.useState('slider')
+      const [splitPct, setSplitPct] = React.useState(50)
+      const [pickerOpen, setPickerOpen] = React.useState(false)
+      const [cmpSwapped, setCmpSwapped] = React.useState(false)
+      const cmpAbortRef = React.useRef(null)
+      const cmpUrlRef = React.useRef(null)
+      const splitDragRef = React.useRef(null)
+
+      /** 释放对比图占用的 object URL 与请求。 */
+      const releaseCmp = React.useCallback(() => {
+        if (cmpAbortRef.current !== null) {
+          try { cmpAbortRef.current.abort() } catch {}
+          cmpAbortRef.current = null
+        }
+        if (cmpUrlRef.current !== null) {
+          URL.revokeObjectURL(cmpUrlRef.current)
+          cmpUrlRef.current = null
+        }
+      }, [])
+
+      /**
+       * 对比候选排序。信号按可靠度叠加：
+       *   ① 遮罩关系（这是「圈过的原素材 ↔ 遮罩产物」，最确定）
+       *   ② 同尺寸（局部重绘必然同尺寸，不同尺寸就没什么可比）
+       *   ③ 时间方向与距离（更晚的像成稿，越近越优先）
+       *   ④ 文件名主干一致
+       * 只取前 12 个，面板里够看又不至于一次拉太多缩略图。
+       */
+      const cmpCandidates = React.useMemo(() => {
+        const curPath = String(item.relPath ?? '')
+        const w = Number(item.width) || 0
+        const h = Number(item.height) || 0
+        const curSource = String(item.maskOf?.sourceRelPath ?? '')
+        const stemOf = (name) => String(name ?? '')
+          .replace(/\.[^.]*$/, '')
+          .replace(/[_\-\s]*(改|重绘|修|inpaint|edit|fixed|final|v\d+)$/i, '')
+        const base = stemOf(item.name)
+        const out = []
+        for (const cand of items) {
+          const rel = String(cand.relPath ?? '')
+          if (rel === '' || rel === curPath) continue
+          if (!isImageItem(cand)) continue
+          const cw = Number(cand.width) || 0
+          const ch = Number(cand.height) || 0
+          const sameSize = w > 0 && h > 0 && cw === w && ch === h
+          const candSource = String(cand.maskOf?.sourceRelPath ?? '')
+          const maskLinked = (candSource !== '' && candSource === curPath)
+            || (curSource !== '' && curSource === rel)
+            || (candSource !== '' && candSource === curSource)
+          let score = 0
+          if (maskLinked) score += 1000
+          if (sameSize) score += 500
+          const dtMin = (Number(cand.mtime) - Number(item.mtime)) / 60000
+          if (dtMin > 0) score += 120
+          score -= Math.min(240, Math.abs(dtMin) / 2)
+          if (base !== '' && stemOf(cand.name) === base) score += 80
+          out.push({ item: cand, sameSize, maskLinked, score })
+        }
+        out.sort((a, b) => b.score - a.score)
+        return out.slice(0, 12)
+      }, [items, item])
+
+      /** 选一张图作为对比对象：拉字节 → 转 object URL → 进对比视图。 */
+      const pickCompare = React.useCallback((cand) => {
+        const rel = String(cand?.relPath ?? '')
+        if (rel === '') return
+        setPickerOpen(false)
+        releaseCmp()
+        const controller = new AbortController()
+        cmpAbortRef.current = controller
+        setCmpTarget({
+          relPath: rel,
+          name: String(cand.name ?? rel.split('/').pop() ?? ''),
+          width: Number(cand.width) || 0,
+          height: Number(cand.height) || 0,
+          status: 'loading',
+          url: null,
+        })
+        fetchRaw(rel, controller.signal)
+          .then((blob) => {
+            if (controller.signal.aborted) return
+            const url = URL.createObjectURL(blob)
+            if (controller.signal.aborted) { URL.revokeObjectURL(url); return }
+            cmpUrlRef.current = url
+            setCmpTarget((cur) => (cur !== null && cur.relPath === rel
+              ? { ...cur, status: 'ready', url }
+              : cur))
+          })
+          .catch((error) => {
+            if (controller.signal.aborted) return
+            setCmpTarget((cur) => (cur !== null && cur.relPath === rel
+              ? { ...cur, status: 'failed', message: String(error?.message ?? error) }
+              : cur))
+          })
+      }, [releaseCmp])
+
+      /** 退出对比：清空对象、复位分割线、放掉 URL。 */
+      const exitCompare = React.useCallback(() => {
+        releaseCmp()
+        setCmpTarget(null)
+        setPickerOpen(false)
+        setSplitPct(50)
+        setCmpSwapped(false)
+      }, [releaseCmp])
+
+      // 组件卸载时释放对比图
+      React.useEffect(() => () => { releaseCmp() }, [releaseCmp])
+
+      // 从「批量选两张」进来时直接进对比：老板要的是选完就比，不再多点一步。
+      // 只认第一次，之后左右翻页不重复触发。
+      const initialCompareDoneRef = React.useRef(false)
+      React.useEffect(() => {
+        if (initialCompareDoneRef.current) return
+        const rel = typeof initialCompare === 'string' ? initialCompare : ''
+        if (rel === '') return
+        const cand = items.find((it) => String(it?.relPath ?? '') === rel)
+        if (cand === undefined) return
+        initialCompareDoneRef.current = true
+        pickCompare(cand)
+      }, [initialCompare, items, pickCompare])
+
+      /** 把分割线移到指针所在的横向位置（百分比）。 */
+      const moveSplitTo = React.useCallback((clientX) => {
+        const node = bodyRef.current
+        if (node === null) return
+        const rect = node.getBoundingClientRect()
+        const width = rect.width > 0 ? rect.width : 1
+        const pct = ((clientX - rect.left) / width) * 100
+        setSplitPct(Math.max(0, Math.min(100, pct)))
+      }, [])
+
+      const onDividerDown = (event) => {
+        if (cmpTarget === null) return
+        event.preventDefault()
+        event.stopPropagation()
+        splitDragRef.current = true
+        moveSplitTo(event.clientX)
+        try { event.currentTarget.setPointerCapture(event.pointerId) } catch {}
+      }
+      const onDividerMove = (event) => {
+        if (splitDragRef.current !== true) return
+        event.preventDefault()
+        event.stopPropagation()
+        moveSplitTo(event.clientX)
+      }
+      const onDividerUp = (event) => {
+        if (splitDragRef.current !== true) return
+        splitDragRef.current = null
+        try { event.currentTarget.releasePointerCapture(event.pointerId) } catch {}
+      }
       const dragRef = React.useRef(null)
       // 上一次拖动是否真的产生了位移（用于区分「拖图」和「单击关闭」）
       const lastDragMoved = React.useRef(false)
@@ -6342,10 +6674,16 @@ ${absPath}
         setOriginalMode(false)
         setOriginal({ status: 'idle' })
         setCropActive(false)
+        // 换图后对比对象失效：写盘路径不同，留着只会显示别人的图
+        releaseCmp()
+        setCmpTarget(null)
+        setPickerOpen(false)
+        setSplitPct(50)
+        setCmpSwapped(false)
         return () => {
           if (originalAbortRef.current !== null) originalAbortRef.current.abort()
         }
-      }, [item.relPath])
+      }, [item.relPath, releaseCmp])
 
       // 首次挂载时如果要求直接看原图，立刻开始加载。
       // 放在「换图重置」之后，顺序上不会再被清掉。
@@ -6440,28 +6778,64 @@ ${absPath}
 
       // 滚轮缩放：以鼠标位置为中心，避免放大后目标跑出视野（仅图片模式）。
       // 文本预览用原生滚动，不拦截滚轮。
+      // 平铺对比时锚点要换成「光标所在那一格」的中心，见 onWheel 里的注释。
+      const cmpTileRef = React.useRef(false)
+      cmpTileRef.current = cmpTarget !== null && cmpMode === 'tile'
       React.useEffect(() => {
         const node = bodyRef.current
         if (node === null || state.status !== 'ready' || isText) return undefined
         const onWheel = (event) => {
           event.preventDefault()
           const delta = event.deltaY < 0 ? 1 : -1
-          const rect = node.getBoundingClientRect()
-          // 光标相对预览框中心的偏移
-          const cx = event.clientX - (rect.left + rect.width / 2)
-          const cy = event.clientY - (rect.top + rect.height / 2)
+          // 不动点 = 光标下那张图的中心。图片的 transform-origin 是 center，
+          // 只有把锚点选在「元素自身中心」上，光标下的那个像素才会在缩放前后停在同一处。
+          // 平铺对比时左右两格各自居中，两个中心相差整整一格宽；若仍拿预览框中心去算，
+          // 光标那一格的不动点会被算到隔壁半格，放大时画面往一侧窜 —— 看着就是「以鼠标为中心失灵」。
+          const base = node.getBoundingClientRect()
+          let anchorX = null
+          let anchorY = null
+          if (cmpTileRef.current) {
+            const pane = event.target instanceof Element ? event.target.closest('.dg-cmpPane') : null
+            if (pane !== null) {
+              const paneRect = pane.getBoundingClientRect()
+              anchorX = paneRect.left + paneRect.width / 2
+              anchorY = paneRect.top + paneRect.height / 2
+            }
+          }
+          const ownImg = imgRef.current
+          if (anchorX === null && ownImg !== null && ownImg.offsetWidth > 0 && ownImg.offsetHeight > 0) {
+            // offsetLeft/Top 相对预览框内边，且不含 transform 与缩放，正是图片未变换时的中心
+            anchorX = base.left + ownImg.offsetLeft - node.scrollLeft + ownImg.offsetWidth / 2
+            anchorY = base.top + ownImg.offsetTop - node.scrollTop + ownImg.offsetHeight / 2
+          }
+          if (anchorX === null) {
+            anchorX = base.left + base.width / 2
+            anchorY = base.top + base.height / 2
+          }
+          // 光标相对不动点的偏移
+          const cx = event.clientX - anchorX
+          const cy = event.clientY - anchorY
 
-          setZoom((current) => {
-            const next = Math.min(MAX_ZOOM, Math.max(1, current + delta * ZOOM_STEP))
-            if (next === 1) { setPan({ x: 0, y: 0 }); return 1 }
-            // 以光标为不动点缩放：光标下的像素点在缩放前后保持同一屏幕位置
+          // 以光标为不动点缩放：光标下的像素点在缩放前后保持同一屏幕位置。
+          // 关键：pan 只算一次。旧写法把它嵌在 setZoom updater 里，严格模式重跑会算两遍。
+          const current = viewRef.current.zoom
+          const next = Math.min(MAX_ZOOM, Math.max(1, current + delta * ZOOM_STEP))
+          let nextPan
+          if (next === 1) {
+            nextPan = { x: 0, y: 0 }
+          } else {
             const ratio = next / current
-            setPan((p) => ({
+            const p = viewRef.current.pan
+            nextPan = {
               x: cx - (cx - p.x) * ratio,
               y: cy - (cy - p.y) * ratio,
-            }))
-            return next
-          })
+            }
+          }
+          // 即时写 ref（连续滚轮时下一帧能读到最新值），再分别 set，互不嵌套
+          viewRef.current.zoom = next
+          viewRef.current.pan = nextPan
+          setZoom(next)
+          setPan(nextPan)
         }
         node.addEventListener('wheel', onWheel, { passive: false })
         return () => node.removeEventListener('wheel', onWheel)
@@ -6528,6 +6902,9 @@ ${absPath}
       const onClickBody = (event) => {
         // 标注模式下点图只用于画框，不能顺手把大图关掉（老板 20:32 指出的冲突）
         if (annotActive) return
+        // 对比态下点画面只是看图：平铺两格各占一半，鼠标想比细节时很容易点到，
+        // 一点就把整个大图关了，退出对比请用工具栏按钮或 Esc。
+        if (cmpTarget !== null) return
         // v0.16.0 裁剪模式下点击被裁剪层接管，不应关闭查看器
         if (cropActive) return
         event.preventDefault()
@@ -6582,11 +6959,14 @@ ${absPath}
       }, [vOverflow])
 
       const zoomBy = React.useCallback((direction) => {
-        setZoom((current) => {
-          const next = Math.min(MAX_ZOOM, Math.max(1, current + direction * ZOOM_STEP))
-          if (next === 1) setPan({ x: 0, y: 0 })
-          return next
-        })
+        // 同滚轮：不在 updater 里嵌 setPan，从镜像 ref 读当前值，算好后分别 set
+        const current = viewRef.current.zoom
+        const next = Math.min(MAX_ZOOM, Math.max(1, current + direction * ZOOM_STEP))
+        const nextPan = next === 1 ? { x: 0, y: 0 } : viewRef.current.pan
+        viewRef.current.zoom = next
+        viewRef.current.pan = nextPan
+        setZoom(next)
+        setPan(nextPan)
       }, [])
 
       /**
@@ -6612,13 +6992,24 @@ ${absPath}
           const key = event.key
           if (key === 'Escape') {
             event.preventDefault()
-            onClose()
-          } else if (key === 'ArrowLeft') {
+            // 对比中先退对比：不然顺手把整个大图也关了，得重新找图
+            if (cmpTarget !== null) exitCompare()
+            else onClose()
+          } else if (key === 'ArrowLeft' || key === 'ArrowRight') {
             event.preventDefault()
-            onStep(-1)
-          } else if (key === 'ArrowRight') {
+            if (cmpTarget !== null) {
+              // 对比时左右键归分割线（Shift 大步），避免一边看差异一边把图翻走
+              const step = event.shiftKey ? 10 : 2
+              setSplitPct((p) => Math.max(0, Math.min(100, p + (key === 'ArrowLeft' ? -step : step))))
+            } else {
+              onStep(key === 'ArrowLeft' ? -1 : 1)
+            }
+          } else if ((key === 'x' || key === 'X') && cmpTarget !== null) {
             event.preventDefault()
-            onStep(1)
+            setCmpSwapped((v) => !v)
+          } else if ((key === 't' || key === 'T') && cmpTarget !== null) {
+            event.preventDefault()
+            setCmpMode((m) => (m === 'slider' ? 'tile' : 'slider'))
           } else if (key === 'ArrowUp') {
             event.preventDefault()
             panStep(-1)
@@ -6652,7 +7043,7 @@ ${absPath}
         }
         window.addEventListener('keydown', onKey)
         return () => window.removeEventListener('keydown', onKey)
-      }, [onClose, onStep, panStep, zoomBy, toggleOriginal, onCopyFile, item.relPath])
+      }, [onClose, onStep, panStep, zoomBy, toggleOriginal, onCopyFile, item.relPath, cmpTarget, exitCompare])
 
       const sliderDragRef = React.useRef(null)
       const onSliderPointerDown = (event) => {
@@ -6824,7 +7215,62 @@ ${absPath}
                   event.stopPropagation()
                   setCropActive((v) => !v)
                 },
-              }, cropActive ? `✂ ${t('cropExit')}` : `✂ ${t('cropEnter')}`)
+              }, cropActive ? `\u2702 ${t('cropExit')}` : `\u2702 ${t('cropEnter')}`)
+            : null,
+          // ---- 前后对比入口（2026-11-17）----
+          // 未对比：一个「⇄ 对比」打开选图面板；对比中：换成 模式 / 对调 / 结束 三个。
+          state.status === 'ready' && isImageItem(item) && !isText
+            ? (cmpTarget === null
+                ? h('button', {
+                    type: 'button',
+                    className: 'dg-btn' + (pickerOpen ? ' dg-btnActive' : ''),
+                    key: 'cmp',
+                    'data-gallery-compare-toggle': true,
+                    'aria-pressed': pickerOpen,
+                    title: t('cmpPickHint'),
+                    onClick: (event) => {
+                      event.stopPropagation()
+                      // 对比与批注/裁剪抢指针，进来先把那两个关掉
+                      setAnnotActive(false)
+                      setCropActive(false)
+                      setPickerOpen((v) => !v)
+                    },
+                  }, '\u21c4 ' + t('cmpEnter'))
+                : h(React.Fragment, { key: 'cmpCtl' }, [
+                    h('button', {
+                      type: 'button',
+                      className: 'dg-btn dg-btnActive',
+                      key: 'mode',
+                      'data-gallery-compare-mode': cmpMode,
+                      title: t('cmpSliderHint'),
+                      onClick: (event) => {
+                        event.stopPropagation()
+                        setCmpMode((m) => (m === 'slider' ? 'tile' : 'slider'))
+                      },
+                    }, cmpMode === 'slider' ? '\u25a5 ' + t('cmpModeTile') : '\u25eb ' + t('cmpModeSlider')),
+                    h('button', {
+                      type: 'button',
+                      className: 'dg-btn',
+                      key: 'swap',
+                      'data-gallery-compare-swap': true,
+                      title: t('cmpSwap'),
+                      onClick: (event) => {
+                        event.stopPropagation()
+                        setCmpSwapped((v) => !v)
+                      },
+                    }, '\u21cb ' + t('cmpSwap')),
+                    h('button', {
+                      type: 'button',
+                      className: 'dg-btn',
+                      key: 'exit',
+                      'data-gallery-compare-exit': true,
+                      title: t('cmpExit'),
+                      onClick: (event) => {
+                        event.stopPropagation()
+                        exitCompare()
+                      },
+                    }, '\u2715 ' + t('cmpExit')),
+                  ]))
             : null,
           // 「拖到对话」确定性入口：Viewer 大图本身 draggable:false + pointerEvents:none
           // （标注态的中键平移 / 右键多边形都依赖它），所以不改大图，另给一个可拖按钮。
@@ -6900,9 +7346,38 @@ ${absPath}
                           pointerEvents: 'none',
                         },
                       }),
+                      // ---- 前后对比 · 滑块模式 ----
+                      // 关键点：clip 容器不参与 transform（按屏幕坐标裁），内层 img 才跟着缩放平移，
+                      // 于是「放大到 8 倍看同一处颗粒」时，分割线留在屏幕上不动、两边始终同一块画面。
+                      cmpTarget !== null && cmpMode === 'slider' && cmpTarget.status === 'ready' && imgBox !== null
+                        ? h('div', {
+                            key: 'cmpClip',
+                            className: 'dg-cmpClip',
+                            'data-gallery-compare-clip': Math.round(splitPct),
+                            style: {
+                              clipPath: cmpSwapped === true
+                                ? `inset(0 0 0 ${splitPct}%)`
+                                : `inset(0 ${100 - splitPct}% 0 0)`,
+                            },
+                          }, h('img', {
+                            key: 'cmpImg',
+                            className: 'dg-cmpImg',
+                            src: cmpTarget.url,
+                            alt: cmpTarget.name,
+                            draggable: false,
+                            style: {
+                              left: imgBox.left + 'px',
+                              top: imgBox.top + 'px',
+                              width: imgBox.width + 'px',
+                              height: imgBox.height + 'px',
+                              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                              transition: dragRef.current === null ? 'transform 120ms ease-out' : 'none',
+                            },
+                          }))
+                        : null,
                       // 批注层贴着图片真实布局盒，与图片共用同一组 zoom/pan。
                       // imgBox 还没量出来（图片未布局）时不画框，免得拿容器当基准错位。
-                      imgBox === null ? null : h(AnnotationLayer, {
+                      imgBox === null || cmpTarget !== null ? null : h(AnnotationLayer, {
                         key: 'annot',
                         t,
                         annotations: annotsOfCurrent,
@@ -6920,15 +7395,96 @@ ${absPath}
                           ? (a) => onExportMask(item, a)
                           : undefined,
                       }),
+                      // ---- 前后对比 · 平铺模式：左右各一格，共用同一组 pan/zoom ----
+                      cmpTarget !== null && cmpMode === 'tile'
+                        ? h('div', { key: 'cmpTile', className: 'dg-cmpTile', 'data-gallery-compare-tile': true }, [
+                            h('div', { key: 'paneA', className: 'dg-cmpPane' }, [
+                              cmpTarget.status === 'ready'
+                                ? h('img', {
+                                    key: 'imgA',
+                                    className: 'dg-cmpPaneImg',
+                                    src: cmpSwapped === true
+                                      ? (originalMode && original.status === 'ready' ? original.url : state.url)
+                                      : cmpTarget.url,
+                                    alt: '',
+                                    draggable: false,
+                                    style: {
+                                      transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                                      transition: dragRef.current === null ? 'transform 120ms ease-out' : 'none',
+                                    },
+                                  })
+                                : h('span', { key: 'msgA', className: 'dg-cmpPaneMsg' },
+                                    cmpTarget.status === 'failed' ? t('cmpFailed') : t('cmpLoading')),
+                              h('span', { key: 'tagA', className: 'dg-cmpPaneTag' },
+                                cmpSwapped === true ? t('cmpAfter') : t('cmpBefore')),
+                            ]),
+                            h('div', { key: 'paneB', className: 'dg-cmpPane' }, [
+                              h('img', {
+                                key: 'imgB',
+                                className: 'dg-cmpPaneImg',
+                                src: cmpSwapped === true
+                                  ? cmpTarget.url
+                                  : (originalMode && original.status === 'ready' ? original.url : state.url),
+                                alt: item.name,
+                                draggable: false,
+                                style: {
+                                  transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                                  transition: dragRef.current === null ? 'transform 120ms ease-out' : 'none',
+                                },
+                              }),
+                              h('span', { key: 'tagB', className: 'dg-cmpPaneTag' },
+                                cmpSwapped === true ? t('cmpBefore') : t('cmpAfter')),
+                            ]),
+                          ])
+                        : null,
                     ]))
               : state.status === 'binary'
                 ? h('div', { className: 'dg-placeholder', key: 'bin' }, t('binaryHint'))
                 : h('div', { className: state.status === 'failed' ? 'dg-placeholder dg-error' : 'dg-placeholder' },
                     state.status === 'failed' ? `${t('thumbFailed')}：${item.name}` : t('loading')),
           ),
+          // ---- 前后对比 · 选图面板 ----
+          pickerOpen
+            ? h(ComparePicker, {
+                key: 'cmpPicker',
+                t,
+                candidates: cmpCandidates,
+                onPick: (cand) => pickCompare(cand),
+                onClose: () => setPickerOpen(false),
+              })
+            : null,
+          // ---- 前后对比 · 滑块的标签与分割线（屏幕坐标，不随 pan/zoom）----
+          cmpTarget !== null && cmpMode === 'slider'
+            ? h('div', { key: 'cmpUi', className: 'dg-cmpUi', 'data-gallery-compare-ui': true }, [
+                h('span', { key: 'tagL', className: 'dg-cmpTag dg-cmpTagL' },
+                  cmpSwapped === true ? t('cmpAfter') : t('cmpBefore')),
+                h('span', { key: 'tagR', className: 'dg-cmpTag dg-cmpTagR' },
+                  cmpSwapped === true ? t('cmpBefore') : t('cmpAfter')),
+                h('div', {
+                  key: 'handle',
+                  className: 'dg-cmpHandle',
+                  'data-gallery-compare-handle': Math.round(splitPct),
+                  style: { left: splitPct + '%' },
+                  onPointerDown: onDividerDown,
+                  onPointerMove: onDividerMove,
+                  onPointerUp: onDividerUp,
+                  onPointerCancel: onDividerUp,
+                }, [
+                  h('div', { key: 'line', className: 'dg-cmpLine' }),
+                  h('div', { key: 'grip', className: 'dg-cmpGrip' }, [
+                    h('span', { key: 'l', className: 'dg-cmpArrow' }, '\u2039'),
+                    h('span', { key: 'r', className: 'dg-cmpArrow' }, '\u203a'),
+                  ]),
+                ]),
+                cmpTarget.status === 'ready'
+                  ? null
+                  : h('div', { key: 'msg', className: 'dg-cmpMsg' },
+                      cmpTarget.status === 'failed' ? t('cmpFailed') : t('cmpLoading')),
+              ])
+            : null,
           slider,
           // v0.16.0 裁剪覆盖层：裁剪模式开启时显示（含微信式放大镜），固定在视口上、与 pan/zoom 解耦
-          cropActive && isImageItem(item) && !isText && state.status === 'ready'
+          cropActive && cmpTarget === null && isImageItem(item) && !isText && state.status === 'ready'
             ? h(ImageCropper, {
               key: 'cropper',
               t,
@@ -8014,6 +8570,11 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
     function GalleryBody(props) {
       const { t, sessionId } = props
       const [view, setView] = React.useState({ status: 'loading' })
+      // 增量刷新用：读「当前列表」的最新值而不必进依赖数组。
+      // 直接用 view 会让 useEffect 每次渲染都重建轮询器，而读 view 的闭包又拿不到最新值。
+      const viewRef = React.useRef(view)
+      React.useEffect(() => { viewRef.current = view }, [view])
+
       // v0.17.0：本面板自己的轻提示（写进输入框的结果反馈）。
       // 不能用 FeedbackBasket 的 setNotice —— 那是另一个组件的局部 state。
       const [toast, setToast] = React.useState(null)
@@ -8850,7 +9411,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
        *   分组视图下卡片来自 `data.groups[i].files`，与当前页的扁平 `items` 是两个不同的集合，
        *   直接用全局 `items` 的索引会「点哪张都跳出同一张图」。
        */
-      const openViewer = React.useCallback((index, anchorEl, list, asOriginal, origin) => {
+      const openViewer = React.useCallback((index, anchorEl, list, asOriginal, origin, compareRel) => {
         const scroller = bodyScrollRef.current
         if (scroller !== null) {
           savedScrollRef.current = {
@@ -8889,6 +9450,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         const originSid = String(origin?.sessionId ?? '')
         setViewer({
           index, list: snapshot, asOriginal: asOriginal === true,
+          // 2026-11-17：批量选两张时带进来，查看器一开就进对比，不用再点一次
+          compareRel: String(compareRel ?? ''),
           originSid: originSid === '__history__' ? '' : originSid,
           originTitle: originSid === '__history__' ? '' : String(origin?.title ?? ''),
         })
@@ -8970,6 +9533,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           const payload = await callHost('delete', { path: target.item.relPath, confirm: true })
           if (payload?.ok === false) throw new Error(payload?.error?.message ?? t('errorTitle'))
           setDeleteTarget(null)
+          kickChanges()
           await load(undefined, kind, scope, page).then((data) => setView({ status: 'ready', data })).catch(() => {})
         } catch (error) {
           console.error('dsh-gallery: 删除失败', error)
@@ -9106,6 +9670,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           }
         }
         if (okCount > 0) {
+          kickChanges()
           void refresh()
           if (lastErr !== '') console.warn('dsh-gallery: 部分粘贴失败', lastErr)
           return
@@ -9272,7 +9837,110 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         }
       }, [load, kind, scope, page])
 
-      // 自动刷新：定时拉取最新列表；查看器打开时暂停，避免打断放大查看
+      // ---- 增量刷新（2026-11-16）----
+      // 任何进程往产出根里写资产，Host 侧 fs.watch 都会感知并递增版本号。
+      // 这里每秒问一次「变了没」，只重取受影响的那个对话组，其它组不动。
+      //
+      // 为什么不用整表 refresh：几百张卡整表替换会让滚动位置跳动、卡片重排闪一下。
+      // 局部替换时其它组对象引用保持不变，React 就不会重绘它们。
+      const changesVersionRef = React.useRef(0)
+      const changesBusyRef = React.useRef(false)
+      // 写操作后主动催一次检查（不等 1 秒轮询），用户点了就该立刻看到结果
+      const changesKickRef = React.useRef(null)
+
+      React.useEffect(() => {
+        // 看大图时不打扰：列表在背景变化会让关掉大图后位置跳动
+        if (viewer !== null) return undefined
+        let alive = true
+
+        const tick = async () => {
+          if (!alive || changesBusyRef.current) return
+          changesBusyRef.current = true
+          try {
+            const r = await callHost('changes', { since: changesVersionRef.current })
+            if (!alive || r?.ok !== true) return
+            const v = Number(r.version) || 0
+            if (v <= changesVersionRef.current) return
+            changesVersionRef.current = v
+            const changed = Array.isArray(r.changed) ? r.changed : []
+
+            // 决定「能不能局部刷」：只有分组视图且每个变动都有明确会话才能局部。
+            // 读 viewRef（不是 view）拿最新值，避免闭包过期。
+            const cur = viewRef.current
+            const groups = (cur?.status === 'ready' && Array.isArray(cur.data?.groups))
+              ? cur.data.groups : null
+            const canPartial = groups !== null
+              && scope !== 'session'
+              && changed.length > 0
+              && changed.every((c) => String(c?.sessionId ?? '') !== '')
+
+            if (!canPartial) { void refresh(); return }
+
+            // 逐个组重取明细
+            const fresh = new Map()
+            let needFull = false
+            for (const c of changed) {
+              const sid = String(c?.sessionId ?? '')
+              if (sid === '') { needFull = true; break }
+              try {
+                const p = await callHost('groupMore', { kind, scope, sessionId: sid, page: 1 })
+                if (p?.ok === false) { needFull = true; break }
+                fresh.set(sid, p)
+              } catch { needFull = true; break }
+            }
+            if (!alive) return
+            if (needFull) { void refresh(); return }
+
+            // 局部替换：只动变化的组，其它组对象引用不变
+            let sawUnknownGroup = false
+            setView((prev) => {
+              if (prev.status !== 'ready' || !Array.isArray(prev.data?.groups)) return prev
+              const nextGroups = prev.data.groups.slice()
+              let dirty = false
+              for (const [sid, p] of fresh.entries()) {
+                const idx = nextGroups.findIndex((g) => String(g?.sessionId ?? '') === sid)
+                if (idx < 0) { sawUnknownGroup = true; continue }
+                const files = Array.isArray(p?.files) ? p.files
+                  : (Array.isArray(p?.items) ? p.items : null)
+                if (files === null) { sawUnknownGroup = true; continue }
+                nextGroups[idx] = {
+                  ...nextGroups[idx],
+                  files,
+                  fileCount: typeof p.fileCount === 'number' ? p.fileCount : nextGroups[idx].fileCount,
+                  returnedCount: files.length,
+                  counts: p.counts ?? nextGroups[idx].counts,
+                  latestMtime: p.latestMtime ?? nextGroups[idx].latestMtime,
+                }
+                dirty = true
+              }
+              if (!dirty) return prev
+              return { ...prev, data: { ...prev.data, groups: nextGroups } }
+            })
+            // 出现了列表里还没有的会话组（新对话刚产出第一条）→ 补一次整表，把新组插进来
+            if (sawUnknownGroup) { void refresh(); return }
+            void callHost('changesAck', { since: v }).catch(() => {})
+          } catch { /* 轮询失败静默，下个周期再试 */ }
+          finally { changesBusyRef.current = false }
+        }
+
+        // 外部（写操作回调）可以调这个立即催一次
+        changesKickRef.current = () => { void tick() }
+
+        const timer = setInterval(() => { void tick() }, 1000)
+        return () => {
+          alive = false
+          changesKickRef.current = null
+          clearInterval(timer)
+        }
+      }, [callHost, kind, scope, viewer, refresh])
+
+      /** 写操作成功后调用：立刻检查一次变动，不用等 1 秒轮询 */
+      const kickChanges = React.useCallback(() => {
+        const fn = changesKickRef.current
+        if (typeof fn === 'function') fn()
+      }, [])
+
+      // 兜底自动刷新：轮询已覆盖绝大部分，这里放长周期防漏（外部程序写入 fs.watch 漏报时）
       React.useEffect(() => {
         if (viewer !== null) return undefined
         let alive = true
@@ -9573,6 +10241,36 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
        * 批量操作条（v0.13.7）—— 有选中项时出现。
        * 三个动作：确认 / 取消确认 / 清除标记，**全部只改标记、不碰磁盘**。
        */
+      /**
+       * 批量选了两张 → 直接进对比（2026-11-17）。
+       * 第一张当主图（右/后），第二张当对比图（左/前）；两张同尺寸时最准。
+       */
+      const openCompareFromSelection = React.useCallback(() => {
+        const rels = [...selected]
+        if (rels.length !== 2) return
+        const pool = Array.isArray(items) ? items.slice() : []
+        if (Array.isArray(data?.groups)) {
+          for (const gr of data.groups) {
+            for (const f of (Array.isArray(gr.files) ? gr.files : [])) pool.push(f)
+          }
+        }
+        const first = pool.find((it) => String(it?.relPath ?? '') === rels[0])
+        const second = pool.find((it) => String(it?.relPath ?? '') === rels[1])
+        if (first === undefined || second === undefined) {
+          showPasteNotice('fail', t('cmpPickEmpty'))
+          return
+        }
+        // 查看器的翻页范围尽量沿用当前可见列表；两张不全在里面就只用这两张
+        let list = visibleItems.length > 0 ? visibleItems : (Array.isArray(items) ? items : [])
+        const hasBoth = list.some((it) => String(it?.relPath ?? '') === rels[0])
+          && list.some((it) => String(it?.relPath ?? '') === rels[1])
+        if (!hasBoth) list = [first, second]
+        const idx = Math.max(0, list.findIndex((it) => String(it?.relPath ?? '') === rels[0]))
+        setSelected(new Set())
+        setBatchMode(false)
+        openViewer(idx, null, list, false, null, rels[1])
+      }, [selected, items, data, visibleItems, openViewer, showPasteNotice, t])
+
       const selectedCount = selected.size
       const batchBar = selectedCount > 0
         ? h('div', { className: 'dg-batchBar', key: 'batchBar', 'data-gallery-batch-bar': true }, [
@@ -9592,6 +10290,15 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
                 title: t('batchCopyHint'),
                 onClick: () => { void doCopyAssets([...selected]) },
               }, `⧉ ${t('batchCopyFiles')} (${selectedCount})`),
+              // 2026-11-17：正好选两张时给「对比」入口
+              selectedCount === 2
+                ? h('button', {
+                    type: 'button', className: 'dg-btn dg-btnSmall dg-primaryBtn', key: 'compare',
+                    'data-gallery-batch-compare': true,
+                    title: t('cmpBatchHint'),
+                    onClick: () => openCompareFromSelection(),
+                  }, '\u21c4 ' + t('cmpBatchEnter'))
+                : null,
               h('button', {
                 type: 'button', className: 'dg-btn dg-btnSmall', key: 'clearmark',
                 'data-gallery-batch-clear': true,
@@ -10281,6 +10988,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
               index: Math.min(viewer.index, viewer.list.length - 1),
               t,
               initialOriginal: viewer.asOriginal === true,
+              initialCompare: String(viewer.compareRel ?? ''),
               onClose: closeViewer,
               onStep: step,
               onCrop: doCrop,

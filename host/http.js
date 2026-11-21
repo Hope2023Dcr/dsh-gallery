@@ -116,6 +116,16 @@ function slimGroups(value, pageSize) {
   }
 }
 import { resolveReadable, serveMedia, contentTypeFor } from './media.js'
+
+/**
+ * 资产变动追踪器（增量刷新）。由 index.js 注入；未注入时为 null，
+ * 所有相关逻辑都会安全跳过，不影响原有行为。
+ */
+let changeTracker = null
+
+/** 供 index.js 注入 tracker */
+export function setChangeTracker(t) { changeTracker = t }
+
 import { MARK_ACTIONS, readMarks, writeMarks, setMark, setMarksBatch, marksFilePath } from './marks.js'
 import { readFeedback, setFeedback, setFeedbackBatch, ackFeedback, clearFeedback } from './feedback.js'
 // 阶段 3 / C1：记下「人正在看哪张图」，单独一份临时状态文件
@@ -1041,6 +1051,7 @@ export function registerOpsRoute(ctx, config) {
                 label === undefined ? null : label)
               // 标签变了必须让下一次 list 立刻重扫，否则 4 秒缓存里还是旧角标
               listCache.clear()
+              try { if (changeTracker !== null) changeTracker.bump('', 'added') } catch { /* 忽略 */ }
               return json({ ok: true, labels: next })
             } catch (error) {
               return json({ ok: false, error: { code: 'labels-write-failed', message: String(error?.message ?? error) } }, 500)
@@ -1065,6 +1076,7 @@ export function registerOpsRoute(ctx, config) {
             try {
               const next = await setLabelsBatch(resolveOptions(config).settingsFile, updates)
               listCache.clear()
+              try { if (changeTracker !== null) changeTracker.bump('', 'added') } catch { /* 忽略 */ }
               return json({ ok: true, labels: next, applied: updates.length })
             } catch (error) {
               return json({ ok: false, error: { code: 'labels-write-failed', message: String(error?.message ?? error) } }, 500)
@@ -1158,6 +1170,7 @@ export function registerOpsRoute(ctx, config) {
 
             // 新资产要立刻出现在列表里，不能等 4 秒缓存过期
             listCache.clear()
+              try { if (changeTracker !== null) changeTracker.bump('', 'added') } catch { /* 忽略 */ }
             return json({
               ok: true, relPath, absPath: abs, name, timecode,
               frameMs: Math.round(frameMs), videoName,
@@ -1323,6 +1336,7 @@ export function registerOpsRoute(ctx, config) {
 
             // 新资产要立刻出现在列表里，不能等 4 秒缓存过期
             listCache.clear()
+              try { if (changeTracker !== null) changeTracker.bump('', 'added') } catch { /* 忽略 */ }
             return json({
               ok: true, relPath, absPath: abs, name, region: normRegion,
               ...(polygonMeta ?? {}),
@@ -2212,6 +2226,7 @@ export function registerOpsRoute(ctx, config) {
               sessionCreatedAt: Number(body?.sessionCreatedAt) || meta.createdAt,
             })
             listCache.clear()
+              try { if (changeTracker !== null) changeTracker.bump('', 'added') } catch { /* 忽略 */ }
             return json({ ok: true, relPath, absPath: abs, name, registered })
           }
 
@@ -2262,6 +2277,7 @@ export function registerOpsRoute(ctx, config) {
               sessionCreatedAt: Number(body?.sessionCreatedAt) || meta.createdAt,
             })
             listCache.clear()
+              try { if (changeTracker !== null) changeTracker.bump('', 'added') } catch { /* 忽略 */ }
             return json({ ok: true, relPath, absPath: abs, name, registered })
           }
 
@@ -2333,6 +2349,7 @@ export function registerOpsRoute(ctx, config) {
                 })
               }
               listCache.clear()
+              try { if (changeTracker !== null) changeTracker.bump('', 'added') } catch { /* 忽略 */ }
             }
             if (okFiles.length === 0) {
               return json({
@@ -2384,6 +2401,7 @@ export function registerOpsRoute(ctx, config) {
               sourceName: imageName,
             })
             listCache.clear()
+              try { if (changeTracker !== null) changeTracker.bump('', 'added') } catch { /* 忽略 */ }
             return json({ ok: true, relPath, absPath: abs, name, registered })
           }
 
@@ -2442,8 +2460,47 @@ export function registerOpsRoute(ctx, config) {
               sourceName: mediaName,
             })
             listCache.clear()
+              try { if (changeTracker !== null) changeTracker.bump('', 'added') } catch { /* 忽略 */ }
             return json({ ok: true, relPath, absPath: outAbs, name, start, end, mode, registered })
           }
+
+          // ---- 资产变动轮询（增量刷新，2026-11-16）----
+
+
+          // 返回体极小：只有「哪个会话变了、增减多少」，不含资产明细。
+
+
+          if (op === 'changes') {
+
+
+            if (changeTracker === null) return json({ ok: true, version: 0, changed: [], unchanged: true })
+
+
+            const since = Number(body?.since) || 0
+
+
+            const r = changeTracker.take(since)
+
+
+            return json({ ok: true, ...r })
+
+
+          }
+
+
+
+          if (op === 'changesAck') {
+
+
+            if (changeTracker === null) return json({ ok: true, version: 0 })
+
+
+            return json({ ok: true, ...changeTracker.ack(Number(body?.since) || 0) })
+
+
+          }
+
+
 
           return json({ ok: false, error: { code: 'unknown-op', message: `未知操作：${op}` } }, 400)
 
