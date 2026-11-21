@@ -1431,6 +1431,11 @@ export function registerOpsRoute(ctx, config) {
                   // v0.16.4：带上分类与归属会话 —— Agent 拿到就能判断该改哪个文件、归哪条对话
                   category: String(item.category ?? 'unknown'),
                   sessionId: String(item.sessionId ?? ''),
+                  // v1.3.0：Agent 批示（gallery_reply 写入）。前端据此在反馈栏渲染批示卡片；
+                  // 不是批示的条目这些字段为空字符串，不影响既有渲染与草稿。
+                  kind: String(item.kind ?? ''),
+                  replyText: String(item.text ?? ''),
+                  replyOf: String(item.replyOf ?? ''),
                 }
                 const flatAction = String(item.action ?? '')
                 const annots = Array.isArray(item.annotations)
@@ -1472,7 +1477,9 @@ export function registerOpsRoute(ctx, config) {
               let draft = ''
               try {
                 const locale = body?.locale === 'en' ? 'en' : 'zh'
-                draft = renderFeedbackText(makeFeedback({ sessionId: '', items }), { locale })
+                // v1.3.0：Agent 批示只在反馈栏给人看，不进「发给 Agent」的草稿 —— 否则等于把它自己的话再发回去。
+                const draftItems = items.filter((it) => String(it?.kind ?? '') !== 'agent-reply')
+                draft = renderFeedbackText(makeFeedback({ sessionId: '', items: draftItems }), { locale })
               } catch { draft = '' }
               return json({ ok: true, schema: 1, count: items.length, items, draft })
             } catch (error) {

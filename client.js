@@ -3045,6 +3045,18 @@ async function encodeMaskPngBytes(imageData, width, height) {
 }
 .dg-feedback .dg-btnSmall { padding: 3px 9px; font-size: 11px; }
 
+/* v1.3.0：Agent 批示区块（独立于表态/批注序号，不进草稿） */
+.dg-replyBlock { border: 1px solid #00e676; border-radius: 8px; padding: 8px; margin: 8px 0; background: rgba(0, 230, 118, 0.06); }
+.dg-replyHead { color: #00e676; font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+.dg-replyList { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.dg-replyItem { border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 6px; padding: 7px 8px; background: #222831; }
+.dg-replyText { color: #e8eaed; font-size: 12px; line-height: 1.5; margin-bottom: 4px; word-break: break-word; }
+.dg-replyMeta { display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; color: #a9b1bd; margin-bottom: 6px; }
+.dg-replyName { color: #cdd4de; }
+.dg-replyOps { display: flex; gap: 6px; justify-content: flex-end; }
+.dg-feedback .dg-replyApprove { background: #1d7a4d; color: #ffffff; border-color: #1d7a4d; }
+.dg-feedback .dg-replyApprove:hover:not(:disabled) { background: #249a60; border-color: #249a60; }
+
 .dg-feedbackActions {
   display: flex; justify-content: flex-end; gap: 8px;
   padding: 10px 14px; border-top: 1px solid rgba(255, 255, 255, 0.10);
@@ -3106,6 +3118,14 @@ async function encodeMaskPngBytes(imageData, width, height) {
 
 /* 卡片包装层 + 确认角标 + 多选框 */
 .dg-cardWrap { position: relative; }
+/* v1.3.0：这批刚产出的终稿高亮（上限 3 张）。用外发光+角标，不动 ::after border（避免和选中态打架）。 */
+.dg-cardWrap.dg-cardFreshFinal { box-shadow: 0 0 0 2px #00e676, 0 0 12px rgba(0, 230, 118, 0.35); border-radius: 6px; }
+.dg-cardWrap.dg-cardFreshFinal::before {
+  content: '新';
+  position: absolute; top: 4px; right: 4px; z-index: 7;
+  background: #00e676; color: #04220f; font-size: 11px; font-weight: 600;
+  padding: 0 6px; border-radius: 8px; line-height: 16px;
+}
 /* 结论角标（左上）：人的表态，优先于右上角的机器预判角标 */
 .dg-verdictBadge {
   position: absolute; top: 6px; left: 6px; z-index: 5;
@@ -4331,7 +4351,8 @@ function serializeFeedback(feedback) {
      */
     function FeedbackBasket({ t, items, currentSessionId, targetSessionTitle,
                               onClose, onRemove, onEdit, onClear, onEditSave,
-                              onRemoveAnnotation, onClearAll, onAck }) {
+                              onRemoveAnnotation, onClearAll, onAck,
+                              onAckReply, onRejectReply }) {
       // 语言判断：用 t 探测一个已知键 —— 命中中文就按 zh 渲染，否则 en。
       // （不引入 detectLocale，插件没有这个工具函数）
       const [locale] = React.useState(() => {
@@ -4350,6 +4371,8 @@ function serializeFeedback(feedback) {
       const rows = React.useMemo(() => {
         const out = []
         for (const it of Array.isArray(items) ? items : []) {
+          // v1.3.0：Agent 批示单独渲染在列表顶部，不进 Annotation N 序号、不进草稿
+          if (it.reply !== undefined && it.reply !== null) continue
           if (it.mark !== undefined && it.mark !== null) out.push({ kind: 'mark', it })
           const annots = Array.isArray(it.annotations) ? it.annotations : []
           for (const a of annots) out.push({ kind: 'annot', it, a })
@@ -4357,6 +4380,11 @@ function serializeFeedback(feedback) {
         return out
       }, [items])
       const annotCount = rows.filter((r) => r.kind === 'annot').length
+      // v1.3.0：Agent 批示条目（单独区块，独立于表态/批注序号）
+      const replyRows = React.useMemo(
+        () => (Array.isArray(items) ? items : []).filter((it) => it.reply !== undefined && it.reply !== null),
+        [items],
+      )
       // 编辑弹窗：正在编辑的条目 + 三个字段的草稿值
       const [editing, setEditing] = React.useState(null)
       const [editReason, setEditReason] = React.useState('')
@@ -4421,7 +4449,11 @@ function serializeFeedback(feedback) {
              */
             if (typeof onAck === 'function') {
               try {
-                await onAck(items.map((it) => it.relPath))
+                // v1.3.0：Agent 批示不随普通草稿被清 —— 它有自己的核准/驳回入口
+                const humanPaths = items
+                  .filter((it) => it.reply === undefined || it.reply === null)
+                  .map((it) => it.relPath)
+                await onAck(humanPaths)
               } catch { /* ack 失败不影响草稿已经写进去这个事实 */ }
             }
           } else {
@@ -4469,6 +4501,48 @@ function serializeFeedback(feedback) {
           annotCount > 0
             ? h('div', { className: 'dg-feedbackAnnotHint', key: 'annotHint', 'data-gallery-feedback-annot-hint': annotCount },
                 format(t('feedbackAnnotHint'), { n: annotCount }))
+            : null,
+
+          // v1.3.0：Agent 批示区块（独立于下面的表态/批注序号，不进草稿）
+          // 每条批示 = Agent 改完图后的回报，人在这里核准或驳回；驳回会带着意见再回去。
+          replyRows.length > 0
+            ? h('div', { className: 'dg-replyBlock', key: 'replies', 'data-gallery-agent-replies': replyRows.length }, [
+                h('div', { className: 'dg-replyHead', key: 'h' },
+                  locale === 'en' ? 'Agent replies · pending your approval' : 'Agent 批示 · 待您核准'),
+                h('ul', { className: 'dg-replyList', key: 'l' },
+                  replyRows.map((it) => {
+                    const r = it.reply
+                    const fileName = it.relPath.split('/').pop() ?? it.relPath
+                    return h('li', {
+                      className: 'dg-replyItem',
+                      key: 'reply:' + it.relPath,
+                      'data-gallery-reply-item': it.relPath,
+                    }, [
+                      h('div', { className: 'dg-replyText', key: 'text' },
+                        (locale === 'en' ? 'Agent: ' : 'Agent：') + String(r.text ?? '')),
+                      h('div', { className: 'dg-replyMeta', key: 'meta' }, [
+                        h('span', { className: 'dg-replyName', key: 'name', title: it.relPath }, fileName),
+                        r.replyOf
+                          ? h('span', { className: 'dg-feedbackDim', key: 'of' },
+                              (locale === 'en' ? 're: ' : '回应：') + (r.replyOf.split('/').pop() ?? r.replyOf))
+                          : null,
+                      ]),
+                      h('div', { className: 'dg-replyOps', key: 'ops' }, [
+                        h('button', {
+                          type: 'button', className: 'dg-btn dg-btnSmall dg-replyApprove', key: 'ok',
+                          'data-gallery-reply-approve': it.relPath,
+                          onClick: () => { if (typeof onAckReply === 'function') onAckReply(it.relPath) },
+                        }, locale === 'en' ? 'Approve' : '核准'),
+                        h('button', {
+                          type: 'button', className: 'dg-btn dg-btnSmall', key: 'no',
+                          'data-gallery-reply-reject': it.relPath,
+                          onClick: () => { if (typeof onRejectReply === 'function') onRejectReply(it.relPath) },
+                        }, locale === 'en' ? 'Reject' : '驳回'),
+                      ]),
+                    ])
+                  })
+                ),
+              ])
             : null,
 
           rows.length === 0
@@ -8956,6 +9030,9 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
        * 两者混同就会重演「删一条反馈把定好的标签也撤了」的错。
        */
       const [pendingCount, setPendingCount] = React.useState(0)
+      // v1.3.0：Agent 批示（gallery_reply 写进 feedback.json，kind='agent-reply'）。
+      // 每项 = { relPath, text, replyOf, markedAt }；只在反馈栏显示，不进草稿、不自动清。
+      const [agentReplies, setAgentReplies] = React.useState({})
       // 编辑中的条目（null 表示不编辑）
       const [editingItem, setEditingItem] = React.useState(null)
       // 网格滚动位置：打开查看器前记录，关闭后恢复，让视图停在原缩略图处
@@ -8978,13 +9055,32 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           })
           .catch((error) => console.warn('dsh-gallery: getLabels 失败', error))
         // v0.16.4 · B 档：台面打开时读一次待处理条数（纯读，不标记已读）
-        callHost('getPendingFeedback', {})
-          .then((payload) => {
-            if (!alive || payload?.ok === false) return
-            setPendingCount(Number.isFinite(payload?.count) ? payload.count : 0)
-          })
+        // v1.3.0：顺带提取 Agent 批示（kind='agent-reply'）供反馈栏显示
+        const applyPending = (payload) => {
+          if (!alive || payload?.ok === false) return
+          setPendingCount(Number.isFinite(payload?.count) ? payload.count : 0)
+          const replies = {}
+          for (const it of (Array.isArray(payload?.items) ? payload.items : [])) {
+            if (String(it?.kind ?? '') !== 'agent-reply') continue
+            const rel = String(it?.relPath ?? '')
+            if (rel === '') continue
+            replies[rel] = {
+              relPath: rel,
+              text: String(it?.replyText ?? ''),
+              replyOf: String(it?.replyOf ?? ''),
+              markedAt: Number(it?.markedAt) || 0,
+            }
+          }
+          setAgentReplies(replies)
+        }
+        callHost('getPendingFeedback', {}).then(applyPending)
           .catch((error) => console.warn('dsh-gallery: getPendingFeedback 失败', error))
-        return () => { alive = false }
+        // v1.3.0：Agent 是另一个进程，改完图写批示时台面可能一直开着 —— 低频轮询让批示自己出现。
+        // 只读、不清零；人核准走显式 ackFeedback。
+        const replyTimer = setInterval(() => {
+          callHost('getPendingFeedback', {}).then(applyPending).catch(() => {})
+        }, 5000)
+        return () => { alive = false; clearInterval(replyTimer) }
       }, [])
 
       /** 手动标签覆写：只读独立 labels 文件，与反馈篮条目互不影响。 */
@@ -9095,6 +9191,49 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           console.warn('dsh-gallery: 确认待处理反馈失败', error)
         }
       }, [])
+
+      /**
+       * v1.3.0：核准 Agent 批示 —— 清掉该条批示，本地 state 同步移除。
+       * 只 ack 这一条批示，不碰同图的人写反馈（setFeedback 按 relPath 存，同 path 只有一条，
+       * 这里 ack 后若人还有意见会重新写；批示与人意见同 path 时本就以最新为准）。
+       */
+      const ackAgentReply = React.useCallback(async (relPath) => {
+        await ackPending([relPath])
+        setAgentReplies((prev) => {
+          if (!(relPath in prev)) return prev
+          const next = { ...prev }
+          delete next[relPath]
+          return next
+        })
+      }, [ackPending])
+
+      /**
+       * v1.3.0：驳回 Agent 批示 —— 先清批示，再把该图标成「交付不合格」让人补一句意见，
+       * 这样 Agent 下次取回的就是人的驳回意见，而不是那条已完成的批示。全程不发送。
+       */
+      const rejectAgentReply = React.useCallback(async (relPath) => {
+        const reply = agentReplies[relPath]
+        // 先清批示，再写人的驳回表态 —— 顺序不能反，否则 recordPendingFeedback 会把批示覆盖掉
+        await ackPending([relPath])
+        setAgentReplies((prev) => {
+          if (!(relPath in prev)) return prev
+          const next = { ...prev }
+          delete next[relPath]
+          return next
+        })
+        // 这个回调在 GalleryBody 作用域，没有 locale 变量 —— 用 t 探测一次（与 FeedbackBasket 同口径）
+        let isEn = false
+        try { isEn = !/[\u4e00-\u9fa5]/.test(String(t('feedbackBasketTitle') ?? '')) } catch { isEn = false }
+        const reason = (isEn ? 'Rejected the agent reply. ' : '驳回 Agent 的这次修改。')
+          + (reply?.text ? (isEn ? 'Reply was: ' : '原批示：') + reply.text : '')
+        const mark = { action: 'reject', reason, markedAt: Date.now() }
+        setMarks((prev) => ({ ...prev, [relPath]: mark }))
+        try {
+          await callHost('marks', { path: relPath, mark })
+        } catch { /* 写回失败不阻断本地状态 */ }
+        // 同步待处理反馈：人驳回＝一条新的待处理意见，Agent 下次取回的就是它
+        await recordPendingFeedback([{ path: relPath, item: { action: 'reject', reason } }])
+      }, [ackPending, agentReplies, t, recordPendingFeedback])
 
       /**
        * 手动改标签的主逻辑（v0.14.2）。
@@ -9845,6 +9984,9 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       // 局部替换时其它组对象引用保持不变，React 就不会重绘它们。
       const changesVersionRef = React.useRef(0)
       const changesBusyRef = React.useRef(false)
+      // v1.3.0：最近一批「新增资产」的时间戳 —— 用来高亮这批刚产出的终稿。
+      // 只认 added>0 的变动，避免删除/改标签也触发高亮。state 让卡片重绘。
+      const [lastBatchAt, setLastBatchAt] = React.useState(0)
       // 写操作后主动催一次检查（不等 1 秒轮询），用户点了就该立刻看到结果
       const changesKickRef = React.useRef(null)
 
@@ -9863,6 +10005,13 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
             if (v <= changesVersionRef.current) return
             changesVersionRef.current = v
             const changed = Array.isArray(r.changed) ? r.changed : []
+
+            // v1.3.0：记下这批新增的时间，供卡片高亮「刚产出的终稿」
+            const addTimes = changed
+              .filter((c) => Number(c?.added) > 0)
+              .map((c) => Number(c?.at) || 0)
+              .filter((t) => t > 0)
+            if (addTimes.length > 0) setLastBatchAt(Math.max(...addTimes))
 
             // 决定「能不能局部刷」：只有分组视图且每个变动都有明确会话才能局部。
             // 读 viewRef（不是 view）拿最新值，避免闭包过期。
@@ -10020,6 +10169,33 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       itemsRef.current = items
       const groupsRef = React.useRef(null)
       groupsRef.current = Array.isArray(data?.groups) ? data.groups : null
+
+      /**
+       * v1.3.0：这批刚产出的终稿（用于资产台高亮，上限 3 张）。
+       * 口径：全视图（含分组）里 category=final 且 mtime 落在最近新增批次内的资产，
+       * 按 mtime 取最新 3 个。lastBatchAt=0 时不高亮任何卡片（初始没有"这批"）。
+       */
+      const freshFinalSet = React.useMemo(() => {
+        if (!lastBatchAt || lastBatchAt <= 0) return new Set()
+        const all = [
+          ...(Array.isArray(items) ? items : []),
+          ...(Array.isArray(data?.groups) ? data.groups.flatMap((g) => (Array.isArray(g?.files) ? g.files : [])) : []),
+        ]
+        const seen = new Set()
+        const fresh = []
+        for (const it of all) {
+          const rel = String(it?.relPath ?? '')
+          if (rel === '' || seen.has(rel)) continue
+          if (String(it?.category ?? '') !== 'final') continue
+          const mt = Number(it?.mtime) || 0
+          // 5 秒容差：fs.watch 的 at 与文件 mtime 可能差几秒
+          if (mt < lastBatchAt - 5000) continue
+          seen.add(rel)
+          fresh.push({ rel, mt })
+        }
+        fresh.sort((a, b) => b.mt - a.mt)
+        return new Set(fresh.slice(0, 3).map((x) => x.rel))
+      }, [items, data, lastBatchAt])
 
       // 分组首次渲染时，默认展开「当前对话」那一组（没有则展开第一组）。
       // 只做一次：之后用户手动收起/展开都保留。
@@ -10498,8 +10674,11 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           const showCheckbox = selectMode || checked
           const manual = manualLabelOf(item.relPath)
           const isManual = manual !== null && manual !== undefined
+          // v1.3.0：这批刚产出的终稿加高亮 class（上限 3 张，由 freshFinalSet 控制）
+          const isFreshFinal = freshFinalSet.has(item.relPath)
           return h('div', {
-            className: `dg-cardWrap${checked ? ' dg-cardChecked' : ''}${selectMode ? ' dg-cardSelectable' : ''}`,
+            className: `dg-cardWrap${checked ? ' dg-cardChecked' : ''}${selectMode ? ' dg-cardSelectable' : ''}${isFreshFinal ? ' dg-cardFreshFinal' : ''}`,
+            'data-gallery-fresh-final': isFreshFinal ? '1' : '0',
             key: key + ':wrap',
             'data-gallery-card-wrap': item.relPath,
             'data-gallery-bucket': bucket,
@@ -11069,6 +11248,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       const feedbackPaths = Array.from(new Set([
         ...Object.keys(marks),
         ...Object.keys(annotations),
+        ...Object.keys(agentReplies),
       ]))
       const markedList = feedbackPaths.map((relPath) => {
         // 从当前视图里找该条目，拿 category / sessionId
@@ -11086,6 +11266,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           maskOf: maskBySource.get(relPath) ?? found?.maskOf,
           mark: marks[relPath],
           annotations: Array.isArray(annotations[relPath]) ? annotations[relPath] : [],
+          // v1.3.0：Agent 批示（只在反馈栏显示成卡片，不进草稿、不参与序号）
+          reply: agentReplies[relPath] ?? null,
         }
       })
       const feedbackLayer = basketOpen && markedList.length >= 0
@@ -11115,6 +11297,9 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
             },
             // v0.16.4：草稿进 composer 后把待处理清零（人已处理完这批）
             onAck: (paths) => { void ackPending(paths) },
+            // v1.3.0：Agent 批示的核准 / 驳回（独立于普通草稿流程）
+            onAckReply: (relPath) => { void ackAgentReply(relPath) },
+            onRejectReply: (relPath) => { void rejectAgentReply(relPath) },
           })
         : null
 

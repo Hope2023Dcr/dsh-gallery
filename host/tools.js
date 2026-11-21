@@ -16,10 +16,13 @@
  *   · 同名 tool 在同一层重复注册会抛错 —— 未捕获会让整个插件不激活，
  *     所以注册必须包 try/catch（deep-view 源码注释里踩过这个坑）
  *
- * 红线：本工具**只读**。不改资产、不写反馈、不替用户发送任何东西。
+ * 红线：gallery_find / gallery_context / gallery_regions 三个**只读**，不改资产、不替用户发送。
+ * 第四个工具 gallery_reply（2026-11-19）是唯一的写入口：只往反馈篮写一条「Agent 批示」，
+ * 仍然不碰资产、不 ack、不替用户发送任何东西 —— 人确认闸门不变。
  */
 import path from 'node:path'
 import { statSync } from 'node:fs'
+import { isInside } from './fsutil.js'
 import { scanGallery } from './scan.js'
 import { applyAssetFilter, sortByRelevance } from './http.js'
 import { resolveOptions } from './settings.js'
@@ -33,12 +36,13 @@ import { buildLinkedMaskIndex } from './frames.js'
 // 区域感知（2026-11-16）：把「人在这张图上框了哪儿」直接告诉模型。
 // 起因是实测：用户框选后说「把框里的字母改掉」，模型拿不到框的位置，
 // 只能翻 frames.json / 临时目录满地找，光找就花了 97 秒。
-import { readFeedback } from './feedback.js'
+import { readFeedback, setFeedback } from './feedback.js'
 import { annotationsFor, latestAnnotationAt, materializeRegions, materializeMaskRegion } from './regions.js'
 
 const TOOL_NAME = 'gallery_find'
 const CONTEXT_TOOL_NAME = 'gallery_context'
 const REGIONS_TOOL_NAME = 'gallery_regions'
+const REPLY_TOOL_NAME = 'gallery_reply'
 const MAX_LIMIT = 100
 const DEFAULT_LIMIT = 20
 // 第二档：gallery_context 一次列多少张「最近看过的」。
@@ -785,6 +789,125 @@ export function buildRegionsToolDefinition(config) {
 }
 
 /**
+ * renderReply：把写入确认渲染成给模型的一段话。
+ * 与另外三个工具一样是纯渲染，不触发任何副作用。
+ */
+function renderReply(args, value) {
+  if (value?.error) return [{ type: 'text', text: `批示写回反馈栏失败：${value.error}` }]
+  const name = String(value?.relPath ?? '').split('/').pop() ?? String(value?.relPath ?? '')
+  const lines = []
+  lines.push(`已把批示写回反馈栏，针对的资产：${name}`)
+  lines.push(`批示：${value?.text ?? ''}`)
+  lines.push('这条批示现在显示在用户的反馈栏里，资产台也会高亮这张新图。')
+  lines.push('用户点头核准前不要当作已完成；如用户驳回，会带着补充意见再次回来。')
+  if (value?.hint) lines.push(value.hint)
+  return [{ type: 'text', text: lines.join('\n') }]
+}
+
+/**
+ * gallery_reply（2026-11-19）：Agent 执行完改图后，把「批示」写回反馈栏。
+ *
+ * 为什么需要：前三个工具全只读，Agent 干完活没有任何通道把结果告诉人 ——
+ * 人得自己去资产台找新图、重新框、重新说一遍。本工具让 Agent 显式报一句批示，
+ * 结构化地落进反馈篮（kind:'agent-reply'），人点头核准才闭环。
+ *
+ * 红线：
+ *   · 只往 feedback.json 写一条待处理批示，绝不 ack（不替人清）、绝不 cancel、绝不发送
+ *   · 写之前校验 relPath 非空 + 落在产出根内 + 文件真实存在 —— 防止批示挂到错图
+ *   · 同一路径再次写会覆盖旧批示（沿用 setFeedback 语义）：一件事只留一条当前批示
+ */
+export function buildReplyToolDefinition(config) {
+  return {
+    name: REPLY_TOOL_NAME,
+    description: 'Agent 执行完图片修改后，用本工具把「做了什么、请验收」的批示写回用户的反馈栏。'
+      + '凡是改完图需要用户看结果、点头确认时使用；写完后用户反馈栏会出现这条批示、资产台会高亮这张新图。'
+      + 'relPath 必须填写这次实际产出（改好）的那张图的相对路径 —— 只写真实存在的资产，'
+      + '写错路径会报错。本工具只写一条待用户核准的批示，不会替用户确认、清空或发送任何东西。',
+    parameters: {
+      type: 'object',
+      properties: {
+        relPath: {
+          type: 'string',
+          description: '这次改好、需要用户验收的新图相对路径（相对某个产出根，用 / 分隔）',
+        },
+        text: {
+          type: 'string',
+          description: '批示正文：简述做了哪些改动、哪些按「锁死」保持原样，请用户验收',
+        },
+        replyOf: {
+          type: 'string',
+          description: '可选：这条批示回应的是用户哪条原意见的相对路径，便于用户对照',
+        },
+      },
+      required: ['relPath', 'text'],
+    },
+    output: {
+      schema: {
+        type: 'object',
+        properties: {
+          ok: { type: 'boolean' },
+          relPath: { type: 'string' },
+          text: { type: 'string' },
+          hint: { type: 'string' },
+          error: { type: 'string' },
+        },
+        required: ['ok', 'relPath', 'text'],
+      },
+      render: renderReply,
+    },
+    async execute(args) {
+      const relPath = String(args?.relPath ?? '').replace(/\\/g, '/').trim()
+      const text = String(args?.text ?? '').trim().slice(0, 2000)
+      if (relPath === '') {
+        return { ok: false, relPath: '', text: '', error: '缺少 relPath（要验收的新图路径）' }
+      }
+      if (text === '') {
+        return { ok: false, relPath, text: '', error: '批示正文 text 不能为空' }
+      }
+      try {
+        const opts = resolveOptions(config)
+        const roots = Array.isArray(opts.roots) ? opts.roots : []
+        // 校验 relPath：必须落在某个产出根内且文件真实存在，防止批示挂到错图/恶意路径
+        let absPath = ''
+        let verified = false
+        for (const root of roots) {
+          const base = path.resolve(String(root ?? ''))
+          if (base === '') continue
+          const candidate = path.resolve(base, relPath)
+          if (!isInside(base, candidate)) continue
+          try {
+            if (statSync(candidate).isFile()) { absPath = candidate; verified = true; break }
+          } catch { /* 这个文件不在本根下，试下一个 */ }
+        }
+        if (!verified) {
+          return {
+            ok: false, relPath, text,
+            error: `找不到这张资产或路径越界：${relPath}（请确认是这次实际产出的图）`,
+          }
+        }
+        const replyOf = String(args?.replyOf ?? '').replace(/\\/g, '/').trim()
+        const item = {
+          kind: 'agent-reply',
+          action: 'review-reply',
+          text,
+          reason: text,
+          status: 'pending',
+          markedAt: Date.now(),
+        }
+        if (replyOf !== '') item.replyOf = replyOf
+        await setFeedback(opts.settingsFile, relPath, item)
+        return {
+          ok: true, relPath, text,
+          hint: `已写到反馈栏，指向 ${absPath}`,
+        }
+      } catch (error) {
+        return { ok: false, relPath, text, error: String(error?.message ?? error) }
+      }
+    },
+  }
+}
+
+/**
  * 在插件 apply() 里调用。
  * 返回 disposer；任何失败都吞掉并记日志 —— 绝不能因为 tool 注册失败
  * 让整个产出台插件不激活（拖累既有的资产台与全部 op）。
@@ -794,6 +917,7 @@ export function registerTools(ctx, config) {
     buildToolDefinition(config),
     buildContextToolDefinition(config),
     buildRegionsToolDefinition(config),
+    buildReplyToolDefinition(config),
   ]
   if (!ctx?.tools || typeof ctx.tools.register !== 'function') {
     ctx?.logger?.warn?.('dsh-gallery: ctx.tools 不可用，Agent 工具未注册')
@@ -813,4 +937,5 @@ export function registerTools(ctx, config) {
   return () => { for (const d of disposers) { try { d() } catch { /* 忽略 */ } } }
 }
 
-export { TOOL_NAME, CONTEXT_TOOL_NAME, REGIONS_TOOL_NAME, rootOf, toRow, renderRows, renderContext, renderRegions }
+export { TOOL_NAME, CONTEXT_TOOL_NAME, REGIONS_TOOL_NAME, REPLY_TOOL_NAME,
+  rootOf, toRow, renderRows, renderContext, renderRegions, renderReply }
