@@ -223,6 +223,15 @@ function maskAlphaAt(px, py, rect) {
 const POLYGON_LIMITS = { min: 4, max: 20, closeRadius: 0.02, minArea: 0.0001 }
 /** 左键按下后移动超过这个归一化距离才算「拖框」，否则算一次点击（区域顶点）。 */
 const ANNOT_DRAG_THRESHOLD = 0.008
+/** 右键涂抹：每走过这么多屏幕像素采一个点（再按图片显示尺寸换算成归一化距离）。 */
+const SMEAR_SAMPLE_PX = 4
+/** 涂抹笔迹简化容差（屏幕像素）；压不到上限以内就按 1.6 倍逐级放宽。 */
+const SMEAR_SIMPLIFY_PX = 1.5
+/**
+ * 涂抹进行中的笔迹宽度（屏幕像素）。
+ * 只在「还没松手」的那一瞬用；松手后 poly 已换成区域外轮廓，描边回到 MASK_STROKE_PX。
+ */
+const SMEAR_LIVE_STROKE_PX = 2
 
 /* ------------------------------------------------------------------ *
  * 选区纯色半透明填充（v0.14.7 引入；老板 2026-11-12 20:22 再定版）：
@@ -301,6 +310,324 @@ function polygonArea(points) {
     sum += (xj * yi) - (xi * yj)
   }
   return Math.abs(sum) / 2
+}
+
+/**
+ * 取一个顶点的 x / y，兼容 [{x,y}] 与 [[x,y]] 两种形态。
+ * 涂抹轨迹来自 toNorm()，是 {x,y} 对象；离线几何测试用的是数组。
+ * 取值形态不统一会让距离算出 NaN，整圈被简化成首尾两点（2026-11-19 实测踩过）。
+ */
+function polygonXY(p) {
+  if (Array.isArray(p)) return [Number(p[0]), Number(p[1])]
+  return [Number(p?.x), Number(p?.y)]
+}
+
+/**
+ * 点到线段距离（归一化坐标）。RDP 简化要用，单独抽出来方便离线钉死。
+ */
+function polygonPointLineDist(p, a, b) {
+  const [px, py] = polygonXY(p)
+  const [ax, ay] = polygonXY(a)
+  const [bx, by] = polygonXY(b)
+  const dx = bx - ax
+  const dy = by - ay
+  const len2 = dx * dx + dy * dy
+  if (len2 === 0) return Math.hypot(px - ax, py - ay)
+  let t = ((px - ax) * dx + (py - ay) * dy) / len2
+  t = t < 0 ? 0 : (t > 1 ? 1 : t)
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy))
+}
+
+/**
+ * Ramer–Douglas–Peucker：把涂抹轨迹里共线的中间点压掉，保住拐角。
+ * 输入输出都是归一化顶点数组（[{x,y}] / [[x,y]] 都吃，原样返回同一形态），首尾两点一定保留。
+ */
+function polygonSimplify(points, eps) {
+  if (!Array.isArray(points) || points.length <= 2) {
+    return Array.isArray(points) ? points.slice() : []
+  }
+  const a = points[0]
+  const b = points[points.length - 1]
+  let idx = -1
+  let maxD = -1
+  for (let i = 1; i < points.length - 1; i += 1) {
+    const d = polygonPointLineDist(points[i], a, b)
+    if (d > maxD) { maxD = d; idx = i }
+  }
+  if (idx < 0 || maxD <= eps) return [a, b]
+  const left = polygonSimplify(points.slice(0, idx + 1), eps)
+  const right = polygonSimplify(points.slice(idx), eps)
+  return left.slice(0, -1).concat(right)
+}
+
+/**
+ * 把涂抹笔迹收敛到 host 契约允许的点数（4–20）。
+ * host/http.js 对 saveMask 的 polygon 直接校验 4–20 个顶点，超了回 400，
+ * 所以必须在这里压下来：先保形（小容差），实在压不下来再逐级放宽；
+ * 极端情况（整圈都在抖）按等距抽稀兜底，保证仍是合法闭合多边形。
+ */
+function polygonSimplifyToLimit(points, maxPoints, baseEps) {
+  if (!Array.isArray(points) || points.length === 0) return []
+  const limit = Math.max(3, Math.floor(Number(maxPoints) || POLYGON_LIMITS.max))
+  let eps = Number.isFinite(baseEps) && baseEps > 0 ? baseEps : 0.001
+  let out = polygonSimplify(points, eps)
+  let guard = 0
+  while (out.length > limit && guard < 24) {
+    eps *= 1.6
+    out = polygonSimplify(points, eps)
+    guard += 1
+  }
+  if (out.length > limit) {
+    const step = out.length / limit
+    const thinned = []
+    for (let i = 0; i < limit; i += 1) thinned.push(out[Math.floor(i * step)])
+    out = thinned
+  }
+  return out
+}
+
+/* ------------------------------------------------------------------ *
+ * 涂抹轨迹 → 闭合区域外轮廓（老板 2026-11-19 晚提出）
+ *
+ * 问题：SVG <polygon> 的描边沿**每一条边**画，轨迹自相交时内部交叉的线段
+ * 也被描出来，看着是「一堆路径」而不是「一整块区域」。填充本身是对的。
+ *
+ * 做法（与宿主生成遮罩同一语义：多边形填充 → 二值栅格）：
+ *   1. 轨迹按 nonzero 环绕规则栅格化到 bbox 局部网格；若几乎没填上
+ *      （正反两圈互相抵消这类），再按奇偶规则补算一次，取面积大的。
+ *   2. 取面积最大的 8 连通域 —— 涂抹断成两截时只认主体。
+ *   3. Moore 邻域边界追踪取外环：洞与内部交叉线天然不参与。
+ *   4. 闭合环 RDP 简化，收敛到 host 契约的 4–20 顶点。
+ * 纯函数、零依赖，Node 里可直接抽出来跑断言。
+ * ------------------------------------------------------------------ */
+const MOORE_DX = [0, 1, 1, 1, 0, -1, -1, -1]
+const MOORE_DY = [-1, -1, 0, 1, 1, 1, 0, -1]
+
+/** 扫描线栅格化：mode='nonzero' 按环绕数，'evenodd' 按奇偶。返回 gw*gh 的 0/1 网格。 */
+function polygonRasterFill(norm, gw, gh, gx0, gy0, scale, mode) {
+  const grid = new Uint8Array(gw * gh)
+  if (!Array.isArray(norm) || norm.length < 3) return grid
+  const edges = []
+  for (let i = 0; i < norm.length; i += 1) {
+    const a = norm[i]
+    const b = norm[(i + 1) % norm.length]
+    const ax = (a[0] - gx0) * scale
+    const ay = (a[1] - gy0) * scale
+    const bx = (b[0] - gx0) * scale
+    const by = (b[1] - gy0) * scale
+    if (ay === by) continue
+    edges.push([ax, ay, bx, by])
+  }
+  if (edges.length < 2) return grid
+  const hits = []
+  for (let gy = 0; gy < gh; gy += 1) {
+    const y = gy + 0.5
+    hits.length = 0
+    for (const e of edges) {
+      if ((e[1] > y) === (e[3] > y)) continue
+      const k = (y - e[1]) / (e[3] - e[1])
+      hits.push({ x: e[0] + (k * (e[2] - e[0])), dir: e[3] > e[1] ? 1 : -1 })
+    }
+    if (hits.length < 2) continue
+    hits.sort((p, q) => p.x - q.x)
+    let wind = 0
+    for (let i = 0; i < hits.length - 1; i += 1) {
+      wind += hits[i].dir
+      const on = mode === 'evenodd' ? (i % 2 === 0) : (wind !== 0)
+      if (!on) continue
+      let c0 = Math.ceil(hits[i].x - 0.5)
+      let c1 = Math.floor(hits[i + 1].x - 0.5)
+      if (c1 < c0) continue
+      if (c0 < 0) c0 = 0
+      if (c1 > gw - 1) c1 = gw - 1
+      for (let cx = c0; cx <= c1; cx += 1) grid[(gy * gw) + cx] = 1
+    }
+  }
+  return grid
+}
+
+/** 取面积最大的 8 连通域，其余清零。返回 { grid, size }。 */
+function polygonLargestRegion(grid, gw, gh) {
+  const out = new Uint8Array(gw * gh)
+  const seen = new Uint8Array(gw * gh)
+  const stack = []
+  let best = null
+  let bestSize = 0
+  for (let start = 0; start < grid.length; start += 1) {
+    if (grid[start] === 0 || seen[start] === 1) continue
+    const cx0 = start % gw
+    const cy0 = (start - cx0) / gw
+    stack.length = 0
+    stack.push(start)
+    seen[start] = 1
+    const cells = [start]
+    while (stack.length > 0) {
+      const cur = stack.pop()
+      const cx = cur % gw
+      const cy = (cur - cx) / gw
+      for (let dy = -1; dy <= 1; dy += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) {
+          if (dx === 0 && dy === 0) continue
+          const nx = cx + dx
+          const ny = cy + dy
+          if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue
+          const ni = (ny * gw) + nx
+          if (grid[ni] === 0 || seen[ni] === 1) continue
+          seen[ni] = 1
+          stack.push(ni)
+          cells.push(ni)
+        }
+      }
+    }
+    if (cells.length > bestSize) { best = cells; bestSize = cells.length }
+    void cx0
+    void cy0
+  }
+  if (best === null) return { grid: out, size: 0 }
+  for (const i of best) out[i] = 1
+  return { grid: out, size: bestSize }
+}
+
+/** Moore 邻域边界追踪：返回最外圈边界格坐标序列（末尾不回写起点）。 */
+function polygonTraceRing(grid, gw, gh) {
+  let sx = -1
+  let sy = -1
+  for (let y = 0; y < gh && sy < 0; y += 1) {
+    for (let x = 0; x < gw; x += 1) {
+      if (grid[(y * gw) + x] === 1) { sx = x; sy = y; break }
+    }
+  }
+  if (sx < 0) return []
+  const at = (x, y) => (x >= 0 && y >= 0 && x < gw && y < gh && grid[(y * gw) + x] === 1 ? 1 : 0)
+  const ring = [[sx, sy]]
+  let cx = sx
+  let cy = sy
+  // 起点是行优先第一个前景格：上方与左侧必为空，回溯方向取「左」
+  let dir = 6
+  const guard = grid.length * 8 + 16
+  for (let step = 0; step < guard; step += 1) {
+    let moved = false
+    for (let k = 0; k < 8; k += 1) {
+      const d = (dir + k) % 8
+      const nx = cx + MOORE_DX[d]
+      const ny = cy + MOORE_DY[d]
+      if (at(nx, ny) === 0) continue
+      dir = (d + 5) % 8
+      cx = nx
+      cy = ny
+      ring.push([cx, cy])
+      moved = true
+      break
+    }
+    if (!moved) break
+    if (cx === sx && cy === sy) break
+  }
+  return ring
+}
+
+/** 闭合环 RDP：从离首点最远处拆成两条链分别简化，避免首尾被削平。 */
+function polygonSimplifyRing(ring, eps) {
+  if (!Array.isArray(ring) || ring.length <= 4) {
+    return Array.isArray(ring) ? ring.slice() : []
+  }
+  const head = ring[0]
+  let far = 1
+  let farD = -1
+  for (let i = 1; i < ring.length; i += 1) {
+    const dx = ring[i][0] - head[0]
+    const dy = ring[i][1] - head[1]
+    const d = (dx * dx) + (dy * dy)
+    if (d > farD) { farD = d; far = i }
+  }
+  const a = polygonSimplify(ring.slice(0, far + 1), eps)
+  const b = polygonSimplify(ring.slice(far).concat([head]), eps)
+  return a.slice(0, -1).concat(b.slice(0, -1))
+}
+
+/** 环简化到 maxPoints 以内：逐级放宽，兜底等距抽稀。 */
+function polygonRingToLimit(ring, maxPoints, baseEps) {
+  const limit = Math.max(3, Math.floor(Number(maxPoints) || POLYGON_LIMITS.max))
+  let eps = Number.isFinite(baseEps) && baseEps > 0 ? baseEps : 0.001
+  let out = polygonSimplifyRing(ring, eps)
+  let guard = 0
+  while (out.length > limit && guard < 24) {
+    eps *= 1.6
+    out = polygonSimplifyRing(ring, eps)
+    guard += 1
+  }
+  if (out.length > limit) {
+    const step = out.length / limit
+    const thinned = []
+    for (let i = 0; i < limit; i += 1) thinned.push(out[Math.floor(i * step)])
+    out = thinned
+  }
+  return out
+}
+
+/**
+ * 涂抹轨迹 → 区域外轮廓顶点（归一化 [{x,y}]）。
+ * 轨迹过短或区域退化时返回 []，调用方按「选区无效」处理。
+ */
+function polygonRegionOutline(points, options = {}) {
+  const list = Array.isArray(points) ? points : []
+  if (list.length < 3) return []
+  const maxPoints = Math.max(
+    POLYGON_LIMITS.min,
+    Math.min(POLYGON_LIMITS.max, Math.floor(Number(options.maxPoints) || POLYGON_LIMITS.max)),
+  )
+  const longSide = Math.max(48, Math.min(512, Math.floor(Number(options.gridSize) || 240)))
+  const norm = []
+  for (const p of list) {
+    const xy = polygonXY(p)
+    if (!Number.isFinite(xy[0]) || !Number.isFinite(xy[1])) continue
+    norm.push([clamp01(xy[0]), clamp01(xy[1])])
+  }
+  if (norm.length < 3) return []
+  let bx0 = Infinity
+  let by0 = Infinity
+  let bx1 = -Infinity
+  let by1 = -Infinity
+  for (const p of norm) {
+    if (p[0] < bx0) bx0 = p[0]
+    if (p[0] > bx1) bx1 = p[0]
+    if (p[1] < by0) by0 = p[1]
+    if (p[1] > by1) by1 = p[1]
+  }
+  const span = Math.max(bx1 - bx0, by1 - by0)
+  if (!(span > 1e-5)) return []
+  const scale = longSide / span
+  const gx0 = bx0 - (1 / scale)
+  const gy0 = by0 - (1 / scale)
+  const gw = Math.max(4, Math.ceil((bx1 - bx0) * scale) + 3)
+  const gh = Math.max(4, Math.ceil((by1 - by0) * scale) + 3)
+  const bboxCells = Math.max(1, (bx1 - bx0) * scale * (by1 - by0) * scale)
+
+  let best = polygonLargestRegion(
+    polygonRasterFill(norm, gw, gh, gx0, gy0, scale, 'nonzero'), gw, gh)
+  if (best.size < bboxCells * 0.05) {
+    const alt = polygonLargestRegion(
+      polygonRasterFill(norm, gw, gh, gx0, gy0, scale, 'evenodd'), gw, gh)
+    if (alt.size > best.size) best = alt
+  }
+  if (best.size < 4) return []
+
+  const ring = polygonTraceRing(best.grid, gw, gh)
+  if (ring.length < 4) return []
+  const cells = ring.map((c) => [
+    clamp01(gx0 + ((c[0] + 0.5) / scale)),
+    clamp01(gy0 + ((c[1] + 0.5) / scale)),
+  ])
+  // 容差默认 1.4 个格，刚好压掉栅格锯齿又不动拐角；
+  // 但极窄选区（细长条只有 2 格高）会被这么大的容差整条压平，所以再拿短边夹一道。
+  const thin = Math.min(bx1 - bx0, by1 - by0)
+  const rawEps = (Number.isFinite(options.simplifyEps) && options.simplifyEps > 0)
+    ? options.simplifyEps
+    : (1.4 / scale)
+  const eps = Math.min(rawEps, thin * 0.3)
+  const simplified = polygonRingToLimit(cells, maxPoints, eps)
+  // 少于 host 下限（4 点）直接当无效选区，交给调用方统一报「面积太小」
+  if (simplified.length < POLYGON_LIMITS.min) return []
+  return simplified.map((p) => ({ x: p[0], y: p[1] }))
 }
 
 /** 射线法（无 canvas 环境兜底，也用于离线断言钉死「多边形内 alpha=0」）。 */
@@ -567,6 +894,10 @@ async function encodeMaskPngBytes(imageData, width, height) {
       preview: '预览',
       previewInSidebar: '在 DSH 右侧栏预览该文件',
       copy: '带路径复制',
+      copyFile: '复制文件',
+      copyFileHint: '复制文件本身到系统剪贴板，可在 WorkBuddy / 微信对话框按 Ctrl+V 直接粘贴',
+      writeDraft: '写进输入框',
+      writeDraftHint: '把「文件名 + 绝对路径 + 主遮罩」写进对话输入框（只写不发）',
       copyPath: '复制文件名+绝对路径+关联遮罩（可直接粘进对话框）',
       copied: '已复制',
       openFolder: '打开所在文件夹',
@@ -834,8 +1165,10 @@ async function encodeMaskPngBytes(imageData, width, height) {
       maskFailed: '遮罩生成失败：{message}',
       // v0.14.6 右键多点选区（4–20 点）→ 实心多边形遮罩
       polyTitle: '多边形遮罩选区',
+      smearTitle: '涂抹遮罩选区',
+      smearHint: '按住右键涂抹成区域；松手只保留区域外轮廓（内部交叉的笔迹不计入），可确认导出或点「清空」重涂。逐点仍可用：右键一下落一个顶点。',
       polyInfo: '{n}/{max} 点 · 外接框 左{x}% 上{y}% · {w}%×{h}% · 选区约占全图 {area}%',
-      polyHint: '右键逐点圈选；点回起点、按 Enter 或点「闭合并生成遮罩」即导出。顶点可左键拖动微调，Backspace 撤销一点，Escape 清空。',
+      polyHint: '右键逐点圈选，或按住右键直接涂抹；点回起点、按 Enter 或点「闭合并生成遮罩」即导出。顶点可左键拖动微调，Backspace 撤销一点，Escape 清空。',
       polyFillColor: '填充色：',
       polyClose: '闭合并生成遮罩',
       polyUndo: '撤销一点',
@@ -987,6 +1320,10 @@ async function encodeMaskPngBytes(imageData, width, height) {
       previewInSidebar: 'Preview this file in the DSH sidebar',
       copy: 'Copy with path',
       copyPath: 'Copy file name + absolute path + linked mask (pasteable into chat)',
+      copyFile: 'Copy file',
+      copyFileHint: 'Copy the file itself to the system clipboard, then paste into WorkBuddy / WeChat with Ctrl+V',
+      writeDraft: 'Write to input',
+      writeDraftHint: 'Write file name + absolute path + linked mask into the chat input (never sends)',
       copied: 'Copied',
       openFolder: 'Open containing folder',
       kindImage: 'Images',
@@ -1250,8 +1587,10 @@ async function encodeMaskPngBytes(imageData, width, height) {
       maskFailed: 'Mask export failed: {message}',
       // v0.14.6 right-click polygon selection (4-20 points) -> solid polygon mask
       polyTitle: 'Polygon mask selection',
+      smearTitle: 'Painted mask selection',
+      smearHint: 'Hold the right button and paint the area; on release only the outer outline is kept (criss-cross strokes inside are dropped). Then confirm or clear. Click-by-click still works: one right click drops a vertex.',
       polyInfo: '{n}/{max} points · bbox left {x}% top {y}% · {w}%×{h}% · ~{area}% of image',
-      polyHint: 'Right-click to add vertices; click the first point, press Enter, or use Close & make mask. Drag vertices with the left button; Backspace removes the last point.',
+      polyHint: 'Right-click to add vertices, or hold the right button and paint; click the first point, press Enter, or use Close & make mask. Drag vertices with the left button; Backspace removes the last point.',
       polyFillColor: 'Fill:',
       polyClose: 'Close & make mask',
       polyUndo: 'Undo point',
@@ -2179,6 +2518,8 @@ async function encodeMaskPngBytes(imageData, width, height) {
 .dg-cardWrap:hover .dg-labelBtn { opacity: 1; }
 .dg-labelBtn:hover { border-color: #fff; transform: scale(1.06); }
 .dg-labelBtnManual { background: #8a6520; border-color: #e2b968; opacity: .95; }
+/* 「复制文件」与「改标签 ✎」并排：✎ 占 right:4，复制按钮往左挪一档不重叠。 */
+.dg-labelBtnCopy { right: 30px; }
 .dg-cardSelectable .dg-labelBtn { display: none; }
 
 .dg-labelLayer {
@@ -3886,6 +4227,119 @@ function syncImagePngBytes(img) {
     for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i)
     return bytes
   } catch {
+    return null
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 原生拖出真文件到外部应用（2026-11-19）
+ *
+ * DSH 桌面端通过 preload 暴露 window.dshDesktop.fileDrag（底层
+ * webContents.startDrag），WorkBuddy 自带的文件卡片拖到外部应用就是用它。
+ * 产出台的卡片照同一条桥拖出【磁盘上的真文件】，而不是旧逻辑里的缩略图 PNG。
+ *
+ * 流程：pointerdown 时异步 prepare（媒体路由取原始字节 → 桥准备临时文件），
+ * dragstart 同步 start() 起原生拖放，dragend/drop 时 release 清理。
+ * 红线：桥缺失/准备失败一律返回 null 降级到旧的 PNG+路径逻辑；只准备、不改动
+ * 任何资产；不碰 composer、不发送、不 cancel 对话。
+ * ------------------------------------------------------------------ */
+
+/** 探测原生拖文件桥。Web 版 / 老宿主没有 → 返回 null 走旧逻辑。 */
+function nativeDragBridge() {
+  try {
+    const d = (typeof window !== 'undefined') ? window.dshDesktop : null
+    if (d === null || d === undefined || d.protocolVersion !== 1) return null
+    const fd = d.fileDrag
+    if (fd === null || fd === undefined || typeof fd.prepare !== 'function'
+      || typeof fd.start !== 'function' || typeof fd.release !== 'function') return null
+    return fd
+  } catch {
+    return null
+  }
+}
+
+/** 文件扩展名（小写、无点），用于拖出时的文件名后缀校正。 */
+function nativeDragExt(name) {
+  const s = String(name ?? '')
+  const dot = s.lastIndexOf('.')
+  if (dot < 0) return ''
+  return s.slice(dot + 1).toLowerCase()
+}
+
+/** 根据扩展名猜 MIME；猜不出给 octet-stream，宿主侧 resolveDragFileName 会据此补后缀。 */
+function nativeDragMime(ext) {
+  const map = {
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
+    webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml',
+    pdf: 'application/pdf', json: 'application/json', md: 'text/markdown',
+    txt: 'text/plain', csv: 'text/csv', xml: 'application/xml',
+    zip: 'application/zip', mp4: 'video/mp4', webm: 'video/webm',
+    mp3: 'audio/mpeg', wav: 'audio/wav',
+  }
+  return map[String(ext ?? '').toLowerCase()] ?? 'application/octet-stream'
+}
+
+/**
+ * 异步准备一次原生拖放。成功返回 { start, release }，任何失败返回 null。
+ * @param relPath 资产相对路径（喂媒体路由 + 命名）
+ * @param item 卡片 item（提供 name）
+ */
+async function prepareNativeDrag(relPath, item) {
+  const bridge = nativeDragBridge()
+  if (bridge === null) return null
+  const rel = String(relPath ?? '')
+  if (rel === '') return null
+  const name = String(item?.name ?? baseName(rel))
+  const ext = nativeDragExt(name) || nativeDragExt(rel)
+  let requestId = ''
+  let prepared = false
+  try {
+    // 媒体路由是同源 GET、只读、走白名单，返回文件原始字节。
+    const url = MEDIA_ROUTE + '?path=' + encodeURIComponent(rel)
+    const res = await fetch(url, { credentials: 'same-origin' })
+    if (!res.ok) return null
+    const blob = await res.blob()
+    if (blob.size < 1) return null
+    const bytes = new Uint8Array(await blob.arrayBuffer())
+    requestId = 'dg-drag-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10)
+    // 主进程 prepare 接受 { kind:'bytes', bytes, name, mediaType, outputExtension }，
+    // 返回 handle；start(handle) 内部才真正调 webContents.startDrag。
+    const handle = await bridge.prepare({
+      kind: 'bytes',
+      bytes,
+      name,
+      mediaType: nativeDragMime(ext),
+      outputExtension: ext,
+    }, requestId)
+    if (typeof handle !== 'string' || handle === '') return null
+    prepared = true
+    let started = false
+    return {
+      relPath: rel,
+      start: () => {
+        if (started) return false
+        started = true
+        try {
+          void Promise.resolve(bridge.start(handle)).then((ok) => {
+            // start 返回 false 表示宿主侧没起来（如文件被占用）；静默即可，
+            // dragstart 里 dataTransfer 仍带着 PNG+路径，至少拖进对话可用。
+            if (ok === false) console.warn('dsh-gallery: 原生拖出未启动，已保留对话拖拽兜底')
+          }).catch(() => {})
+        } catch {
+          // 起拖失败不阻断：dataTransfer 的 PNG+路径通道仍在。
+        }
+        return true
+      },
+      release: () => {
+        if (!started) return
+        try { void Promise.resolve(bridge.release(handle)).catch(() => {}) } catch { /* 清理失败不影响交互 */ }
+      },
+    }
+  } catch {
+    // 准备途中任何异常：若桥那边已占用 requestId，尽力取消（仅取消本次准备，非对话）。
+    if (prepared === false && requestId !== '' && typeof bridge.cancel === 'function') {
+      try { void Promise.resolve(bridge.cancel(requestId)).catch(() => {}) } catch { /* noop */ }
+    }
     return null
   }
 }
@@ -5728,7 +6182,7 @@ function serializeFeedback(feedback) {
       return MEDIA_ROUTE + '?path=' + encodeURIComponent(relPath) + '&v=' + stamp
     }
 
-    function FileCard({ item, t, absPath, onOpenFolder, onPreview, onContextMenu, onDoubleClick }) {
+    function FileCard({ item, t, absPath, onOpenFolder, onPreview, onContextMenu, onDoubleClick, onCopyFile, onWriteDraft }) {
       const ext = (item.extension ?? '').replace(/^\./, '').toLowerCase()
       const badge = (ext === '' ? 'FILE' : ext).slice(0, 4).toUpperCase()
       const [copied, setCopied] = React.useState(false)
@@ -5741,15 +6195,24 @@ function serializeFeedback(feedback) {
 
       const onCopy = async (event) => {
         event.stopPropagation()
-        // v0.17.0：复制【结构化信息】而不是裸路径 —— 与拖图带的信息同格式，
-        // 粘到对话框里，Agent 一次就拿到 文件名 / 绝对路径 / 主遮罩。
+        // 2026-11-19 老板拍板：这个按钮不再复制「文件名 + 路径 + 遮罩」那段长文本，
+        // 改成真正的「复制文件」—— 写系统剪贴板（CF_HDROP），
+        // 在 WorkBuddy / 微信对话框里 Ctrl+V 能直接粘出文件本身，与右键「复制文件」等价。
+        if (typeof onCopyFile === 'function') {
+          setCopied(await onCopyFile(item.relPath))
+          return
+        }
+        // 兜底（老的调用方没传 onCopyFile）：退回结构化文本，功能不丢
         const name = dragNameOf(item, absPath)
-        const ok = await copyText(name)
-        setCopied(ok)
+        setCopied(await copyText(name))
       }
-      const onEye = (event) => {
+      // 2026-11-19 老板拍板：这个位置不再开侧栏预览，改成「写进输入框」——
+      // 和双击走同一条链路（writeAssetToComposer：文件名 + 绝对路径 + 主遮罩，只写不发）。
+      // 侧栏预览没丢：点整张卡片 / 按 Enter 仍是它。
+      const onWriteDraftBtn = (event) => {
         event.stopPropagation()
-        onPreview(absPath)
+        event.preventDefault()
+        if (typeof onWriteDraft === 'function') onWriteDraft(item, event)
       }
       const onFolder = (event) => {
         event.stopPropagation()
@@ -5790,19 +6253,19 @@ ${absPath}
         // ② 中部操作行
         h('div', { className: 'dg-fcActions', key: 'actions' }, [
           h('button', {
-            type: 'button', key: 'eye',
+            type: 'button', key: 'draft',
             className: 'dg-fcBtn dg-fcBtnPrimary',
-            'data-gallery-preview': item.relPath,
-            title: t('previewInSidebar'),
-            onClick: onEye,
-          }, [h('span', { className: 'dg-fcIco', key: 'i' }, '👁'), h('span', { key: 'l' }, t('preview'))]),
+            'data-gallery-write-draft': item.relPath,
+            title: t('writeDraftHint'),
+            onClick: onWriteDraftBtn,
+          }, [h('span', { className: 'dg-fcIco', key: 'i' }, '📝'), h('span', { key: 'l' }, t('writeDraft'))]),
           h('button', {
             type: 'button', key: 'copy',
             className: `dg-fcBtn${copied ? ' dg-fcBtnOk' : ''}`,
             'data-gallery-copy': item.relPath,
-            title: t('copyPath'),
+            title: t('copyFileHint'),
             onClick: onCopy,
-          }, [h('span', { className: 'dg-fcIco', key: 'i' }, copied ? '✓' : '⧉'), h('span', { key: 'l' }, copied ? t('copied') : t('copy'))]),
+          }, [h('span', { className: 'dg-fcIco', key: 'i' }, copied ? '✓' : '⧉'), h('span', { key: 'l' }, copied ? t('copied') : t('copyFile'))]),
           h('button', {
             type: 'button', key: 'folder',
             className: 'dg-fcBtn dg-fcBtnIcon',
@@ -7643,6 +8106,10 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
   const [polyNote, setPolyNote] = React.useState('')
   const [polyHover, setPolyHover] = React.useState(null)
   const [polyDrag, setPolyDrag] = React.useState(null)
+  /** 选区来源：click = 逐点点出来的（画顶点与编号）；smear = 右键涂抹按出来的（只画填充与边界）。 */
+  const [polyKind, setPolyKind] = React.useState('click')
+  /** 右键按住的涂抹轨迹。用 ref 存：拖动过程只有 setPoly 触发渲染。 */
+  const smearRef = React.useRef(null)
   /** v0.14.7 选区填充色（红 / 绿 / 蓝），同时决定导出的彩色预览图颜色。 */
   const [fillColor, setFillColor] = React.useState('green')
   /** SVG 无 viewBox，polygon 的 points 只认用户单位 px，不能用百分比。 */
@@ -7677,6 +8144,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
     setPolyDrag(null)
     setPolyNote('')
     setPolyMode('mask')
+    setPolyKind('click')
+    smearRef.current = null
   }
 
   /**
@@ -7686,16 +8155,24 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
    * 老板 2026-11-15 拍板：左键圈出来的区域是「给人 / 给助手看的标记」，不是遮罩文件。
    */
   const commitPolygon = (points, mode = polyMode) => {
-    if (points.length < POLYGON_LIMITS.min) {
+    // 涂抹轨迹可能远超 host 允许的 20 个顶点（http.js 对超限直接回 400），
+    // 统一在这里收敛一次；逐点点选本来就 ≤20，不受影响。
+    const use = points.length > POLYGON_LIMITS.max
+      ? polygonSimplifyToLimit(
+          points, POLYGON_LIMITS.max,
+          SMEAR_SIMPLIFY_PX / Math.max(1, Math.min(boxW, boxH)),
+        )
+      : points
+    if (use.length < POLYGON_LIMITS.min) {
       setMaskNotice({ kind: 'failed', text: t('polyTooFew') })
       return
     }
-    if (polygonArea(points) < POLYGON_LIMITS.minArea) {
+    if (polygonArea(use) < POLYGON_LIMITS.minArea) {
       setMaskNotice({ kind: 'failed', text: t('polyDegenerate') })
       return
     }
-    const box = polygonBBox(points)
-    const verts = points.map((p) => [clamp01(p.x), clamp01(p.y)])
+    const box = polygonBBox(use)
+    const verts = use.map((p) => [clamp01(p.x), clamp01(p.y)])
     resetPoly()
     if (mode === 'note') {
       const normalized = normalizeAnnotation({
@@ -7795,6 +8272,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
 
   /** 逐点采集一个多边形；mode 决定闭合后去哪儿，两套选区互斥、切换时清空旧点。 */
   const addPolygonPoint = (p, mode) => {
+    setPolyKind('click')
     const switching = polyMode !== mode || poly.length === 0
     const cur = switching ? [] : poly
     if (switching) {
@@ -7829,7 +8307,10 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       if (p === null) return
       clearPending()
       dragStartRef.current = null
-      addPolygonPoint(p, 'mask')
+      // 按下先不落点：松手时才判「原地一下＝逐点」还是「拖出去＝涂抹」。
+      // 两种选区共用同一个右键入口，谁也不抢谁（老板要逐点保留）。
+      smearRef.current = { start: p, points: [p], moved: false, pointerId: event.pointerId }
+      try { event.currentTarget.setPointerCapture(event.pointerId) } catch { /* 忽略 */ }
       return
     }
     if (event.button !== 0) return
@@ -7847,6 +8328,34 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
   const onPointerMove = (event) => {
     // 中键平移进行中：标注层一律不插手，让查看器独占指针
     if (dragging) return
+    // 右键涂抹进行中：整段接管，不走左键那套矩形判定
+    const smear = smearRef.current
+    if (smear !== null) {
+      const p = toNorm(event)
+      if (p === null) return
+      if (!smear.moved) {
+        if (Math.hypot(p.x - smear.start.x, p.y - smear.start.y) < ANNOT_DRAG_THRESHOLD) return
+        smear.moved = true
+        // 涂抹＝新选区，没闭合的逐点草稿先撤掉，两种选区不混着画
+        setPoly([])
+        setPolyNote('')
+        setPolyHover(null)
+        setPolyDrag(null)
+        setPolyMode('mask')
+        setPolyKind('smear')
+        setPoly(smear.points.slice())
+      }
+      // 按「显示像素」采样：图片被缩放时归一化阈值要跟着换算，否则小图上点过密
+      const step = SMEAR_SAMPLE_PX / Math.max(1, Math.min(boxW, boxH))
+      const last = smear.points[smear.points.length - 1]
+      if (Math.hypot(p.x - last.x, p.y - last.y) >= step) {
+        smear.points.push(p)
+        setPoly(smear.points.slice())
+      }
+      event.stopPropagation()
+      event.preventDefault()
+      return
+    }
     const gesture = dragStartRef.current
     // 左键按下还没判定：移动超过阈值才算「拖框」，此刻才建立矩形草稿
     if (gesture !== null && !gesture.moved) {
@@ -7876,8 +8385,45 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
     setDraft((d) => (d === null ? null : { ...d, x1: p.x, y1: p.y }))
   }
 
+  /**
+   * 右键松开：没拖动过 = 老行为落一个顶点；拖过 = 涂抹成一块区域。
+   * 涂抹松手后**不立刻导出**，只把简化后的顶点摆进选区 ——
+   * 面板带着「闭合并生成遮罩 / 清空」出现，老板还有反悔的机会。
+   */
+  const finishSmear = (event) => {
+    const smear = smearRef.current
+    if (smear === null) return
+    smearRef.current = null
+    try { event.currentTarget.releasePointerCapture(smear.pointerId) } catch { /* 忽略 */ }
+    event.preventDefault()
+    event.stopPropagation()
+    if (!smear.moved) {
+      setPolyKind('click')
+      addPolygonPoint(smear.start, 'mask')
+      return
+    }
+    // 轨迹 → 区域外轮廓：自相交处的内部线段不进选区，只描整体边界。
+    // 面板点数即实际导出顶点数，撤销 / 拖顶点改的也都是外轮廓。
+    const simplified = polygonRegionOutline(smear.points, {
+      maxPoints: POLYGON_LIMITS.max,
+      simplifyEps: SMEAR_SIMPLIFY_PX / Math.max(1, Math.min(boxW, boxH)),
+    })
+    if (simplified.length < POLYGON_LIMITS.min
+      || polygonArea(simplified) < POLYGON_LIMITS.minArea) {
+      resetPoly()
+      setMaskNotice({ kind: 'failed', text: t('polyDegenerate') })
+      return
+    }
+    setPolyKind('smear')
+    setPolyMode('mask')
+    setPoly(simplified)
+    setPolyHover(null)
+    setPolyDrag(null)
+  }
+
   const finishDraft = (event) => {
     if (dragging) return
+    if (smearRef.current !== null) { finishSmear(event); return }
     const gesture = dragStartRef.current
     if (gesture === null) return
     dragStartRef.current = null
@@ -7989,6 +8535,9 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       })()
     : null
 
+  /** 涂抹出来的选区只画填充与边界：几十个顶点圆点会糊成一片，反而看不清圈了哪儿。 */
+  const isSmearKind = polyKind === 'smear'
+
   /** 多边形预览：实心半透明填充 + 可拖顶点 + 橡皮筋（点回首点即闭合），两种模式共用。 */
   const polyShape = poly.length === 0 ? null : (() => {
     const toPx = (p) => [p.x * boxW, p.y * boxH]
@@ -7997,21 +8546,37 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
     const ready = poly.length >= POLYGON_LIMITS.min
     // 纯色半透明填充 0.4 / 轮廓 0.7，颜色跟操作条色板联动；主遮罩 alpha 契约不受影响。
     const strokeColor = maskFillRgba(fillColor, MASK_STROKE_ALPHA)
-    const fillNode = h('polygon', {
-      key: 'polyFill',
-      points: pts.map((q) => `${q[0]},${q[1]}`).join(' '),
-      fill: maskFillRgba(fillColor, ready ? MASK_FILL_ALPHA : 0.12),
-      stroke: strokeColor, strokeWidth: MASK_STROKE_PX, vectorEffect: 'non-scaling-stroke',
-      strokeDasharray: ready ? undefined : '6 4',
-      'data-gallery-poly': String(poly.length),
-    })
-    const bandNode = tip === null ? null : h('polyline', {
+    // 涂抹进行中：只画笔迹本身。此刻 poly 是原始轨迹，按多边形填充会从起点
+    // 拉出一大片三角扇、越涂越乱；松手后 poly 已换成区域外轮廓，走下面的 polygon。
+    const smearing = isSmearKind && smearRef.current !== null
+    const fillNode = smearing
+      ? h('polyline', {
+        key: 'polyFill',
+        points: pts.map((q) => `${q[0]},${q[1]}`).join(' '),
+        fill: 'none',
+        stroke: strokeColor,
+        strokeWidth: SMEAR_LIVE_STROKE_PX,
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+        vectorEffect: 'non-scaling-stroke',
+        'data-gallery-poly': String(poly.length),
+        'data-gallery-poly-live': 'smear',
+      })
+      : h('polygon', {
+        key: 'polyFill',
+        points: pts.map((q) => `${q[0]},${q[1]}`).join(' '),
+        fill: maskFillRgba(fillColor, ready ? MASK_FILL_ALPHA : 0.12),
+        stroke: strokeColor, strokeWidth: MASK_STROKE_PX, vectorEffect: 'non-scaling-stroke',
+        strokeDasharray: ready ? undefined : '6 4',
+        'data-gallery-poly': String(poly.length),
+      })
+    const bandNode = tip === null || isSmearKind ? null : h('polyline', {
       key: 'polyBand',
       points: [pts[pts.length - 1], tip, pts[0]].map((q) => `${q[0]},${q[1]}`).join(' '),
       fill: 'none', stroke: strokeColor, strokeWidth: 1.5, strokeDasharray: '5 4',
       vectorEffect: 'non-scaling-stroke', opacity: 0.85,
     })
-    const dots = pts.map((q, idx) => h('circle', {
+    const dots = isSmearKind ? [] : pts.map((q, idx) => h('circle', {
       key: 'v' + idx,
       cx: q[0], cy: q[1], r: idx === 0 && ready ? 6 : 4,
       fill: idx === 0 ? '#ffd166' : strokeColor, stroke: '#000', strokeWidth: 1,
@@ -8040,7 +8605,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         setPolyDrag(null)
       },
     }))
-    const labels = pts.map((q, idx) => h('text', {
+    const labels = isSmearKind ? [] : pts.map((q, idx) => h('text', {
       key: 'n' + idx, x: q[0] + 7, y: q[1] - 7,
       fill: '#fff', fontSize: 11, stroke: '#000', strokeWidth: 0.6,
       style: { paintOrder: 'stroke', pointerEvents: 'none' },
@@ -8065,9 +8630,11 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
     className: 'dg-polyPanel', key: 'polyPanel',
     'data-gallery-poly-panel': true,
     'data-gallery-poly-mode': polyMode,
+    'data-gallery-poly-kind': polyKind,
     ...blockViewer,
   }, [
-    h('div', { className: 'dg-polyPanelHead', key: 'h' }, t(isNoteMode ? 'polyNoteTitle' : 'polyTitle')),
+    h('div', { className: 'dg-polyPanelHead', key: 'h' },
+      t(isSmearKind ? 'smearTitle' : (isNoteMode ? 'polyNoteTitle' : 'polyTitle'))),
     h('div', { className: 'dg-polyPanelInfo', key: 'i', 'data-gallery-poly-info': true },
       format(t('polyInfo'), {
         n: String(poly.length), max: String(POLYGON_LIMITS.max),
@@ -8075,7 +8642,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         w: Math.round(polyBox.w * 100), h: Math.round(polyBox.h * 100),
         area: (polygonArea(poly) * 100).toFixed(2),
       })),
-    h('div', { className: 'dg-polyPanelHint', key: 'p' }, t(isNoteMode ? 'polyNoteHint' : 'polyHint')),
+    h('div', { className: 'dg-polyPanelHint', key: 'p' },
+      t(isSmearKind ? 'smearHint' : (isNoteMode ? 'polyNoteHint' : 'polyHint'))),
     // 只有「区域标记」模式才给说明框：遮罩导出不需要文字，也别把说明塞进文件名
     isNoteMode ? h('div', { className: 'dg-polyPanelNote', key: 'note' },
       h('input', {
@@ -8215,7 +8783,12 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       onPointerDown,
       onPointerMove,
       onPointerUp: finishDraft,
-      onPointerCancel: () => { setDraft(null); dragStartRef.current = null },
+      onPointerCancel: () => {
+        setDraft(null)
+        dragStartRef.current = null
+        // 指针被系统取消（拖出窗口 / 触控中断）：涂抹轨迹也要清，否则残留半截选区
+        smearRef.current = null
+      },
       onClick: active ? (event) => { event.preventDefault(); event.stopPropagation() } : undefined,
       onContextMenu: active ? (event) => { event.preventDefault(); event.stopPropagation() } : undefined,
     }, [draftShape, polyShape, ...shapes]),
@@ -9946,7 +10519,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       const doCopyAssets = React.useCallback(async (relPaths) => {
         const paths = [...new Set((Array.isArray(relPaths) ? relPaths : [])
           .map((p) => String(p ?? '')).filter((p) => p !== ''))]
-        if (paths.length === 0) return
+        if (paths.length === 0) return false
         try {
           const payload = await callHost('copyAssets', { paths })
           if (payload?.ok !== true) throw new Error(payload?.error?.message ?? 'copyAssets failed')
@@ -9955,8 +10528,10 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           if (Array.isArray(payload?.missed) && payload.missed.length > 0) {
             console.warn('dsh-gallery: 复制时跳过了不在扫描根目录内的项', payload.missed)
           }
+          return true
         } catch (error) {
           showPasteNotice('fail', format(t('copyFailed'), { message: String(error?.message ?? error) }))
+          return false
         }
       }, [callHost, t, showPasteNotice])
 
@@ -10680,6 +11255,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
             className: `dg-cardWrap${checked ? ' dg-cardChecked' : ''}${selectMode ? ' dg-cardSelectable' : ''}${isFreshFinal ? ' dg-cardFreshFinal' : ''}`,
             'data-gallery-fresh-final': isFreshFinal ? '1' : '0',
             key: key + ':wrap',
+            // 三类卡片统一可拖（图片/文件/音视频）：捕获阶段 dragstart 据此起原生拖出真文件。
+            draggable: true,
             'data-gallery-card-wrap': item.relPath,
             'data-gallery-bucket': bucket,
             'data-gallery-label-manual': isManual ? '1' : '0',
@@ -10695,7 +11272,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
               ? (event) => {
                   const target = event.target
                   if (target !== null && target !== undefined && typeof target.closest === 'function') {
-                    if (target.closest('[data-gallery-label-edit],[data-gallery-card-check]') !== null) return
+                    if (target.closest('[data-gallery-label-edit],[data-gallery-card-check],[data-gallery-card-copy-file]') !== null) return
                   }
                   event.preventDefault()
                   event.stopPropagation()
@@ -10704,6 +11281,25 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
               : undefined,
           }, [
             node,
+            // 图片卡片右上角「复制文件」（2026-11-19 老板要）：等价右键菜单那条，
+            // 写系统剪贴板，Ctrl+V 能直接粘出文件；文件卡片另有自己的按钮，故只对图片出。
+            kind === 'image'
+              ? h('button', {
+                  type: 'button', key: 'copyFile',
+                  className: 'dg-labelBtn dg-labelBtnCopy',
+                  'data-gallery-card-copy-file': item.relPath,
+                  title: t('copyFileHint'),
+                  onClick: (e) => {
+                    e.stopPropagation(); e.preventDefault()
+                    const btn = e.currentTarget
+                    void doCopyAssets([item.relPath]).then((ok) => {
+                      if (ok !== true || btn === null || btn === undefined) return
+                      btn.textContent = '✓'
+                      setTimeout(() => { if (btn.isConnected === true) btn.textContent = '⧉' }, 1200)
+                    })
+                  },
+                }, '⧉')
+              : null,
             // 右上「改标签」：手动设定过的用琥珀色区分，hover 时完全显现。
             // 不再放独立角标，避免和卡片左上角的阶段角标抢位置。
             h('button', {
@@ -10785,8 +11381,10 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
                     void copyText(abs)
                   }
                 },
-                // v0.17.0：同右键菜单，复制结构化信息（文件名 + 绝对路径 + 关联遮罩）
-                onCopy: (abs) => { void copyText(dragNameOf(item, abs)) },
+                // 2026-11-19：卡面按钮改成「复制文件」（写系统剪贴板），与右键菜单那条一致
+                onCopyFile: (relPath) => doCopyAssets([relPath]),
+                // 另一个按钮从「预览」换成「写进输入框」，与双击同一条链路
+                onWriteDraft: (target, event) => { handleCardDoubleClick(target, event) },
               }), item, `${groupKey}:${item.relPath}`)
             }
             return wrapCard(h(Card, {
@@ -11024,6 +11622,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
                   void copyText(abs)
                 }
               },
+              onCopyFile: (relPath) => doCopyAssets([relPath]),
+              onWriteDraft: (target, event) => { handleCardDoubleClick(target, event) },
             })
           : h(Card, {
               key: item.relPath,
@@ -11918,10 +12518,65 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           }
         }, 'dsh-gallery: seam')
 
-        // 拖图带位置信息：捕获阶段拦截画廊卡片的 dragstart，把
-        // 「文件名 + 绝对路径 + 主遮罩」写进 File.name（DSH 会原样带进消息）。
-        // 不改图片节点、不改 draggable、不碰 Viewer 的缩放/批注交互、不自动发送。
+        // 拖卡片：① 原生桥可用时拖出真文件到外部应用；② 同时保留旧的
+        // 「文件名+绝对路径+主遮罩写进 File.name」通道，供拖进 DSH 对话给 Agent 定位。
+        // 两条并存：pointerdown 异步准备原生文件，dragstart 同步起拖 + 写 PNG 兜底，
+        // dragend/drop 清理。不改查看器缩放/批注交互、不碰 composer、不自动发送。
         ctx.effect(() => {
+          // 当前正在准备 / 已就绪的原生拖放（pointerdown 写入，dragstart 读取，dragend 清理）。
+          // token 防止"按下 A 又按下 B"时旧准备覆盖新卡片。
+          let nativePrep = null
+          let nativeActive = null
+          let prepToken = 0
+
+          const releasePrep = (prep) => {
+            if (prep !== null && typeof prep.release === 'function') {
+              try { prep.release() } catch { /* 清理失败不影响交互 */ }
+            }
+          }
+          // dragend/drop：释放正在拖的那次
+          const releaseNative = () => {
+            releasePrep(nativeActive)
+            nativeActive = null
+            nativePrep = null
+          }
+          // pointerup/pointercancel：单击没拖起来时，释放未被 dragstart 转走的预准备，
+          // 避免每次点卡片都留一个宿主侧临时文件。真正起拖后 nativePrep 已被转走为
+          // nativeActive，且拖放过程中不会派发 pointerup，所以这里不会误伤在拖的文件。
+          const abandonPrep = () => {
+            releasePrep(nativePrep)
+            nativePrep = null
+            // 让还在途中的 prepare 回调 token 失效 → 它自己会 release，不会回填。
+            prepToken += 1
+          }
+
+          // pointerdown（捕获）：命中卡片就异步准备真文件。prepare 是异步的，
+          // 必须在 dragstart 之前发出；若用户只是点击没拖，pointerup 会主动释放。
+          const onPointerDown = (event) => {
+            const bridge = nativeDragBridge()
+            if (bridge === null) return
+            const target = event.target
+            if (!(target instanceof Element)) return
+            // 按钮上按下（预览/复制/文件夹等）不走拖拽准备
+            if (target.closest('button,[data-gallery-label-edit]') !== null) return
+            const card = target.closest('[data-gallery-relpath]')
+            if (card === null) return
+            const relPath = String(card.getAttribute('data-gallery-relpath') ?? '')
+            const entry = dragAssetIndex.get(relPath)
+            if (entry === undefined) return
+            const token = ++prepToken
+            nativePrep = null
+            void prepareNativeDrag(relPath, entry.item).then((prep) => {
+              if (token !== prepToken) { // 已被后续 pointerdown 取代
+                if (prep !== null && typeof prep.release === 'function') {
+                  try { prep.release() } catch { /* noop */ }
+                }
+                return
+              }
+              nativePrep = prep
+            })
+          }
+
           const onDragStart = (event) => {
             const dt = event.dataTransfer
             const target = event.target
@@ -11939,20 +12594,23 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
               ? { ...entry.item, maskOf: { ...linked, linkedMask: true } }
               : entry.item
             const name = dragNameOf(item, entry.absPath)
-            // 自证 + 兜底双用途：无论 File 替换是否成功，都把同一串信息写进剪贴板。
-            // 拖完在输入框 Ctrl+V 能粘出「产出台·…」= 新代码确实执行过、dragstart 命中；
-            // 粘不出 = 面板仍加载旧模块，需重载窗口。编码 / 写入失败时它就是唯一可用通道。
             void copyText(name)
-            // 从 Viewer「拖到对话」按钮拖出时，取预览大图而不是按钮内的节点；
-            // 列表卡片则仍用自己那张缩略图。两者都是同源 blob URL，canvas 不会被污染。
+
+            // ① 原生真文件拖出：准备已就绪且属于本卡片 → 同步 start。
+            // start 必须在 dragstart 同步栈里调用， Electron 才认这次拖放。
+            if (nativePrep !== null && nativePrep.relPath === relPath) {
+              nativeActive = nativePrep
+              nativePrep = null
+              try { nativeActive.start() } catch { /* start 内部已兜底 */ }
+            }
+
+            // ② 旧的 PNG+路径通道照写（拖进 DSH 对话给 Agent 定位；也是原生失败时的兜底）。
+            // 从 Viewer「拖到对话」按钮拖出时取预览大图，否则用卡片自己的缩略图。
             const img = card.hasAttribute('data-gallery-dragviewer')
               ? document.querySelector('.dg-viewerBody img')
               : (target.matches('img') ? target : target.querySelector('img'))
             const bytes = syncImagePngBytes(img)
-            if (bytes === null) {
-              // 编码失败：保留浏览器原生拖图，信息已在剪贴板供手动粘贴
-              return
-            }
+            if (bytes === null) return
             try {
               dt.clearData()
               dt.effectAllowed = 'copy'
@@ -11961,8 +12619,23 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
               console.warn('dsh-gallery: 拖图元信息写入失败，信息已在剪贴板', error)
             }
           }
+
+          document.addEventListener('pointerdown', onPointerDown, true)
+          document.addEventListener('pointerup', abandonPrep, true)
+          document.addEventListener('pointercancel', abandonPrep, true)
           document.addEventListener('dragstart', onDragStart, true)
-          return () => document.removeEventListener('dragstart', onDragStart, true)
+          document.addEventListener('dragend', releaseNative, true)
+          window.addEventListener('drop', releaseNative, true)
+          return () => {
+            releaseNative()
+            abandonPrep()
+            document.removeEventListener('pointerdown', onPointerDown, true)
+            document.removeEventListener('pointerup', abandonPrep, true)
+            document.removeEventListener('pointercancel', abandonPrep, true)
+            document.removeEventListener('dragstart', onDragStart, true)
+            document.removeEventListener('dragend', releaseNative, true)
+            window.removeEventListener('drop', releaseNative, true)
+          }
         }, 'dsh-gallery: drag asset metadata')
 
         ctx.effect(() => {

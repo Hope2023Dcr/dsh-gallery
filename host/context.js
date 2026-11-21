@@ -25,6 +25,7 @@
  */
 import { promises as fsp } from 'node:fs'
 import path from 'node:path'
+import { writeFileAtomic } from './atomic.js'
 
 const CONTEXT_FILENAME = 'dsh-gallery-context.json'
 export const MAX_RECENT = 20
@@ -145,10 +146,7 @@ async function writeStateFile(file, state) {
     // 万一有旧代码、或版本回滚后读这个文件，也不至于完全瞎掉。
     item: state.recent.length > 0 ? state.recent[0] : null,
   }
-  await fsp.mkdir(path.dirname(file), { recursive: true })
-  const tmp = `${file}.tmp-${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-  await fsp.writeFile(tmp, JSON.stringify(record, null, 2), 'utf8')
-  await fsp.rename(tmp, file)
+  await writeFileAtomic(file, JSON.stringify(record, null, 2))
   return state
 }
 

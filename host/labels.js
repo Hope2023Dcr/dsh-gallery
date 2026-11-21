@@ -20,6 +20,7 @@
 
 import { promises as fsp } from 'node:fs'
 import path from 'node:path'
+import { writeFileAtomic } from './atomic.js'
 
 /** 允许手动指定的标签；与 classify.js 的 ASSET_CATEGORY 对齐（不含 unknown）。 */
 export const LABEL_CATEGORIES = ['input', 'intermediate', 'final']
@@ -52,14 +53,11 @@ export async function readLabels(settingsFile) {
   }
 }
 
-/** 原子写（tmp → rename），tmp 名带 pid + 随机数，并发不互踩。 */
+/** 原子写（见 atomic.js）：失败自动清掉 tmp，不留残留。 */
 async function writeLabels(settingsFile, labels) {
   const file = labelsFilePath(settingsFile)
-  const tmp = `${file}.tmp-${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
   const payload = { schema: 1, labels: labels ?? {} }
-  await fsp.mkdir(path.dirname(file), { recursive: true })
-  await fsp.writeFile(tmp, JSON.stringify(payload, null, 2))
-  await fsp.rename(tmp, file)
+  await writeFileAtomic(file, JSON.stringify(payload, null, 2))
 }
 
 /** 设 / 清一条标签覆写；label 为 null 表示「恢复自动判定」。 */

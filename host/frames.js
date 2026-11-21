@@ -29,6 +29,7 @@
 
 import { promises as fsp } from 'node:fs'
 import path from 'node:path'
+import { writeFileAtomic } from './atomic.js'
 
 const FRAMES_FILENAME = 'dsh-gallery-frames.json'
 
@@ -92,13 +93,10 @@ export async function buildLinkedMaskIndex(settingsFile) {
   }
   return index
 }
-/** 原子写（tmp → rename），tmp 名带 pid + 随机数，并发不互踩。 */
+/** 原子写（见 atomic.js）：失败自动清掉 tmp，不留残留。 */
 async function writeFrames(settingsFile, frames) {
   const file = framesFilePath(settingsFile)
-  const tmp = `${file}.tmp-${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-  await fsp.mkdir(path.dirname(file), { recursive: true })
-  await fsp.writeFile(tmp, JSON.stringify({ schema: 1, frames: frames ?? {} }, null, 2))
-  await fsp.rename(tmp, file)
+  await writeFileAtomic(file, JSON.stringify({ schema: 1, frames: frames ?? {} }, null, 2))
 }
 
 /** 登记一帧（同 relPath 覆盖，避免重复截同一帧留下多条）。 */

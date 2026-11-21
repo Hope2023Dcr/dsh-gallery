@@ -23,6 +23,7 @@
 
 import { promises as fsp } from 'node:fs'
 import path from 'node:path'
+import { writeFileAtomic } from './atomic.js'
 
 /**
  * 进程内写队列：把「读-改-写」串起来，避免并发 setMark 互相覆盖。
@@ -83,12 +84,8 @@ export async function readMarks(settingsFile) {
  */
 export async function writeMarks(settingsFile, marks) {
   const file = marksFilePath(settingsFile)
-  // tmp 名必须唯一：并发写者若共用同一 tmp，第二个会撞上已被重命名的路径 → EPERM。
-  const tmp = `${file}.tmp-${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
   const payload = { schema: 1, marks: marks ?? {} }
-  await fsp.mkdir(path.dirname(file), { recursive: true })
-  await fsp.writeFile(tmp, JSON.stringify(payload, null, 2))
-  await fsp.rename(tmp, file)
+  await writeFileAtomic(file, JSON.stringify(payload, null, 2))
 }
 
 /**

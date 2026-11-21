@@ -26,6 +26,9 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { resolveOptions } from './host/settings.js'
 import { registerTools } from './host/tools.js'
+import os from 'node:os'
+import { sweepStaleTmp } from './host/atomic.js'
+import { sweepExpiredFeedback } from './host/feedback.js'
 
 export const inject = ['connection', 'webServer', 'tools']
 
@@ -33,6 +36,23 @@ export function apply(ctx, config) {
   registerMediaRoute(ctx, config)
   registerOpsRoute(ctx, config)
   registerTools(ctx, config)
+
+  // ---- 启动时清一次历史残留（2026-11-19）----
+  // 修复前五处「写 tmp → rename」都没有失败清理，~/.dsh 下积了 54 个 .tmp-* 残留。
+  // 这里只清「本模块命名格式」且超过 1 小时的，避免误删正在写的；
+  // 过期反馈同理，只在这里删，读路径永远纯读。
+  // 全程 best-effort：失败绝不影响插件启动。
+  try {
+    void sweepStaleTmp(path.join(os.homedir(), '.dsh')).then((r) => {
+      if (r.removed > 0) ctx?.logger?.info?.(`dsh-gallery: 清掉 ${r.removed} 个残留 tmp`)
+    }).catch(() => {})
+  } catch { /* 忽略 */ }
+  try {
+    const opts = resolveOptions(config)
+    void sweepExpiredFeedback(opts.settingsFile, opts).then((r) => {
+      if (r.removed > 0) ctx?.logger?.info?.(`dsh-gallery: 清掉 ${r.removed} 条过期反馈`)
+    }).catch(() => {})
+  } catch { /* 忽略 */ }
 
   // ---- 资产变动追踪（增量刷新，2026-11-16）----
   // 任何进程往产出根里写资产，都会被 fs.watch 感知；前端凭版本号做增量刷新。

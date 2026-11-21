@@ -1400,8 +1400,10 @@ export function registerOpsRoute(ctx, config) {
              * 清零的时机是「人点发送」或「人点清空反馈篮」，走 ackFeedback。
              */
             try {
-              const settingsFile = resolveOptions(config).settingsFile
-              const fb = await readFeedback(settingsFile)
+              const opts = resolveOptions(config)
+              const settingsFile = opts.settingsFile
+              // 传 settings：让 feedbackTtlHours 生效；不传则按默认 7 天过滤
+              const fb = await readFeedback(settingsFile, opts)
               const marks = (await readMarks(settingsFile)).marks ?? {}
               /**
                * v0.16.5：一条落盘记录可能带**多条框选批注**（annotations 数组）。
