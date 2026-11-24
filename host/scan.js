@@ -561,6 +561,41 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
     }
   }
 
+  // 2026-11-21：深层交付文件保底。
+  // BFS 受 opts.maxDepth（默认 3）限制，落在更深目录里的日志明确产出 / 交付
+  // 文件（例如 .../正式成片/film/outputs/xxx.mp4 在第 6 层）根本走不到，
+  // 于是「音视频」画廊里看不到 —— 但图片都在浅层，看起来就像"音视频丢了"。
+  // 这里把「本对话日志 present/write 过的精确绝对路径」直接补进候选，
+  // 不走 BFS 深度限制；仍照常经过下面的 stat（时间窗口 / 体积 / 隐藏）过滤。
+  // 只补"日志明确记录过"的路径，不猜、不递归扫深目录，避免拖慢全库或扫进无关文件。
+  if (isSession && Array.isArray(scopeInfo.paths) && scopeInfo.paths.length > 0) {
+    // 已在 BFS 候选里的绝对路径（小写）不重复添加
+    const have = new Set(candidates.map((c) => path.resolve(c.fullPath).toLowerCase()))
+    for (const abs of scopeInfo.paths) {
+      let absolute
+      try { absolute = path.resolve(String(abs)) } catch { continue }
+      if (have.has(absolute.toLowerCase())) continue
+      let ownerRoot = null
+      for (const r of opts.roots) {
+        if (isInside(r, absolute)) { ownerRoot = r; break }
+      }
+      if (ownerRoot === null) continue
+      const ext = path.extname(absolute).toLowerCase()
+      if (!extSet.has(ext)) continue
+      const relPath = path.relative(ownerRoot, absolute).split(path.sep).join('/')
+      if (hiddenSet.has(relPath)) continue
+      have.add(absolute.toLowerCase())
+      candidates.push({
+        fullPath: absolute,
+        relPath,
+        entryName: path.basename(absolute),
+        rootDir: ownerRoot,
+        rootIndex: opts.roots.indexOf(ownerRoot),
+        extension: ext,
+        looseDirHit: false,
+      })
+    }
+  }
   // 2026-11-16 第一档：第二阶段限流并发读 stat。
   // 全库五千多个文件逐个 await 要 7 秒左右，几十路并发能压到 1 秒内；
   // 过滤条件（时间窗口 / 体积 / 隐藏 / 同目录新鲜度）与串行时完全一致，
