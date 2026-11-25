@@ -97,7 +97,7 @@ export function extractAssetInfo(logText, sessionStartMs = 0) {
 
   const ensure = (abs) => {
     if (!assets.has(abs)) {
-      assets.set(abs, { presented: false, written: false, viewed: false, bashMentioned: false })
+      assets.set(abs, { presented: false, written: false, viewed: false, bashMentioned: false, lastMs: 0 })
     }
     return assets.get(abs)
   }
@@ -137,6 +137,8 @@ export function extractAssetInfo(logText, sessionStartMs = 0) {
         try {
           const info = ensure(path.resolve(candidate))
           info.bashMentioned = true
+          const recMs = typeof record.time === 'number' ? record.time : 0
+          if (recMs > info.lastMs) info.lastMs = recMs
         } catch {
           // 解析失败就跳过
         }
@@ -165,6 +167,8 @@ export function extractAssetInfo(logText, sessionStartMs = 0) {
         if (!VIEW_IMAGE_EXTS.has(ext)) continue
       }
       const info = ensure(path.resolve(entry))
+      const recMs = typeof record.time === 'number' ? record.time : 0
+      if (recMs > info.lastMs) info.lastMs = recMs
       if (isPresenter) info.presented = true
       else if (isViewer) info.viewed = true
       else info.written = true
@@ -177,6 +181,189 @@ export function extractAssetInfo(logText, sessionStartMs = 0) {
   }
 
   return assets
+}
+
+/**
+ * 解析宿主「分叉会话」的继承边界（2026-11-24）。
+ *
+ * 宿主分叉会话的日志 = 复制来源会话到分叉点为止的历史 + 之后自己的新事件：
+ *   - 首行 isSeeded: true  —— 这个会话含继承来的前缀；
+ *   - 一条 session/end-seed 且 data.inherited: true —— 继承段到此结束，
+ *     它的 time 就是精确的分叉时刻（实测与主线会话停止写入的时间只差 2ms）。
+ * 非分叉会话返回 { isFork: false, forkAtMs: 0 }。
+ *
+ * @param logText - 解压后的日志文本。
+ */
+export function parseForkBoundary(logText) {
+  const result = { isFork: false, forkAtMs: 0 }
+  if (typeof logText !== 'string' || logText === '') return result
+  let isSeeded = false
+  let forkAtMs = 0
+  for (const line of logText.split('\n')) {
+    if (line === '') continue
+    if (!isSeeded && line.includes('"session"')) {
+      try {
+        const first = JSON.parse(line)
+        if (first.type === 'session' && first.isSeeded === true) isSeeded = true
+      } catch {
+        // 首行解析失败不影响后续扫描
+      }
+    }
+    if (!line.includes('end-seed')) continue
+    try {
+      const o = JSON.parse(line)
+      if (o.type === 'session/end-seed' && o.data?.inherited === true && typeof o.time === 'number') {
+        forkAtMs = o.time
+      }
+    } catch {
+      // 坏行跳过
+    }
+  }
+  return { isFork: isSeeded && forkAtMs > 0, forkAtMs }
+}
+
+/**
+ * 反查「从本会话分叉出去的子会话」在分叉点之后自己产出的资产（2026-11-24）。
+ *
+ * 宿主在分叉时刻意不留「我派生了谁」：主线日志到分叉点就停了；
+ * 子会话日志则把主线日志逐条复制过来（seq / type / time 完全一致），
+ * 以 session/end-seed{inherited:true} 收尾，之后才是自己的新事件。
+ * 所以反向关联靠两条证据：子会话首行的 parentSession，或继承段的记录指纹。
+ *
+ * 主线扫描时按这些精确路径排除（主线自己日志精确记录过的除外）：
+ * 它们不在主线日志里，只靠「本对话用过的目录 + 新 mtime」放宽倒灌回主线，
+ * 不拦就会出现「分叉对话的产出全跑到主线」。
+ *
+ * 每个 child 带两类路径：paths（分叉后新产出，主线要挡掉）与 inheritedPaths
+ * （分叉前从主线继承，主线要标「共享」）。
+ * @returns {{ children: Array<{id:string,forkAtMs:number,paths:string[],inheritedPaths:string[]}> }}
+ */
+export async function findForkedChildren(sessionsDir, parentSessionId, parentLogText) {
+  const result = { children: [] }
+  if (typeof parentSessionId !== 'string' || parentSessionId === '') return result
+  if (typeof parentLogText !== 'string' || parentLogText === '') return result
+
+  const ownDir = await locateSessionDir(sessionsDir, parentSessionId)
+  if (ownDir === null) return result
+  const groupDir = path.dirname(ownDir)
+
+  // 主线日志的 (seq,type,time) 指纹。只比 seq / 类型 / 时间，不比内容，
+  // 宿主复制日志时这三项是逐条保留的（实测 2210 条全中）。
+  const parentFp = new Map()
+  for (const line of parentLogText.split('\n')) {
+    if (line === '') continue
+    let o
+    try { o = JSON.parse(line) } catch { continue }
+    if (typeof o?.seq === 'number') parentFp.set(o.seq, `${o.type}|${o.time}`)
+  }
+  if (parentFp.size < 10) return result
+
+  let entries
+  try { entries = await fsp.readdir(groupDir, { withFileTypes: true }) } catch { return result }
+  for (const dirent of entries) {
+    if (!dirent.isDirectory() || dirent.name === path.basename(ownDir)) continue
+    const logPath = path.join(groupDir, dirent.name, 'session.v4.jsonl.zstd')
+    const text = await readSessionLogText(logPath)
+    if (text === '') continue
+    let head = null
+    try { head = JSON.parse(text.split('\n')[0]) } catch { continue }
+    const fork = parseForkBoundary(text)
+    if (!fork.isFork) continue
+
+    let linked = false
+    if (head?.parentSession === parentSessionId) {
+      linked = true
+    } else if (head?.isSeeded === true) {
+      // 继承段（forkAtMs 之前）的记录应与主线逐条一致
+      let same = 0
+      let total = 0
+      for (const line of text.split('\n')) {
+        if (line === '') continue
+        let o
+        try { o = JSON.parse(line) } catch { continue }
+        if (typeof o?.seq !== 'number' || typeof o?.time !== 'number') continue
+        if (o.time >= fork.forkAtMs) continue
+        total += 1
+        if (parentFp.get(o.seq) === `${o.type}|${o.time}`) same += 1
+      }
+      linked = total >= 10 && same / total >= 0.95
+    }
+    if (!linked) continue
+
+    // 只收由 present / 写入类工具明确产出的绝对路径（bash 弱证据不收）。
+    // 分叉点之后 → paths（子会话新产出，主线挡掉）；
+    // 分叉点之前 → inheritedPaths（从主线带走，主线标「共享」）。
+    const paths = new Set()
+    const inheritedPaths = new Set()
+    for (const line of text.split('\n')) {
+      if (line === '' || !line.includes('tool/call')) continue
+      let o
+      try { o = JSON.parse(line) } catch { continue }
+      if (o?.type !== 'tool/call' || typeof o.time !== 'number') continue
+      const name = o?.data?.name
+      if (typeof name !== 'string') continue
+      if (name !== 'present' && !OUTPUT_TOOLS.has(name)) continue
+      const rawArgs = o?.data?.arguments
+      if (typeof rawArgs !== 'string') continue
+      let args
+      try { args = JSON.parse(rawArgs) } catch { continue }
+      const found = []
+      if (name === 'present' && Array.isArray(args?.files)) {
+        for (const f of args.files) {
+          if (typeof f?.path === 'string') found.push(f.path)
+        }
+      } else {
+        collectAbsolutePaths(args, found)
+      }
+      const bucket = o.time >= fork.forkAtMs ? paths : inheritedPaths
+      for (const p of found) {
+        try { bucket.add(path.resolve(p)) } catch { /* 坏路径跳过 */ }
+      }
+    }
+    if (paths.size > 0 || inheritedPaths.size > 0) {
+      result.children.push({
+        id: String(head?.id ?? dirent.name),
+        forkAtMs: fork.forkAtMs,
+        paths: [...paths],
+        inheritedPaths: [...inheritedPaths],
+      })
+    }
+  }
+  return result
+}
+
+/**
+ * 从 bash 命令里提取「脚本直接读写的媒体目录」（2026-11-24）。
+ *
+ * 脚本调接口下载 / ffmpeg 处理的产物（如配音 mp3）不经过 present/write，
+ * 日志里只在命令文本里以 `cd "绝对目录" + *.mp3` 的形式出现。
+ * 这类目录本身要登记成「本对话用过的目录」，BFS 才会放行目录里真实存在的媒体文件。
+ * 只认：命令类工具 + 命令里同时出现媒体通配符 + cd 到产出根内的绝对路径。
+ *
+ * @returns Map<lowercase abs, original abs>
+ */
+export function extractCommandMediaDirs(logText) {
+  const dirs = new Map()
+  if (typeof logText !== 'string' || logText === '') return dirs
+  const MEDIA_GLOB = /\*\.(mp4|webm|mov|m4v|mkv|avi|ogv|mp3|wav|m4a|aac|flac|ogg|oga|opus|wma)\b/i
+  const CD_RE = /\bcd\s+["']?([A-Za-z]:[\\/][^"'\s;|&]+)["']?/g
+  for (const line of logText.split('\n')) {
+    if (line === '' || !line.includes('tool/call')) continue
+    let record
+    try { record = JSON.parse(line) } catch { continue }
+    if (record?.type !== 'tool/call' || !BASH_TOOLS.has(record?.data?.name)) continue
+    let args
+    try { args = JSON.parse(record?.data?.arguments) } catch { continue }
+    const cmd = String(args?.command ?? '')
+    if (cmd === '' || !MEDIA_GLOB.test(cmd)) continue
+    for (const m of cmd.matchAll(CD_RE)) {
+      let dir = String(m[1] ?? '').replace(/[\\/]+$/, '')
+      try { dir = path.resolve(dir) } catch { continue }
+      const key = dir.toLowerCase()
+      if (!dirs.has(key)) dirs.set(key, dir)
+    }
+  }
+  return dirs
 }
 
 /**
@@ -250,7 +437,21 @@ export async function resolveSessionScope(config, sessionId, allRoots) {
     return { ok: false, reason: 'log-empty', taskDirs: [], paths: [], relPaths: [], subSessions: 0 }
   }
   // 会话开始时间：用于区分「用户素材」与「会话期间产出」
-  const sessionStartMs = parseSessionStartMs(logText)
+  const createdAtMs = parseSessionStartMs(logText)
+  // 2026-11-24：脚本直接下载的媒体（配音 mp3 等）没有 present/write 记录，
+  // 只以 cd 目录 + *.mp3 出现在命令里；把这类目录登记进来，BFS 才会放行目录里的真实文件。
+  const commandMediaDirs = extractCommandMediaDirs(logText)
+  // 2026-11-24 分叉资产隔离：分叉会话的「有效开始时间」是分叉点，不是会话创建时间。
+  // 宿主会把来源会话到分叉点的历史整段复制过来（isSeeded + end-seed inherited），
+  // 若沿用 createdAt，继承段的产出会被算成「本对话」的，跟主线重复。
+  // sessionStartMs 同时掌管同目录放宽的时间门槛，改这里一处两条路径都干净。
+  const fork = parseForkBoundary(logText)
+  const sessionStartMs = fork.isFork && fork.forkAtMs > createdAtMs ? fork.forkAtMs : createdAtMs
+  // 2026-11-24：反向隔离。主线会话要认出「从它分叉出去的子会话」，
+  // 把子会话分叉后的新产出按绝对路径挡在主线之外；分叉会话自己不需要这一步。
+  const forkedChildren = fork.isFork
+    ? { children: [] }
+    : await findForkedChildren(sessionsDir, sessionId, logText)
   const allAssets = extractAssetInfo(logText, sessionStartMs)
 
   // 修法 C：合并所有子会话（子智能体）的产出路径
@@ -280,6 +481,9 @@ export async function resolveSessionScope(config, sessionId, allRoots) {
 
   const normalized = []
   const relPaths = []
+  // 2026-11-24：分叉会话里「继承自主线」的资产单独记录，不并入本分支的「当前对话」。
+  const inheritedPaths = []
+  const inheritedRelPaths = []
   const taskDirs = new Set()
   // v0.14.7：会话引用过的「精确目录」（相对 root、小写，空串表示 root 直属层）。
   // 外部拷进同一目录、没被日志引用的图片，也要能在「当前对话」里看到并标为素材。
@@ -303,11 +507,23 @@ export async function resolveSessionScope(config, sessionId, allRoots) {
       if (isInside(r, absolute)) { ownerRoot = r; break }
     }
     if (ownerRoot === null) continue
-    normalized.push(absolute)
 
     const rel = path.relative(ownerRoot, absolute)
     const segs = rel.split(path.sep).filter((s) => s !== '')
     const relPath = rel.split(path.sep).join('/')
+
+    // 分叉会话：最后被日志提及的时间早于分叉边界 → 继承自主线的资产。
+    // 2026-11-24 口径修正：照常进主列表（图片/文件/音视频混排），只额外记进
+    // inherited*，由 scanGallery 给条目打 inherited:true；前端加「继承」角标
+    // 区分来源，除删除提示外的交互与本对话产出完全一致。
+    // lastMs=0（事件没带 time）保守当作本对话，宁可多显示也不误删。
+    const isInherited = fork.isFork && info.lastMs > 0 && info.lastMs < fork.forkAtMs
+    if (isInherited) {
+      inheritedPaths.push(absolute)
+      inheritedRelPaths.push(relPath)
+    }
+
+    normalized.push(absolute)
     relPaths.push(relPath)
     categoryByRel.set(relPath.toLowerCase(), info.category)
     sessionDirs.add(parentDirOf(relPath))
@@ -317,9 +533,34 @@ export async function resolveSessionScope(config, sessionId, allRoots) {
     if (segs.length >= 2) taskDirs.add(segs[0])
   }
 
+  // 2026-11-24：脚本直接下载的媒体目录（命令里 cd + 媒体通配符）也算会话用过的目录。
+  // 只收落在产出根内的、且确实存在的绝对路径；仍受 BFS 深度与 isFreshSince 门槛约束。
+  for (const absDir of commandMediaDirs.values()) {
+    let ownerRoot = null
+    for (const r of roots) {
+      if (isInside(r, absDir)) { ownerRoot = r; break }
+    }
+    if (ownerRoot === null) continue
+    try {
+      if (!statSync(absDir).isDirectory()) continue
+    } catch {
+      continue
+    }
+    const relDir = path.relative(ownerRoot, absDir).split(path.sep).join('/')
+    if (relDir === '' || relDir.startsWith('..')) continue
+    sessionDirs.add(relDir.toLowerCase())
+    sessionDirsAbs.add(absDir)
+  }
+
   return {
     ok: true,
     reason: 'ok',
+    // 2026-11-24：分叉会话用分叉点当「会话开始」，同时掌管下面的放宽时间门槛
+    isFork: fork.isFork,
+    forkAtMs: fork.forkAtMs,
+    forkedChildren,
+    inheritedPaths,
+    inheritedRelPaths,
     // 2026-11-15：同目录放宽只收本对话开始之后新出现 / 改动的文件
     sessionStartMs,
     taskDirs: [...taskDirs],
@@ -337,8 +578,14 @@ export async function resolveSessionScope(config, sessionId, allRoots) {
  * 结果按修改时间倒序，只回传 maxItems 条，另外给出 total 供「还有 N 张」。
  */
 
-export async function scanGallery(config, kind = 'image', scope = 'global', sessionId = '', page = 1) {
-  const opts = resolveOptions(config)
+export async function scanGallery(config, kind = 'image', scope = 'global', sessionId = '', page = 1, optsOverride) {
+  // 2026-11-25：第 6 个参数只给内部「按分类取全量」用，且只认 maxItems。
+  // 把它抬到 5000，「按标签圈选」一次就能拿全，不必按页重扫 ——
+  // 当前对话视图每扫一页都要重解一次会话日志，翻十几页会让面板卡住好几秒。
+  const optsBase = resolveOptions(config)
+  const opts = optsOverride !== undefined && optsOverride !== null && Number(optsOverride.maxItems) > 0
+    ? { ...optsBase, maxItems: Math.max(1, Math.trunc(Number(optsOverride.maxItems))) }
+    : optsBase
   const now = Date.now()
   const cutoff = now - opts.windowHours * 3600_000
   const isFile = kind === 'file'
@@ -374,6 +621,15 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
   // 当前对话范围：先解析会话日志（含子智能体会话），得到「本对话产出过的路径」
   let scopeInfo = { ok: true, reason: 'global', taskDirs: [], paths: [], relPaths: [], subSessions: 0 }
   let sessionRelSet = null
+  // 2026-11-24：继承自主线的资产绝对路径集合（分叉会话才有值；global 模式为 null）
+  let inheritedAbsSet = null
+  // 2026-11-24：主线视图要排除的「分叉子会话分叉后新产出」绝对路径集合
+  let childForkAbsSet = null
+  // 2026-11-24：主线里「被分叉会话带走的共享资产」——前端加同款虚线框 +「共享」角标
+  let sharedAbsSet = null
+  // 截帧 / 遮罩 / 填充预览只登记在 frames.json，不在会话日志里；
+  // 它们按相对路径登记，另外用相对路径集合挡一道（含 overlayRelPath）。
+  let childForkRelSet = null
   // v0.14.7：会话引用过的目录集合。同目录下的外部图片也纳入「当前对话」，
   // 但不在精确路径白名单里 —— 它们会被自动标为「素材」(input)。
   let sessionDirSet = null
@@ -384,6 +640,40 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
     // 修法 B：用「精确相对路径」集合判定，而不是只靠第一层目录名。
     // 这样既能处理有子目录的情况，也能处理「文件直接躺在 root 根目录下」。
     sessionRelSet = new Set((scopeInfo.relPaths ?? []).map((p) => p.toLowerCase()))
+    // 2026-11-24：继承自主线的资产绝对路径集合。用于给扫描条目打 inherited 标记——
+    // 这类文件常落在「本对话用过的目录」里，也可能被手工拷贝改新 mtime，
+    // 只有按日志算出的精确路径集合才认得准来源。
+    inheritedAbsSet = new Set(
+      (Array.isArray(scopeInfo.inheritedPaths) ? scopeInfo.inheritedPaths : []).map((x) => {
+        try { return path.resolve(String(x)).toLowerCase() } catch { return '' }
+      }),
+    )
+    const kids = Array.isArray(scopeInfo.forkedChildren?.children) ? scopeInfo.forkedChildren.children : []
+    if (kids.length > 0) {
+      childForkAbsSet = new Set()
+      childForkRelSet = new Set()
+      sharedAbsSet = new Set()
+      const kidIds = new Set(kids.map((kid) => String(kid?.id ?? '')))
+      for (const kid of kids) {
+        for (const abs of (Array.isArray(kid?.paths) ? kid.paths : [])) {
+          try { childForkAbsSet.add(path.resolve(String(abs)).toLowerCase()) } catch { /* 跳过 */ }
+        }
+        // 子会话的继承段（分叉点前）就是「从主线带走」的那批，主线侧标共享
+        for (const abs of (Array.isArray(kid?.inheritedPaths) ? kid.inheritedPaths : [])) {
+          try { sharedAbsSet.add(path.resolve(String(abs)).toLowerCase()) } catch { /* 跳过 */ }
+        }
+      }
+      // 分叉会话生成的遮罩图（kind:'mask'）与半透明填充（overlayRelPath）
+      // 只在 frames.json 里登记，日志没有它们的影子；按会话 id 反查一并排除。
+      for (const [rel, f] of frameByRel) {
+        if (!kidIds.has(String(f?.sessionId ?? ''))) continue
+        childForkRelSet.add(rel)
+        const overlay = String(f?.overlayRelPath ?? '').toLowerCase()
+        if (overlay !== '') childForkRelSet.add(overlay)
+      }
+      if (childForkAbsSet.size === 0) childForkAbsSet = null
+      if (childForkRelSet.size === 0) childForkRelSet = null
+    }
     sessionDirSet = new Set((scopeInfo.sessionDirs ?? []).map((d) => String(d).toLowerCase()))
     // 会话日志缺失时 resolveSessionScope 可能不带分类表，补一个空的
     if (!(scopeInfo.categoryByRel instanceof Map)) scopeInfo.categoryByRel = new Map()
@@ -439,6 +729,13 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
   let globalCurrentExactRels = null
   let globalCurrentCategory = null
   let globalCurrentStartMs = 0
+  // 2026-11-24：全局视图里置顶的「当前对话」组同样不能吞进分叉子会话的新产出
+  let globalCurrentChildForkAbsSet = null
+  let globalCurrentChildForkRelSet = null
+  let globalCurrentSharedAbsSet = null
+  // 2026-11-25：全局视图里「子会话（分叉）继承自主线」的资产绝对路径集合。
+  // 分叉会话在资产台（全局视图）同样要看到「继承」角标，口径与当前对话视图一致。
+  let globalCurrentInheritedAbsSet = null
   if (!isSession && sessionId !== '') {
     const current = await resolveSessionScope(config, sessionId, opts.roots)
     if (current.ok) {
@@ -456,6 +753,34 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
         exactRels.add(String(rel).toLowerCase())
         categoryByRel.set(String(rel).toLowerCase(), frameCategoryOf(f))
       }
+      const kidAbs = new Set()
+      const kidRels = new Set()
+      const sharedAbs = new Set()
+      const kids = Array.isArray(current.forkedChildren?.children) ? current.forkedChildren.children : []
+      const kidIds = new Set(kids.map((kid) => String(kid?.id ?? '')))
+      for (const kid of kids) {
+        for (const abs of (Array.isArray(kid?.paths) ? kid.paths : [])) {
+          try { kidAbs.add(path.resolve(String(abs)).toLowerCase()) } catch { /* 跳过 */ }
+        }
+        for (const abs of (Array.isArray(kid?.inheritedPaths) ? kid.inheritedPaths : [])) {
+          try { sharedAbs.add(path.resolve(String(abs)).toLowerCase()) } catch { /* 跳过 */ }
+        }
+      }
+      if (sharedAbs.size > 0) globalCurrentSharedAbsSet = sharedAbs
+      const inhAbs = new Set()
+      for (const abs of (Array.isArray(current.inheritedPaths) ? current.inheritedPaths : [])) {
+        try { inhAbs.add(path.resolve(String(abs)).toLowerCase()) } catch { /* 跳过 */ }
+      }
+      if (inhAbs.size > 0) globalCurrentInheritedAbsSet = inhAbs
+      // 遮罩 / 填充预览只登记在 frames.json，按会话 id 一并排除出主线的当前对话组
+      for (const [rel, f] of frameByRel) {
+        if (!kidIds.has(String(f?.sessionId ?? ''))) continue
+        kidRels.add(rel)
+        const overlay = String(f?.overlayRelPath ?? '').toLowerCase()
+        if (overlay !== '') kidRels.add(overlay)
+      }
+      if (kidAbs.size > 0) globalCurrentChildForkAbsSet = kidAbs
+      if (kidRels.size > 0) globalCurrentChildForkRelSet = kidRels
       globalCurrentDirs = dirs
       globalCurrentExactRels = exactRels
       globalCurrentCategory = categoryByRel
@@ -607,6 +932,13 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
     } catch {
       return null
     }
+    // 2026-11-24：分叉子会话分叉后的新产出不能倒灌回主线。
+    // 主线日志自己精确记录过的路径优先保留（那种文件本来就是主线的，
+    // 子会话可能再次 present 过），其余按绝对路径硬挡。
+    if ((childForkAbsSet !== null && childForkAbsSet.has(path.resolve(c.fullPath).toLowerCase())
+      || (childForkRelSet !== null && childForkRelSet.has(c.relPath.toLowerCase())))
+      && !sessionRelSet.has(c.relPath.toLowerCase())) return null
+    // 2026-11-24：继承资产照常走下面的过滤，只在返回条目上打 inherited 标记。
     // 2026-11-15：同目录放宽只收本对话期间新出现 / 改动的图；
     // 否则只读查一次图，就会把该目录里几百张历史图全算进这个新对话。
     if (c.looseDirHit && !isFreshSince(stat, sessionStartMs)) return null
@@ -629,6 +961,14 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
       ...(c.looseDirHit ? { externalAsset: true } : {}),
       // 音视频区分「视频 / 音频」，客户端据此选 <video> 还是 <audio>
       ...(isMedia ? { mediaType: VIDEO_EXTS.includes(c.extension) ? 'video' : 'audio' } : {}),
+      // 2026-11-24：分叉会话继承自主线的资产照常进主列表，只打标记供前端区分来源。
+      ...(inheritedAbsSet !== null && inheritedAbsSet.has(path.resolve(c.fullPath).toLowerCase())
+        ? { inherited: true }
+        : {}),
+      // 2026-11-24：主线里被分叉会话带走的文件打 shared，交互照常、只加共享标记。
+      ...(sharedAbsSet !== null && sharedAbsSet.has(path.resolve(c.fullPath).toLowerCase())
+        ? { shared: true }
+        : {}),
     }
   })
   for (const item of statted) {
@@ -701,7 +1041,9 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
     } else if (globalCurrentExactRels !== null
       && (globalCurrentExactRels.has(item.relPath.toLowerCase())
         || (globalCurrentDirs !== null && globalCurrentDirs.has(parentDirOf(item.relPath))
-          && isFreshSince({ mtimeMs: item.mtime, birthtimeMs: item.birthtimeMs }, globalCurrentStartMs)))) {
+          && isFreshSince({ mtimeMs: item.mtime, birthtimeMs: item.birthtimeMs }, globalCurrentStartMs)))
+      && !(globalCurrentChildForkAbsSet !== null && globalCurrentChildForkAbsSet.has(abs.toLowerCase())
+        || (globalCurrentChildForkRelSet !== null && globalCurrentChildForkRelSet.has(item.relPath.toLowerCase())))) {
       // 2026-11-15：本对话日志精确引用过、或落在本对话用过的目录里的资产，
       // 一律归到全局置顶的「当前对话」组；历史会话索引不能再把它抢走。
       // 分类与「当前对话」视图完全一致：精确命中用日志判定，目录命中按外部素材标 input。
@@ -712,6 +1054,14 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
       item.sessionId = sessionId
       item.sessionTitle = globalCurrentMeta?.title ?? ''
       item.sessionCreatedAt = globalCurrentMeta?.createdAt ?? 0
+      // 2026-11-24：全局「当前对话」组里的共享文件同样加共享标记
+      if (globalCurrentSharedAbsSet !== null && globalCurrentSharedAbsSet.has(abs.toLowerCase())) {
+        item.shared = true
+      }
+      // 2026-11-25：全局「当前对话」组里的继承文件同样加继承标记（分叉会话视角）
+      if (globalCurrentInheritedAbsSet !== null && globalCurrentInheritedAbsSet.has(abs.toLowerCase())) {
+        item.inherited = true
+      }
     } else if (owner !== undefined) {
       item.category = owner.category
       item.sessionId = owner.sessionId
@@ -789,6 +1139,9 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
         ...(item.mediaType !== undefined ? { mediaType: item.mediaType } : {}),
         // 截帧来源：反馈篮与草稿正文据此写清取自哪段视频的哪一帧
         ...(item.frameOf !== undefined ? { frameOf: item.frameOf } : {}),
+        // 2026-11-25：来源标记必须透传给全局分组，否则资产台卡片看不到角标
+        ...(item.inherited ? { inherited: true } : {}),
+        ...(item.shared ? { shared: true } : {}),
       })
     }
   }
@@ -811,6 +1164,10 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
       externalDirs: sessionDirSet?.size ?? 0,
       globalExternalDirs: globalCurrentDirs?.size ?? 0,
       externalAssets: matches.reduce((n, i) => n + (i.externalAsset ? 1 : 0), 0),
+      // 2026-11-24：分叉会话继承自主线的资产数（条目本身带 inherited 在 items 里）
+      inheritedAssets: (inheritedAbsSet ?? globalCurrentInheritedAbsSet)?.size ?? 0,
+      // 2026-11-24：主线里被分叉会话带走的共享资产数
+      sharedAssets: (sharedAbsSet ?? globalCurrentSharedAbsSet)?.size ?? 0,
     },
     root: opts.root,
     roots: opts.roots,

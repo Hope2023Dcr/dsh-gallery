@@ -37,6 +37,9 @@ export function buildGroups(summary, maxPerGroup = 120, currentSessionId = '', s
       ...(item.mediaType !== undefined ? { mediaType: item.mediaType } : {}),
       // 截帧来源（v0.14.3）：反馈篮据此显示「取自《视频》00-01-00-500 帧」
       ...(item.frameOf !== undefined ? { frameOf: item.frameOf } : {}),
+      // 2026-11-25：继承 / 共享来源标记透传给卡片（资产台只看全局分组）
+      ...(item.inherited ? { inherited: true } : {}),
+      ...(item.shared ? { shared: true } : {}),
       // 阶段 2：与双击写进输入框同一套信息，别让 Agent 拿到少一截
       ...(item.maskOf !== undefined ? { maskOf: item.maskOf } : {}),
       categoryManual: item.categoryManual === true,

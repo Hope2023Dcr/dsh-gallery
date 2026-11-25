@@ -683,8 +683,86 @@ export function registerOpsRoute(ctx, config) {
 
 
 
-          // 全局分组：点「再显示 60 张」时取下一批明细。
-          // 全量明细留在服务端内存，不重扫盘、不再传 2 MB 大包。
+          // ---------- 按分类取全部路径（2026-11-25）----------
+
+          // 「按标签选择」需要该分类下的**全部**文件：列表接口在「当前对话」视图
+          // 是分页的（每页 60），带 category 过滤也只是过滤当前页 —— 只在已加载
+          // 的条目里挑，点了「选」却只选中 60 张，等于又一次「批量没生效」。
+          // 这里单独给一个纯读接口，只回 relPath 数组。
+          //
+          // 速度：全局视图复用 groupsFullCache（老板刚看过列表就是热数据）；
+          // 当前对话视图把 maxItems 抬到 5000 一次拿全，不按页重扫。
+          if (op === 'categoryPaths') {
+
+            try {
+
+              const kind = body?.kind === 'file' ? 'file'
+                : body?.kind === 'media' ? 'media'
+                  : 'image'
+              const scope = body?.scope === 'session' ? 'session' : 'global'
+              const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
+              const wanted = String(body?.category ?? '')
+              if (!['final', 'input', 'intermediate', 'unknown'].includes(wanted)) {
+                return json({ ok: false, error: { code: 'invalid-category', message: '分类只能是 final / input / intermediate / unknown' } }, 400)
+              }
+
+              const optsResolved = resolveOptions(config)
+              let settingsStamp = 0
+              try { settingsStamp = (await fsp.stat(optsResolved.settingsFile)).mtimeMs } catch { /* 文件还不存在 */ }
+              const derived = await derivedStamp(optsResolved)
+
+              const entries = []
+              let truncated = false
+
+              if (scope === 'global') {
+                const gKey = groupsCacheKey(kind, scope, sessionId, optsResolved, settingsStamp, derived)
+                const hit = groupsFullCache.get(gKey)
+                if (hit !== undefined && Date.now() - hit.at < GROUPS_FULL_CACHE_MS) {
+                  for (const g of hit.groups) {
+                    for (const f of (Array.isArray(g?.files) ? g.files : [])) entries.push(f)
+                  }
+                } else {
+                  const fresh = await scanGallery(config, kind, scope, sessionId, 1)
+                  const groups = Array.isArray(fresh?.groups) ? fresh.groups : []
+                  groupsFullCache.set(gKey, { at: Date.now(), groups })
+                  pruneGroupsFullCache(Date.now())
+                  for (const g of groups) {
+                    for (const f of (Array.isArray(g?.files) ? g.files : [])) entries.push(f)
+                  }
+                  for (const f of (Array.isArray(fresh?.items) ? fresh.items : [])) entries.push(f)
+                }
+              } else {
+                // 5000 是这一路的上限：单个对话的产出远到不了这个量
+                const full = await scanGallery(config, kind, scope, sessionId, 1, { maxItems: 5000 })
+                const got = Array.isArray(full?.items) ? full.items : []
+                for (const f of got) entries.push(f)
+                for (const g of (Array.isArray(full?.groups) ? full.groups : [])) {
+                  for (const f of (Array.isArray(g?.files) ? g.files : [])) entries.push(f)
+                }
+                if (got.length >= 5000) truncated = true
+              }
+
+              const paths = []
+              const seen = new Set()
+              for (const f of entries) {
+                const rp = typeof f?.relPath === 'string' ? f.relPath : ''
+                if (rp === '' || seen.has(rp)) continue
+                const cat = typeof f?.category === 'string' && f.category !== '' ? f.category : 'unknown'
+                if (cat !== wanted) continue
+                seen.add(rp)
+                paths.push(rp)
+              }
+
+              return json({ ok: true, category: wanted, count: paths.length, truncated, paths })
+
+            } catch (error) {
+
+              return json({ ok: false, error: { code: 'scan-failed', message: String(error?.message ?? error) } }, 500)
+
+            }
+
+          }
+
           if (op === 'groupMore') {
             try {
               const kind = body?.kind === 'file' ? 'file'
@@ -1852,53 +1930,47 @@ export function registerOpsRoute(ctx, config) {
 
           if (op === 'hide' || op === 'unhide') {
 
-            const rel = body?.path
-
-            if (typeof rel !== 'string' || rel === '') {
-
-              return json({ ok: false, error: { code: 'invalid-path', message: '缺少文件路径' } }, 400)
-
+            // 2026-11-25：支持批量。前端批量隐藏时传 paths 数组，单条仍可传 path；
+            // 非法项跳过并如实回报，不让一条坏路径把整批挡住。
+            const rawHideList = Array.isArray(body?.paths)
+              ? body.paths
+              : (typeof body?.path === 'string' ? [body.path] : [])
+            const hideRels = []
+            const invalid = []
+            const seenHide = new Set()
+            for (const rawRel of rawHideList) {
+              if (typeof rawRel !== 'string') { invalid.push(String(rawRel ?? '')); continue }
+              const normalized = rawRel.replace(/\\/g, '/')
+              if (normalized === '' || normalized.split('/').some((seg) => seg === '..' || seg === '')) {
+                invalid.push(rawRel)
+                continue
+              }
+              if (seenHide.has(normalized)) continue
+              seenHide.add(normalized)
+              hideRels.push(normalized)
             }
-
-            const normalized = rel.replace(/\\/g, '/')
-
-            if (normalized.split('/').some((s) => s === '..' || s === '')) {
-
-              return json({ ok: false, error: { code: 'invalid-path', message: '路径非法' } }, 400)
-
+            if (hideRels.length === 0) {
+              return json({ ok: false, error: { code: 'invalid-path', message: '缺少文件路径或路径非法' } }, 400)
             }
 
             try {
-
               const opts = resolveOptions(config)
-
               const hidden = new Set(await readHiddenList(opts.settingsFile))
-
-              if (op === 'hide') hidden.add(normalized)
-
-              else hidden.delete(normalized)
-
+              for (const normalized of hideRels) {
+                if (op === 'hide') hidden.add(normalized)
+                else hidden.delete(normalized)
+              }
               await fsp.mkdir(path.dirname(opts.settingsFile), { recursive: true })
-
               // 只改 hidden 字段，其余设置保留
-
               const current = readSettingsFile(opts.settingsFile)
-
               const next = { ...current, hidden: [...hidden] }
-
               await fsp.writeFile(opts.settingsFile, JSON.stringify(next, null, 2), 'utf8')
-
-              return json({ ok: true, hidden: hidden.size })
-
+              return json({ ok: true, hidden: hidden.size, changed: hideRels.length, invalid })
             } catch (error) {
-
               return json({ ok: false, error: { code: 'hide-failed', message: String(error?.message ?? error) } }, 500)
-
             }
 
           }
-
-
 
           // ---------- 全部恢复（清空隐藏列表）----------
 
@@ -1940,54 +2012,100 @@ export function registerOpsRoute(ctx, config) {
 
           if (op === 'delete') {
 
-            const found = await resolveReadable(resolved.roots, body?.path, resolved)
-
-            if (found === null) return json({ ok: false, error: { code: 'not-readable', message: '文件不存在或不可读' } }, 404)
-
-            // 双保险：前端未明确确认则拒绝执行
-
+            // 2026-11-25：支持单条与批量。前端批量删除时传 paths 数组，
+            // 旧调用仍可传 path 单条；两条通道走同一套清理逻辑。
             if (body?.confirm !== true) {
-
               return json({ ok: false, error: { code: 'need-confirm', message: '需要确认后才能删除' } }, 400)
-
             }
 
-            try {
+            const rawList = Array.isArray(body?.paths)
+              ? body.paths
+              : (typeof body?.path === 'string' ? [body.path] : [])
+            const reqPaths = []
+            const seen = new Set()
+            for (const rawPath of rawList) {
+              if (typeof rawPath !== 'string') continue
+              const p = rawPath.trim()
+              if (p === '') continue
+              const key = p.replace(/\\/g, '/').toLowerCase()
+              if (seen.has(key)) continue
+              seen.add(key)
+              reqPaths.push(p)
+            }
+            if (reqPaths.length === 0) {
+              return json({ ok: false, error: { code: 'invalid-path', message: '缺少要删除的文件路径' } }, 400)
+            }
 
-              await fsp.rm(found.absolute, { force: true })
+            const opts = resolveOptions(config)
+            const deletedAbs = []
+            const deletedRels = []
+            const failed = []
+            const notFound = []
 
-              // 删除后从隐藏列表里清掉，避免残留
-
-              const opts = resolveOptions(config)
-
-              const hidden = new Set(await readHiddenList(opts.settingsFile))
-
-              const rel = body?.path.replace(/\\/g, '/')
-
-              if (hidden.has(rel)) {
-
-                hidden.delete(rel)
-
-                const current = readSettingsFile(opts.settingsFile)
-
-                await fsp.writeFile(opts.settingsFile, JSON.stringify({ ...current, hidden: [...hidden] }, null, 2), 'utf8')
-
+            // 逐个删：单个失败不影响其余，最后如实回报
+            for (const p of reqPaths) {
+              const relKey = p.replace(/\\/g, '/')
+              try {
+                const found = await resolveReadable(resolved.roots, p, resolved)
+                if (found === null) {
+                  notFound.push(relKey)
+                  continue
+                }
+                await fsp.rm(found.absolute, { force: true })
+                deletedAbs.push(found.absolute)
+                deletedRels.push(relKey)
+              } catch (error) {
+                failed.push({ path: relKey, reason: String(error?.message ?? error) })
               }
-
-              // 单文件删除：同步清掉截帧登记，避免残留孤儿记录
-              try { await deleteFrames(opts.settingsFile, [rel]) } catch { /* 忽略 */ }
-
-              return json({ ok: true, deleted: found.absolute })
-
-            } catch (error) {
-
-              return json({ ok: false, error: { code: 'delete-failed', message: String(error?.message ?? error) } }, 500)
-
             }
+
+            if (deletedRels.length === 0) {
+              return json({
+                ok: false,
+                error: {
+                  code: notFound.length > 0 ? 'not-readable' : 'delete-failed',
+                  message: notFound.length > 0 ? '文件不存在或不可读' : '删除失败',
+                },
+                failed,
+                notFound,
+              }, notFound.length > 0 ? 404 : 500)
+            }
+
+            // 删除后从隐藏列表里清掉，避免残留（批量时一次写盘）
+            try {
+              const hidden = new Set(await readHiddenList(opts.settingsFile))
+              let hiddenChanged = false
+              for (const rel of deletedRels) {
+                if (hidden.delete(rel)) hiddenChanged = true
+              }
+              if (hiddenChanged) {
+                const current = readSettingsFile(opts.settingsFile)
+                await fsp.writeFile(opts.settingsFile, JSON.stringify({ ...current, hidden: [...hidden] }, null, 2), 'utf8')
+              }
+            } catch { /* 忽略：隐藏列表清理失败不影响删除结果 */ }
+
+            // 标记 / 手动标签 / 截帧登记一并清掉，避免残留孤儿记录（失败不影响删除结果）
+            let marksLeft = {}
+            try {
+              const cur = await readMarks(opts.settingsFile)
+              const next = { ...cur.marks }
+              for (const rel of deletedRels) delete next[rel]
+              await writeMarks(opts.settingsFile, next)
+              marksLeft = next
+            } catch { /* 忽略 */ }
+            try { await deleteLabels(opts.settingsFile, deletedRels) } catch { /* 忽略 */ }
+            try { await deleteFrames(opts.settingsFile, deletedRels) } catch { /* 忽略 */ }
+
+            return json({
+              ok: failed.length === 0 && notFound.length === 0,
+              deleted: deletedAbs,
+              deletedPaths: deletedRels,
+              failed,
+              notFound,
+              marks: marksLeft,
+            })
 
           }
-
-
 
           // ---- v0.16.0 粘贴 / 裁剪：把外部素材或派生资产落进当前对话目录 ----
 

@@ -907,6 +907,12 @@ async function encodeMaskPngBytes(imageData, width, height) {
       scopeSession: '当前对话',
       scopeGlobalHint: '按对话分组的全部产出',
       scopeSessionHint: '仅本对话产出过的文件',
+      inheritedBadge: '继承',
+      inheritedBadgeHint: '继承自主线的产出；除删除会同步影响源对话外，用法与本对话产出相同',
+      inheritedDeleteWarn: '此文件继承自主线，删除将从源对话资产同步删除',
+      sharedBadge: '共享',
+      sharedBadgeHint: '此文件被分叉对话带走；除删除会同步影响共享对话外，用法与本对话产出相同',
+      sharedDeleteWarn: '此文件为共享资产，删除将同步删除共享对话文件',
       scopeUnknown: '未记录本对话产出',
       scopeNotFound: '找不到本对话的会话记录',
       scopeLogEmpty: '本对话的会话记录为空',
@@ -1109,10 +1115,31 @@ async function encodeMaskPngBytes(imageData, width, height) {
       // 右键菜单
       ctxHint: '右键更多操作',
       ctxHide: '隐藏（不再列出）',
+      ctxHideSelected: '隐藏选中的 {n} 个文件',
+      ctxHideFailed: '隐藏失败',
+      batchHideSelected: '隐藏所选',
+      batchHideHint: '把选中的全部文件从列表隐藏（不动文件，可在设置里恢复）',
       ctxUnhide: '取消隐藏',
       ctxReveal: '打开所在文件夹',
       ctxCopy: '写进输入框',
       ctxDelete: '删除文件',
+      ctxDeleteSelected: '删除选中的 {n} 个文件',
+      ctxDeleteManyTitle: '确认删除 {n} 个文件？此操作不可恢复',
+      ctxDeleteManySummary: '共 {n} 个文件',
+      ctxDeletePartial: '已删除 {n} 个，{fail} 个失败',
+      batchDeleteSelected: '删除所选',
+      batchDeleteHint: '删除选中的全部文件（会二次确认，不可恢复）',
+      // 2026-11-25 按标签圈选：把某一类下的文件一次选中，再交给批量动作
+      legendPick: '选',
+      legendPickHint: '把「{label}」下的文件全部选中（已全选时再点一次取消）',
+      legendPickEmpty: '这一类下还没有文件',
+      legendPickTruncated: '数量太多，这次先选中了前 {n} 个',
+      batchSelAll: '全选当前',
+      batchSelAllHint: '选中当前列表里的全部文件',
+      batchInvert: '反选',
+      batchInvertHint: '选中当前列表里还没选中的文件',
+      ctxCopyFileSelected: '复制选中的 {n} 个文件',
+      labelEditSelected: '改这 {n} 张的标签',
       ctxDeleteConfirm: '确认删除？此操作不可恢复',
       ctxDeleteYes: '确认删除',
       ctxDeleteNo: '取消',
@@ -1332,6 +1359,12 @@ async function encodeMaskPngBytes(imageData, width, height) {
       scopeSession: 'This chat',
       scopeGlobalHint: 'All outputs, grouped by conversation',
       scopeSessionHint: 'Only files produced in this chat',
+      inheritedBadge: 'Inherited',
+      inheritedBadgeHint: 'Inherited from the parent chat; works like this chat’s own output, except deleting it also affects the source chat',
+      inheritedDeleteWarn: 'Inherited from the parent chat — deleting it will also remove it from the source chat’s assets',
+      sharedBadge: 'Shared',
+      sharedBadgeHint: 'Shared with a forked chat; works like this chat’s own output, except deleting it also affects that chat',
+      sharedDeleteWarn: 'Shared asset — deleting it will also remove the file from the shared chat',
       scopeUnknown: 'No outputs recorded for this chat',
       scopeNotFound: 'Cannot find this chat’s session log',
       scopeLogEmpty: 'This chat’s session log is empty',
@@ -1533,10 +1566,30 @@ async function encodeMaskPngBytes(imageData, width, height) {
       zoomResetHint: 'Reset zoom (or press 0)',
       ctxHint: 'Right-click for more',
       ctxHide: 'Hide (stop listing)',
+      ctxHideSelected: 'Hide {n} selected files',
+      ctxHideFailed: 'Hide failed',
+      batchHideSelected: 'Hide selected',
+      batchHideHint: 'Hide every selected file from the list (files untouched; restore in settings)',
       ctxUnhide: 'Unhide',
       ctxReveal: 'Open containing folder',
       ctxCopy: 'Write into chat input',
       ctxDelete: 'Delete file',
+      ctxDeleteSelected: 'Delete {n} selected files',
+      ctxDeleteManyTitle: 'Delete {n} files permanently? This cannot be undone',
+      ctxDeleteManySummary: '{n} files',
+      ctxDeletePartial: 'Deleted {n}, {fail} failed',
+      batchDeleteSelected: 'Delete selected',
+      batchDeleteHint: 'Delete every selected file (asks for confirmation, cannot be undone)',
+      legendPick: 'Pick',
+      legendPickHint: 'Select every file labeled "{label}" (click again to clear)',
+      legendPickEmpty: 'Nothing in this category yet',
+      legendPickTruncated: 'Too many; only the first {n} were selected',
+      batchSelAll: 'Select visible',
+      batchSelAllHint: 'Select every file in the current list',
+      batchInvert: 'Invert',
+      batchInvertHint: 'Select the files in the current list that are not selected yet',
+      ctxCopyFileSelected: 'Copy {n} selected files',
+      labelEditSelected: 'Re-label these {n} files',
       ctxDeleteConfirm: 'Delete permanently? This cannot be undone',
       ctxDeleteYes: 'Delete',
       ctxDeleteNo: 'Cancel',
@@ -2684,6 +2737,24 @@ async function encodeMaskPngBytes(imageData, width, height) {
   font-size: 12px;
 }
 
+/* 2026-11-24：分叉「继承」与主线「共享」是同一批文件的两侧视角——同款虚线框，只标来源、不降交互 */
+.dg-cardWrap.dg-inheritedCard,
+.dg-cardWrap.dg-sharedCard { outline: 1px dashed #9b8cf0; outline-offset: 1px; }
+.dg-inheritedBadge,
+.dg-sharedBadge {
+  position: absolute;
+  top: 6px; left: 50%; transform: translateX(-50%);
+  z-index: 7;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 10px; font-weight: 600; line-height: 1.6;
+  color: #5b4bc4;
+  background: rgba(255, 255, 255, .94);
+  border: 1px solid #b9aef0;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
 /* ===== 分页条：常驻网格下方 ===== */
 .dg-pager {
   flex: 0 0 auto;
@@ -2819,6 +2890,24 @@ async function encodeMaskPngBytes(imageData, width, height) {
   padding: 7px 9px;
   background: var(--dsw-alias-bg-layer-2);
   border-radius: 6px;
+}
+.dg-confirmList {
+  max-height: 168px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 6px 9px;
+  background: var(--dsw-alias-bg-layer-2);
+  border-radius: 6px;
+  font-size: 11px; line-height: 1.6;
+  color: var(--dsw-alias-label-secondary);
+}
+.dg-confirmListItem { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dg-confirmWarn {
+  font-size: 11px; line-height: 1.5;
+  color: #b26a1d;
+  background: rgba(212, 137, 60, .1);
+  border: 1px solid rgba(212, 137, 60, .35);
+  border-radius: 6px;
+  padding: 6px 9px;
 }
 .dg-confirmActions { display: flex; justify-content: flex-end; gap: 8px; }
 .dg-dangerBtn {
@@ -3455,6 +3544,16 @@ async function encodeMaskPngBytes(imageData, width, height) {
 .dg-legendToggle.dg-legendOff { opacity: 0.42; }
 .dg-legendToggle.dg-legendOff .dg-legendSwatch { filter: grayscale(1); }
 .dg-legendCount { font-size: 11px; color: #a9b1bd; margin-left: 2px; }
+.dg-legendCell { display: inline-flex; align-items: center; gap: 2px; }
+.dg-legendPick {
+  appearance: none; border: 1px solid transparent; background: transparent;
+  color: #8f97a3; font: inherit; font-size: 11px; line-height: 16px;
+  padding: 0 5px; border-radius: 5px; cursor: pointer; opacity: 0.5;
+}
+.dg-legendCell:hover .dg-legendPick { opacity: 1; }
+.dg-legendPick:hover { border-color: rgba(120, 160, 255, 0.45); background: rgba(74, 124, 255, 0.16); color: #cfe0ff; }
+.dg-legendPick:disabled { cursor: default; }
+.dg-legendPick[data-on="1"] { opacity: 1; color: #a9c2ff; border-color: rgba(74, 124, 255, 0.5); background: rgba(74, 124, 255, 0.2); }
 .dg-legendSwatchPending { opacity: 0.55; border-style: dashed !important; }
 
 /* 卡片包装层 + 确认角标 + 多选框 */
@@ -5268,7 +5367,7 @@ function serializeFeedback(feedback) {
           ? entry('original', t('ctxOpenOriginal'), '🔍', () => actions.onOpenOriginal())
           : null,
         actions.onHide !== undefined
-          ? entry('hide', t('ctxHide'), '🚫', () => actions.onHide())
+          ? entry('hide', actions.hideLabel ?? t('ctxHide'), '🚫', () => actions.onHide())
           : null,
         actions.onReveal !== undefined
           ? entry('reveal', t('ctxReveal'), '📂', () => actions.onReveal())
@@ -5278,17 +5377,17 @@ function serializeFeedback(feedback) {
           : null,
         // v0.16.0：复制**文件本体**到系统剪贴板（与上面的「复制路径」文本区分）
         actions.onCopyFile !== undefined
-          ? entry('copyFile', t('ctxCopyFile'), '📄', () => actions.onCopyFile())
+          ? entry('copyFile', actions.copyFileLabel ?? t('ctxCopyFile'), '📄', () => actions.onCopyFile())
           : null,
         actions.onDelete !== undefined
-          ? entry('delete', t('ctxDelete'), '🗑', () => actions.onDelete(), true)
+          ? entry('delete', actions.deleteLabel ?? t('ctxDelete'), '🗑', () => actions.onDelete(), true)
           : null,
         // ---- v0.14.2 手动标签：表态层已下线，只留「改标签 / 恢复自动」两个入口 ----
         actions.onEditLabel !== undefined
           ? h('div', { className: 'dg-ctxDivider', key: 'labelDivider' }, t('labelEdit'))
           : null,
         actions.onEditLabel !== undefined
-          ? entry('label-edit', t('labelEdit'), '✎', () => actions.onEditLabel())
+          ? entry('label-edit', actions.editLabelLabel ?? t('labelEdit'), '✎', () => actions.onEditLabel())
           : null,
         actions.onResetLabel !== undefined
           ? entry('label-reset', t('labelCtxReset'), '↺', () => actions.onResetLabel())
@@ -5396,7 +5495,7 @@ function serializeFeedback(feedback) {
     }
 
     /** 删除确认弹窗：删除不可逆，必须二次确认。 */
-    function ConfirmDialog({ t, name, busy, onCancel, onConfirm }) {
+    function ConfirmDialog({ t, name, title, files, busy, warn, onCancel, onConfirm }) {
       React.useEffect(() => {
         const onKey = (event) => {
           if (busy) return
@@ -5416,8 +5515,16 @@ function serializeFeedback(feedback) {
         'aria-modal': true,
         'data-gallery-confirm-delete': name,
       }, [
-        h('div', { className: 'dg-confirmTitle', key: 'title' }, t('ctxDeleteConfirm')),
+        h('div', { className: 'dg-confirmTitle', key: 'title' }, title ?? t('ctxDeleteConfirm')),
         h('div', { className: 'dg-confirmName', key: 'name' }, name),
+        // 批量删除时列出文件名，避免「删的到底是哪些」说不清
+        Array.isArray(files) && files.length > 0
+          ? h('div', { className: 'dg-confirmList', key: 'files' },
+              files.slice(0, 40).map((f, i) => h('div', { className: 'dg-confirmListItem', key: `f${i}` }, String(f))))
+          : null,
+        warn
+          ? h('div', { className: 'dg-confirmWarn', key: 'warn' }, warn)
+          : null,
         h('div', { className: 'dg-confirmActions', key: 'actions' }, [
           h('button', {
             type: 'button', key: 'no', className: 'dg-btn',
@@ -6294,35 +6401,57 @@ ${absPath}
         let cancelled = false
         let started = false
         let sourceUrl = null
+        let retryTimer = null
         const controller = new AbortController()
 
-        const run = () => {
+        // 2026-11-24：图刚写出时取图可能超时 / 解码失败，旧版一次失败就永久
+        // 显示「无法加载」，而点开大图时文件已完整。现在失败先重试两次；
+        // 解码仍失败就退回原图 Blob 直接显示（大图路径同样用 <img>）。
+        const run = (attempt = 0) => {
           if (started) return
           started = true
           setState({ status: 'pending' })
           limiter(async () => {
             const blob = await fetchRaw(item.relPath, controller.signal)
-            const thumb = await makeScaled(blob, THUMB_SIZE, true)
-            if (cancelled) {
-              if (thumb.url !== null) URL.revokeObjectURL(thumb.url)
-              return
+            if (cancelled) return
+            try {
+              const thumb = await makeScaled(blob, THUMB_SIZE, true)
+              if (cancelled) {
+                if (thumb.url !== null) URL.revokeObjectURL(thumb.url)
+                return
+              }
+              sourceUrl = thumb.url
+              setState({ status: 'ready', url: thumb.url })
+            } catch (decodeError) {
+              // 部分 WebView 对刚写入的 RGBA 图 createImageBitmap 会失败；
+              // 原图 Blob 交给 <img> 是查看器已验证可用的路径，照此兜底。
+              const url = URL.createObjectURL(blob)
+              if (cancelled) { URL.revokeObjectURL(url); return }
+              sourceUrl = url
+              setState({ status: 'ready', url, thumbFallback: true })
             }
-            sourceUrl = thumb.url
-            setState({ status: 'ready', url: thumb.url })
           }).catch((error) => {
             if (cancelled || controller.signal.aborted) return
+            if (attempt < 2) {
+              started = false
+              retryTimer = setTimeout(() => run(attempt + 1), 1500 * (attempt + 1))
+              return
+            }
             setState({ status: 'failed', message: String(error?.message ?? error) })
           })
+        }
+
+        const cleanup = () => {
+          cancelled = true
+          if (retryTimer !== null) clearTimeout(retryTimer)
+          controller.abort()
+          if (sourceUrl !== null) URL.revokeObjectURL(sourceUrl)
         }
 
         // 环境不支持 IntersectionObserver 时直接加载，保证可用性。
         if (typeof IntersectionObserver !== 'function') {
           run()
-          return () => {
-            cancelled = true
-            controller.abort()
-            if (sourceUrl !== null) URL.revokeObjectURL(sourceUrl)
-          }
+          return cleanup
         }
 
         const observer = new IntersectionObserver((entries) => {
@@ -6335,10 +6464,8 @@ ${absPath}
         observer.observe(node)
 
         return () => {
-          cancelled = true
           observer.disconnect()
-          controller.abort()
-          if (sourceUrl !== null) URL.revokeObjectURL(sourceUrl)
+          cleanup()
         }
       }, [node, item.relPath, limiter])
 
@@ -6398,6 +6525,7 @@ ${absPath}
                 loading: 'lazy',
                 width: THUMB_SIZE,
                 height: THUMB_SIZE,
+                'data-gallery-thumb-raw': state.thumbFallback ? '1' : undefined,
               })
             : h('div', { className: 'dg-placeholder', 'data-gallery-placeholder': state.status },
                 state.status === 'failed'
@@ -10215,11 +10343,20 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         })
       }, [])
 
-      /** 隐藏当前右键的条目（只从列表移除，不动文件）。 */
-      const doHide = React.useCallback(async (item) => {
+      /**
+       * 隐藏条目（只从列表移除，不动文件）。
+       * 2026-11-25：接受单个条目或 relPath 数组；批量隐藏一次写完。
+       */
+      const doHide = React.useCallback(async (target) => {
+        const rels = (Array.isArray(target) ? target : [target?.relPath ?? ''])
+          .map((rp) => String(rp ?? ''))
+          .filter((rp) => rp !== '')
+        if (rels.length === 0) return
         try {
-          const payload = await callHost('hide', { path: item.relPath })
+          const payload = await callHost('hide', { paths: rels })
           if (payload?.ok === false) throw new Error(payload?.error?.message ?? t('errorTitle'))
+          setSelected(new Set())
+          setBatchMode(false)
           await load(undefined, kind, scope, page).then((data) => setView({ status: 'ready', data })).catch(() => {})
         } catch (error) {
           console.error('dsh-gallery: 隐藏失败', error)
@@ -10236,22 +10373,43 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         }
       }, [t])
 
-      /** 执行删除（需二次确认）。 */
+      /** 粘贴/操作提示（成功/失败），3 秒自动消失。 */
+      const [pasteNotice, setPasteNotice] = React.useState(null)
+      const showPasteNotice = React.useCallback((kindOf, text) => {
+        setPasteNotice({ kind: kindOf, text })
+      }, [])
+
+      /**
+       * 执行删除（需二次确认）。
+       * 2026-11-25：批量选中时一次删完全部 —— Host 的 delete 接受 paths 数组，
+       * 单条只是长度 1 的特例，两侧不再有两套逻辑。
+       */
       const doDelete = React.useCallback(async () => {
         const target = deleteTarget
         if (target === null || target.busy === true) return
+        const items = Array.isArray(target.items) ? target.items : []
+        const rels = items.map((it) => String(it?.relPath ?? '')).filter((rp) => rp !== '')
+        if (rels.length === 0) { setDeleteTarget(null); return }
         setDeleteTarget({ ...target, busy: true })
         try {
-          const payload = await callHost('delete', { path: target.item.relPath, confirm: true })
+          const payload = await callHost('delete', { paths: rels, confirm: true })
           if (payload?.ok === false) throw new Error(payload?.error?.message ?? t('errorTitle'))
+          const failed = (Array.isArray(payload?.failed) ? payload.failed.length : 0)
+            + (Array.isArray(payload?.notFound) ? payload.notFound.length : 0)
+          if (failed > 0) {
+            showPasteNotice('fail', format(t('ctxDeletePartial'), { n: rels.length - failed, fail: failed }))
+          }
           setDeleteTarget(null)
+          setSelected(new Set())
+          setBatchMode(false)
           kickChanges()
           await load(undefined, kind, scope, page).then((data) => setView({ status: 'ready', data })).catch(() => {})
         } catch (error) {
           console.error('dsh-gallery: 删除失败', error)
           setDeleteTarget(null)
+          showPasteNotice('fail', t('ctxDeleteFailed'))
         }
-      }, [deleteTarget, load, kind, scope, page, t])
+      }, [deleteTarget, load, kind, scope, page, t, showPasteNotice])
 
       const refresh = React.useCallback(async () => {
         setRefreshing(true)
@@ -10266,17 +10424,11 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       }, [load, kind, scope, page])
 
       // ---- v0.16.0 粘贴：剪贴板图片/文件作为「素材」落当前对话 ----
-      /** 粘贴提示（成功/失败），3 秒自动消失。 */
-      const [pasteNotice, setPasteNotice] = React.useState(null)
       React.useEffect(() => {
         if (pasteNotice === null) return undefined
         const timer = setTimeout(() => setPasteNotice(null), 3000)
         return () => clearTimeout(timer)
       }, [pasteNotice])
-
-      const showPasteNotice = React.useCallback((kindOf, text) => {
-        setPasteNotice({ kind: kindOf, text })
-      }, [])
 
       /**
        * v0.16.2 粘贴落点解析：hover 的对话组优先，否则 slot 的当前对话。
@@ -10406,21 +10558,33 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         const parsed = extractFromPasteEvent(clipboardData)
         if (parsed.images.length > 0 || parsed.files.length > 0) {
           if (typeof event?.preventDefault === 'function') event.preventDefault()
+          // 🔴 2026-11-25：只解析到一张位图时，剪贴板可能其实是「多个文件的 FileDropList」，
+          // Chromium 的 paste 事件只给其中一张。先问 Host 要真实文件列表，拿到多个就按文件走。
+          if (parsed.files.length === 0 && parsed.images.length === 1) {
+            const got = await pasteFromClipboard()
+            if (got) return true
+          }
           await ingestPasted(parsed)
           return true
         }
         return pasteFromClipboard()
       }, [ingestPasted, pasteFromClipboard])
 
-      /** 右键菜单「粘贴」：先图片（Clipboard API），再文件（含音视频，系统剪贴板）。 */
+      /**
+       * 右键菜单「粘贴」。
+       * 🔴 2026-11-25：**文件列表优先**。批量复制多张图时系统剪贴板是 CF_HDROP，
+       * 而 Clipboard API 的 read() 往往只回一张位图 —— 先走图片通道就会「只粘最后一张」。
+       * 截图（纯位图、没有文件列表）仍会落到图片通道。
+       */
       const doPaste = React.useCallback(async () => {
+        const got = await pasteFromClipboard()
+        if (got) return
         const images = await readClipboardImages()
         if (images.length > 0) {
           await ingestPasted({ images, files: [] })
           return
         }
-        const got = await pasteFromClipboard()
-        if (!got) showPasteNotice('fail', t('pasteEmpty'))
+        showPasteNotice('fail', t('pasteEmpty'))
       }, [ingestPasted, pasteFromClipboard, showPasteNotice, t])
 
       /** v0.16.0 图片裁剪：把裁剪出的 PNG base64 交给 Host 落盘（源图同目录，标素材）。 */
@@ -10957,21 +11121,139 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
        *   · 「未归类」只在确实存在时出现
        *   · 只记本次使用，不持久化
        */
+      /**
+       * 按标签一次圈定（2026-11-25）。
+       *
+       * 为什么必须问宿主要全量路径：列表接口在「当前对话」视图是分页的（每页 60），
+       * 带 category 过滤也只过滤当前页 —— 只在已加载条目里挑，点了「选」却只选中
+       * 60 张，等于又一次「批量没生效」。categoryPaths 是纯读接口，只回 relPath。
+       * 旧宿主没有这个 op 时退回本地已加载条目：能用，只是可能不全。
+       */
+      // 圈选进行中：按钮显示「…」并禁用。
+      // 没有这道门，手快点两下会被当成「选了又取消」（切换语义），看着像没生效。
+      const pickBusyRef = React.useRef('')
+      const [pickBusy, setPickBusy] = React.useState('')
+      const selectByCategory = React.useCallback(async (cat) => {
+        if (!['final', 'input', 'intermediate', 'unknown'].includes(cat)) return
+        if (pickBusyRef.current !== '') return
+        pickBusyRef.current = cat
+        setPickBusy(cat)
+        try {
+          const poolFrom = () => {
+            const out = []
+            const seen = new Set()
+            const push = (it) => {
+              const rp = String(it?.relPath ?? '')
+              if (rp === '' || seen.has(rp)) return
+              const c = String(it?.category ?? '') === '' ? 'unknown' : String(it.category)
+              if (c !== cat) return
+              seen.add(rp)
+              out.push(rp)
+            }
+            for (const it of (Array.isArray(items) ? items : [])) push(it)
+            for (const it of (Array.isArray(visibleItems) ? visibleItems : [])) push(it)
+            if (Array.isArray(data?.groups)) {
+              for (const gr of data.groups) for (const f of (Array.isArray(gr?.files) ? gr.files : [])) push(f)
+            }
+            return out
+          }
+          let rels = []
+          let truncated = false
+          try {
+            const payload = await callHost('categoryPaths', { kind, scope, sessionId, category: cat })
+            if (payload?.ok === true && Array.isArray(payload.paths)) {
+              rels = payload.paths.map((rp) => String(rp ?? '')).filter((rp) => rp !== '')
+              truncated = payload.truncated === true
+            }
+          } catch (error) {
+            console.warn('dsh-gallery: categoryPaths 不可用，退回已加载条目', error)
+          }
+          if (rels.length === 0) rels = poolFrom()
+          if (rels.length === 0) {
+            showPasteNotice('fail', t('legendPickEmpty'))
+            return
+          }
+          setSelected((prev) => {
+            const next = new Set(prev)
+            const allIn = rels.every((rp) => next.has(rp))
+            for (const rp of rels) {
+              if (allIn) next.delete(rp)
+              else next.add(rp)
+            }
+            return next
+          })
+          // 该分类当前是关着的就先打开：不然圈中了却看不见，看着像没生效
+          if (categoryFilter[cat] === false) toggleCategory(cat)
+          setBatchMode(true)
+          if (truncated) showPasteNotice('ok', format(t('legendPickTruncated'), { n: rels.length }))
+        } finally {
+          pickBusyRef.current = ''
+          setPickBusy('')
+        }
+      }, [kind, scope, sessionId, items, visibleItems, data, categoryFilter, toggleCategory, showPasteNotice, t])
+
+      /**
+       * 哪些分类已经「整类选中」——只用来给图例上的「选」按钮点亮。
+       * 跨页选中的项不一定在已加载列表里，那时计数偏小、按钮不点亮，但不影响操作。
+       */
+      const pickedCategories = React.useMemo(() => {
+        const out = new Set()
+        if (selected.size === 0) return out
+        const c = { final: 0, input: 0, intermediate: 0, unknown: 0 }
+        const seen = new Set()
+        const push = (it) => {
+          const rp = String(it?.relPath ?? '')
+          if (rp === '' || seen.has(rp) || !selected.has(rp)) return
+          seen.add(rp)
+          const b = bucketOf(it)
+          if (Object.prototype.hasOwnProperty.call(c, b)) c[b] += 1
+        }
+        for (const it of (Array.isArray(items) ? items : [])) push(it)
+        for (const it of (Array.isArray(visibleItems) ? visibleItems : [])) push(it)
+        if (Array.isArray(data?.groups)) {
+          for (const gr of data.groups) for (const f of (Array.isArray(gr?.files) ? gr.files : [])) push(f)
+        }
+        for (const k of Object.keys(c)) {
+          if (c[k] > 0 && c[k] >= Number(catCounts[k] ?? 0)) out.add(k)
+        }
+        return out
+      }, [selected, items, visibleItems, data, bucketOf, catCounts])
+
       const filterToggle = (key, label, swatchClass, count, alwaysShow) => {
         const on = categoryFilter[key] !== false
         if (!on && !alwaysShow && count === 0) return null
-        return h('button', {
-          type: 'button',
-          key: 'tog:' + key,
-          className: `dg-legendItem dg-legendToggle${on ? '' : ' dg-legendOff'}`,
-          'data-gallery-filter': key,
-          'data-gallery-filter-on': on ? '1' : '0',
-          title: on ? format(t('filterHideHint'), { label }) : format(t('filterShowHint'), { label }),
-          onClick: () => toggleCategory(key),
+        return h('span', {
+          className: 'dg-legendCell',
+          key: 'cell:' + key,
+          'data-gallery-legend-cell': key,
         }, [
-          h('span', { className: `dg-legendSwatch ${swatchClass}`, key: 's' }),
-          h('span', { key: 'l' }, label),
-          count > 0 ? h('span', { className: 'dg-legendCount', key: 'n' }, String(count)) : null,
+          h('button', {
+            type: 'button',
+            key: 'tog',
+            className: `dg-legendItem dg-legendToggle${on ? '' : ' dg-legendOff'}`,
+            'data-gallery-filter': key,
+            'data-gallery-filter-on': on ? '1' : '0',
+            title: on ? format(t('filterHideHint'), { label }) : format(t('filterShowHint'), { label }),
+            onClick: () => toggleCategory(key),
+          }, [
+            h('span', { className: `dg-legendSwatch ${swatchClass}`, key: 's' }),
+            h('span', { key: 'l' }, label),
+            count > 0 ? h('span', { className: 'dg-legendCount', key: 'n' }, String(count)) : null,
+          ]),
+          // 2026-11-25：图例上直接「选」——按标签圈定是批量操作的入口
+          count > 0
+            ? h('button', {
+                type: 'button',
+                key: 'pick',
+                className: 'dg-legendPick',
+                'data-gallery-legend-pick': key,
+                'data-on': pickedCategories.has(key) ? '1' : '0',
+                'data-busy': pickBusy === key ? '1' : '0',
+                disabled: pickBusy !== '',
+                title: format(t('legendPickHint'), { label }),
+                onClick: (event) => { event.stopPropagation(); void selectByCategory(key) },
+              }, pickBusy === key ? '…' : t('legendPick'))
+            : null,
         ])
       }
 
@@ -11022,6 +11304,35 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         openViewer(idx, null, list, false, null, rels[1])
       }, [selected, items, data, visibleItems, openViewer, showPasteNotice, t])
 
+      /**
+       * 按 relPath 集合取回完整条目（2026-11-25）。
+       * 选中项可能跨分类 / 跨对话组，当前列表里找不到时退回「relPath + 末段文件名」，
+       * 保证批量删除的确认清单不缺项。
+       */
+      const itemsForRelPaths = React.useCallback((rels) => {
+        const want = new Set((Array.isArray(rels) ? rels : []).map((rp) => String(rp ?? '')).filter((rp) => rp !== ''))
+        const out = []
+        const push = (it) => {
+          const rp = String(it?.relPath ?? '')
+          if (rp === '' || !want.has(rp)) return
+          if (out.some((x) => String(x?.relPath ?? '') === rp)) return
+          out.push(it)
+        }
+        for (const it of (Array.isArray(items) ? items : [])) push(it)
+        for (const it of (Array.isArray(visibleItems) ? visibleItems : [])) push(it)
+        if (Array.isArray(data?.groups)) {
+          for (const gr of data.groups) {
+            for (const f of (Array.isArray(gr?.files) ? gr.files : [])) push(f)
+          }
+        }
+        for (const rp of want) {
+          if (out.some((x) => String(x?.relPath ?? '') === rp)) continue
+          const seg = rp.split('/')
+          out.push({ relPath: rp, name: seg[seg.length - 1] ?? rp })
+        }
+        return out
+      }, [items, visibleItems, data])
+
       const selectedCount = selected.size
       const batchBar = selectedCount > 0
         ? h('div', { className: 'dg-batchBar', key: 'batchBar', 'data-gallery-batch-bar': true }, [
@@ -11041,6 +11352,20 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
                 title: t('batchCopyHint'),
                 onClick: () => { void doCopyAssets([...selected]) },
               }, `⧉ ${t('batchCopyFiles')} (${selectedCount})`),
+              // 2026-11-25 批量删除：一次删掉全部选中，二次确认后不可恢复
+              h('button', {
+                type: 'button', className: 'dg-btn dg-btnSmall dg-dangerBtn', key: 'deleteSel',
+                'data-gallery-batch-delete': true,
+                title: t('batchDeleteHint'),
+                onClick: () => { setDeleteTarget({ items: itemsForRelPaths([...selected]), busy: false }) },
+              }, `🗑 ${t('batchDeleteSelected')} (${selectedCount})`),
+              // 2026-11-25 批量隐藏：只从列表移除，不动文件
+              h('button', {
+                type: 'button', className: 'dg-btn dg-btnSmall', key: 'hideSel',
+                'data-gallery-batch-hide': true,
+                title: t('batchHideHint'),
+                onClick: () => { void doHide([...selected]) },
+              }, `🚫 ${t('batchHideSelected')} (${selectedCount})`),
               // 2026-11-17：正好选两张时给「对比」入口
               selectedCount === 2
                 ? h('button', {
@@ -11050,6 +11375,29 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
                     onClick: () => openCompareFromSelection(),
                   }, '\u21c4 ' + t('cmpBatchEnter'))
                 : null,
+              // 2026-11-25：一屏一屏点太慢，给「全选当前 / 反选」
+              h('button', {
+                type: 'button', className: 'dg-btn dg-btnSmall', key: 'selAll',
+                'data-gallery-batch-selall': true,
+                title: t('batchSelAllHint'),
+                onClick: () => {
+                  const rels = visibleItems.map((it) => String(it?.relPath ?? '')).filter((rp) => rp !== '')
+                  if (rels.length === 0) return
+                  setSelected(new Set(rels))
+                  setBatchMode(true)
+                },
+              }, t('batchSelAll')),
+              h('button', {
+                type: 'button', className: 'dg-btn dg-btnSmall', key: 'invert',
+                'data-gallery-batch-invert': true,
+                title: t('batchInvertHint'),
+                onClick: () => {
+                  const rels = visibleItems.map((it) => String(it?.relPath ?? '')).filter((rp) => rp !== '')
+                  if (rels.length === 0) return
+                  setSelected((prev) => new Set(rels.filter((rp) => !prev.has(rp))))
+                  setBatchMode(true)
+                },
+              }, t('batchInvert')),
               h('button', {
                 type: 'button', className: 'dg-btn dg-btnSmall', key: 'clearmark',
                 'data-gallery-batch-clear': true,
@@ -11252,8 +11600,10 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           // v1.3.0：这批刚产出的终稿加高亮 class（上限 3 张，由 freshFinalSet 控制）
           const isFreshFinal = freshFinalSet.has(item.relPath)
           return h('div', {
-            className: `dg-cardWrap${checked ? ' dg-cardChecked' : ''}${selectMode ? ' dg-cardSelectable' : ''}${isFreshFinal ? ' dg-cardFreshFinal' : ''}`,
+            className: `dg-cardWrap${checked ? ' dg-cardChecked' : ''}${selectMode ? ' dg-cardSelectable' : ''}${isFreshFinal ? ' dg-cardFreshFinal' : ''}${item.inherited ? ' dg-inheritedCard' : ''}${item.shared ? ' dg-sharedCard' : ''}`,
             'data-gallery-fresh-final': isFreshFinal ? '1' : '0',
+            'data-gallery-inherited': item.inherited ? '1' : '0',
+            'data-gallery-shared': item.shared ? '1' : '0',
             key: key + ':wrap',
             // 三类卡片统一可拖（图片/文件/音视频）：捕获阶段 dragstart 据此起原生拖出真文件。
             draggable: true,
@@ -11281,6 +11631,20 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
               : undefined,
           }, [
             node,
+            // 2026-11-24：来源标记——只标来源，不降级交互（点开/批注/引用/批量照常）
+            item.shared
+              ? h('span', {
+                  className: 'dg-sharedBadge',
+                  key: 'sharedBadge',
+                  title: t('sharedBadgeHint'),
+                }, t('sharedBadge'))
+              : item.inherited
+              ? h('span', {
+                  className: 'dg-inheritedBadge',
+                  key: 'inheritedBadge',
+                  title: t('inheritedBadgeHint'),
+                }, t('inheritedBadge'))
+              : null,
             // 图片卡片右上角「复制文件」（2026-11-19 老板要）：等价右键菜单那条，
             // 写系统剪贴板，Ctrl+V 能直接粘出文件；文件卡片另有自己的按钮，故只对图片出。
             kind === 'image'
@@ -11653,6 +12017,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
             (visibleItems.length > 0
               ? h('div', { className: `dg-grid${kind === 'file' ? ' dg-fileGrid' : ''}${kind === 'media' ? ' dg-mediaGrid' : ''}`, key: 'grid' }, kind === 'media' ? mediaGridChildren : gridChildren)
               : h('div', { className: 'dg-groupEmpty', key: 'filterEmpty' }, t('filterEmptyHint'))),
+
             data.scan.capped
               ? h('div', { className: 'dg-more', key: 'capped' }, t('capped'))
               : null,
@@ -11934,22 +12299,50 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
               onOpenOriginal: isImageItem(ctxMenu.item)
                 ? () => { openViewerByItem(ctxMenu.item, true) }
                 : undefined,
-              onHide: () => { void doHide(ctxMenu.item) },
+              onHide: () => {
+                const curRel = String(ctxMenu.item?.relPath ?? '')
+                // 批量模式下右键已选中的卡片：隐藏整批，而不是只隐藏这一张
+                void doHide(selected.size > 1 && selected.has(curRel) ? [...selected] : [ctxMenu.item])
+              },
+              hideLabel: selected.size > 1 && selected.has(String(ctxMenu.item?.relPath ?? ''))
+                ? format(t('ctxHideSelected'), { n: selected.size })
+                : undefined,
               onReveal: () => { void doReveal(ctxMenu.item) },
               // v0.17.0：【写进输入框】而不是复制到剪贴板 —— 少一步粘贴。
               // 写不进 composer 时自动退回剪贴板（见 writeAssetToComposer）。
               onCopy: () => { writeAssetToComposer(ctxMenu.item, ctxMenu.absPath) },
               // v0.16.0 单文件复制：写系统剪贴板文件列表，可在别的对话粘贴
-              onCopyFile: () => { void doCopyAssets([ctxMenu.item.relPath]) },
-              onDelete: () => setDeleteTarget({ item: ctxMenu.item, busy: false }),
+              // 2026-11-25：批量选中时右键已选卡片 = 复制整批（与删除 / 隐藏同口径）
+              onCopyFile: () => {
+                const curRel = String(ctxMenu.item?.relPath ?? '')
+                void doCopyAssets(selected.size > 1 && selected.has(curRel) ? [...selected] : [curRel])
+              },
+              copyFileLabel: selected.size > 1 && selected.has(String(ctxMenu.item?.relPath ?? ''))
+                ? format(t('ctxCopyFileSelected'), { n: selected.size })
+                : undefined,
+              onDelete: () => {
+                const curRel = String(ctxMenu.item?.relPath ?? '')
+                // 批量模式下右键已选中的卡片：删整批，而不是只删这一张
+                const rels = selected.size > 1 && selected.has(curRel) ? [...selected] : [curRel]
+                setDeleteTarget({ items: itemsForRelPaths(rels), busy: false })
+              },
+              deleteLabel: selected.size > 1 && selected.has(String(ctxMenu.item?.relPath ?? ''))
+                ? format(t('ctxDeleteSelected'), { n: selected.size })
+                : undefined,
               // v0.16.0：列表级粘贴（右键任意卡片也出现）
               onPaste: () => { void doPaste() },
               // v0.14.2：改标签 / 恢复自动，表态层已下线
               onEditLabel: () => {
                 const target = ctxMenu.item
+                const curRel = String(target?.relPath ?? '')
                 closeContextMenu()
-                openLabelDialog(target)
+                // 2026-11-25：批量选中时改标签 = 改整批
+                if (selected.size > 1 && selected.has(curRel)) openBatchLabelDialog()
+                else openLabelDialog(target)
               },
+              editLabelLabel: selected.size > 1 && selected.has(String(ctxMenu.item?.relPath ?? ''))
+                ? format(t('labelEditSelected'), { n: selected.size })
+                : undefined,
               ...(manualLabelOf(ctxMenu.item.relPath) !== null
                 ? {
                     onResetLabel: () => {
@@ -11985,12 +12378,25 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         : null
 
       // 删除确认弹窗
+      const deleteItems = deleteTarget === null
+        ? []
+        : (Array.isArray(deleteTarget.items) ? deleteTarget.items : [])
+      const deleteMany = deleteItems.length > 1
       const confirmLayer = deleteTarget !== null
         ? h(ConfirmDialog, {
             key: 'confirmLayer',
             t,
-            name: deleteTarget.item.name,
+            title: deleteMany ? format(t('ctxDeleteManyTitle'), { n: deleteItems.length }) : undefined,
+            name: deleteMany
+              ? format(t('ctxDeleteManySummary'), { n: deleteItems.length })
+              : String(deleteItems[0]?.name ?? ''),
+            files: deleteMany
+              ? deleteItems.map((it) => String(it?.name ?? it?.relPath ?? ''))
+              : undefined,
             busy: deleteTarget.busy === true,
+            warn: deleteItems.some((it) => it?.inherited === true)
+              ? t('inheritedDeleteWarn')
+              : (deleteItems.some((it) => it?.shared === true) ? t('sharedDeleteWarn') : null),
             onCancel: () => setDeleteTarget(null),
             onConfirm: () => { void doDelete() },
           })
