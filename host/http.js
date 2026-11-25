@@ -18,6 +18,7 @@ import { isInside } from './fsutil.js'
 import { cropMediaFile } from './trim.js'
 import {
   resolveOptions, readSettingsFile, readHiddenList,
+  readHiddenSessions, writeHiddenSessions,
   validateRootCandidate, readSettingsPayload,
 } from './settings.js'
 import { scanGallery, resolveSessionScope, parentDirOf } from './scan.js'
@@ -41,6 +42,14 @@ const listInflight = new Map()
 // 2026-11-15：全局分组的全量明细留在服务端，响应只带每组前 60 张。
 // 前端点「再显示 60 张」时用 groupMore 分批取，避免一次传 2 MB 拖慢加载。
 const GROUP_PAGE = 60
+/**
+ * 「再显示」单次最多给 60，但**增量刷新要整组全量重取**（2026-11-25 修）。
+ *
+ * 前端每秒轮询 changes，发现某组有变动就把该组明细整个换新。它必须拿到全量，
+ * 否则大组会被截成 60 条 —— 这正是「全局里这组只剩 2 张」的成因之一
+ * （另一半是漏传 groupKey，服务端找不到组直接回空数组）。
+ */
+const GROUP_MORE_LIMIT_MAX = 5000
 const GROUPS_FULL_CACHE_MS = 10 * 60 * 1000
 const groupsFullCache = new Map()
 
@@ -107,6 +116,36 @@ function groupsCacheKey(kind, scope, sessionId, resolved, settingsStamp, derived
  */
 function manifestExportDir() {
   return path.join(DSH_HOME, 'gallery-exports')
+}
+
+/**
+ * 导出索引（v1.6.2）：`<导出目录>/index.json`，一份「我给谁导过什么」的流水账。
+ *
+ * 2026-11-25（老板报）：导出完只有一条几秒就消失的提示，关掉面板就再也找不回来；
+ * 多次导出后一堆 `交付清单_...` 在文件夹里也认不出谁是谁。这里每导一次记一条
+ * （来源视图 / 对话标题 / 条数 / 分类计数 / 文件名），面板的「导出记录」读它，
+ * 目录里实际存在的文件为准 —— 索引只是让每条记录带上「这是哪个对话导的」。
+ * 索引本身也落在导出目录，且**不参与扫描**（导出目录不在 roots 内）。
+ */
+function exportIndexFile() {
+  return path.join(manifestExportDir(), 'index.json')
+}
+
+async function readExportIndex() {
+  try {
+    const raw = await fsp.readFile(exportIndexFile(), 'utf8')
+    const doc = JSON.parse(raw)
+    return Array.isArray(doc?.entries) ? doc.entries.filter((e) => e !== null && typeof e === 'object') : []
+  } catch {
+    return []   // 还没有索引 / 索引坏了：都按「没有」，靠目录兜底
+  }
+}
+
+/** 新记录放最前，最多留 200 条（清单文件本身不删，只是不再列进索引）。 */
+async function appendExportIndex(entry) {
+  const list = await readExportIndex()
+  list.unshift(entry)
+  await writeFileAtomic(exportIndexFile(), `${JSON.stringify({ version: 1, entries: list.slice(0, 200) }, null, 2)}\n`)
 }
 
 /** 同名不覆盖：加 -2 / -3。连点两次导出，两份都留着。 */
@@ -197,12 +236,16 @@ import { writeContext, writePanel, readState, contextFilePath } from './context.
 import { makeFeedback, renderFeedbackText } from './feedback-text.js'
 import { LABEL_CATEGORIES, readLabels, setLabel, setLabelsBatch, deleteLabels, labelsFilePath } from './labels.js'
 import {
-  registerFrame, deleteFrames, frameTimecode, makeFrameName, makeMaskName, maskPolygonMeta,
+  registerFrame, deleteFrames, restoreFrames, frameTimecode, makeFrameName, makeMaskName, maskPolygonMeta,
 } from './frames.js'
+// v1.6.0：删除先进回收区（可 Ctrl+Z 撤销），不再直接 rm
+import {
+  moveToTrash, restoreBatch, discardBatch, listTrash, isSafeToken, trashRootDir,
+} from './trash.js'
 // v1.5.0：交付清单。一个内核两个出口 —— 导出（这里）与 gallery_manifest 工具（tools.js）
 // 共用 manifest.js，保证「您看到的清单」和「我读到的清单」永远是同一份数字。
 import { writeFileAtomic } from './atomic.js'
-import { buildManifest, manifestToCsv, manifestToJson, manifestFileBase } from './manifest.js'
+import { buildManifest, manifestToCsv, manifestToJson, manifestFileBase, sanitizeSource } from './manifest.js'
 
 /** reveal 相关的排查日志（失败/异常时便于定位，不影响功能）。 */
 /**
@@ -825,6 +868,8 @@ export function registerOpsRoute(ctx, config) {
                 ? body.relPaths.map((p) => String(p ?? '')).filter((p) => p !== '')
                 : []
               const includeNotes = body?.includeNotes !== false
+              // v1.6.2：来源标签（「全局资产」或当前对话标题），拼进文件名并在索引里留档
+              const sourceLabel = sanitizeSource(body?.sourceLabel)
 
               const optsResolved = resolveOptions(config)
               let settingsStamp = 0
@@ -871,7 +916,7 @@ export function registerOpsRoute(ctx, config) {
               }
 
               const dir = manifestExportDir()
-              const base = manifestFileBase(manifest, { categories })
+              const base = manifestFileBase(manifest, { categories, source: sourceLabel })
               const exts = format === 'both' ? ['csv', 'json'] : [format]
               const files = []
               for (const ext of exts) {
@@ -883,10 +928,34 @@ export function registerOpsRoute(ctx, config) {
                 files.push({ ext, path: target, bytes: Buffer.byteLength(content, 'utf8') })
               }
 
+              // v1.6.2：登记到索引，供面板「导出记录」长期回看 / 再次引用。
+              // 索引写失败不影响导出本身（文件已经在盘上了），只吞掉 —— 少了记录比丢清单严重得多。
+              try {
+                const csvEntry = files.find((f) => f.ext === 'csv') ?? files[0]
+                const jsonEntry = files.find((f) => f.ext === 'json')
+                await appendExportIndex({
+                  file: csvEntry === undefined ? base : path.basename(csvEntry.path),
+                  jsonFile: jsonEntry === undefined ? '' : path.basename(jsonEntry.path),
+                  base,
+                  at: Date.now(),
+                  scope,
+                  sessionId,
+                  sessionTitle: sanitizeSource(body?.sessionTitle),
+                  kind,
+                  total: manifest.items.length,
+                  counts: manifest.summary?.counts ?? {},
+                  categories,
+                  bytes: files.reduce((n, f) => n + (Number(f.bytes) || 0), 0),
+                })
+              } catch (error) {
+                LOG_RESOLVE('exportIndexFailed', { message: String(error?.message ?? error) })
+              }
+
               return json({
                 ok: true,
                 dir,
                 base,
+                source: sourceLabel,
                 files,
                 count: manifest.items.length,
                 summary: manifest.summary,
@@ -896,6 +965,81 @@ export function registerOpsRoute(ctx, config) {
             } catch (error) {
 
               return json({ ok: false, error: { code: 'export-failed', message: String(error?.message ?? error) } }, 500)
+
+            }
+
+          }
+
+          // v1.6.2：导出记录（只读）。面板「导出记录」列历史清单，随时再说一次路径。
+          // 索引给「来源 / 分类 / 条数」，目录给「还在不在 / 多大」—— 两边合起来才算准。
+          if (op === 'exportList') {
+
+            try {
+
+              const dir = manifestExportDir()
+              let names = []
+              try { names = await fsp.readdir(dir) } catch { names = [] }
+              const onDisk = []
+              for (const name of names) {
+                const lower = name.toLowerCase()
+                if (lower === 'index.json') continue
+                if (!lower.endsWith('.csv') && !lower.endsWith('.json')) continue
+                let st = null
+                try { st = await fsp.stat(path.join(dir, name)) } catch { st = null }
+                if (st === null || !st.isFile()) continue
+                onDisk.push({ name, size: st.size, mtime: st.mtimeMs })
+              }
+
+              const byName = new Map(onDisk.map((f) => [f.name, f]))
+              const indexed = await readExportIndex()
+              const items = []
+              const seen = new Set()
+              for (const entry of indexed) {
+                const name = String(entry?.file ?? '')
+                if (name === '' || seen.has(name)) continue
+                seen.add(name)
+                const st = byName.get(name)
+                items.push({
+                  ...entry,
+                  file: name,
+                  exists: st !== undefined,
+                  size: st === undefined ? (Number(entry?.bytes) || 0) : st.size,
+                })
+              }
+
+              // 索引里没有的（1.6.1 及更早导的、或人手放进去的）：从文件名里认时间与条数。
+              for (const f of onDisk) {
+                if (seen.has(f.name)) continue
+                seen.add(f.name)
+                if (f.name.toLowerCase().endsWith('.json')) continue   // 只按 csv 列一条，别 csv/json 各算一次
+                const stamp = f.name.match(/(\d{8})-(\d{4})/)
+                let at = f.mtime
+                if (stamp !== null) {
+                  const y = Number(stamp[1].slice(0, 4))
+                  const mo = Number(stamp[1].slice(4, 6)) - 1
+                  const d = Number(stamp[1].slice(6, 8))
+                  const hh = Number(stamp[2].slice(0, 2))
+                  const mi = Number(stamp[2].slice(2, 4))
+                  const parsed = new Date(y, mo, d, hh, mi).getTime()
+                  if (Number.isFinite(parsed)) at = parsed
+                }
+                const cnt = f.name.match(/_(\d+)张/)
+                items.push({
+                  file: f.name,
+                  at,
+                  total: cnt === null ? null : Number(cnt[1]),
+                  size: f.size,
+                  exists: true,
+                  legacy: true,
+                })
+              }
+
+              items.sort((a, b) => Number(b?.at ?? 0) - Number(a?.at ?? 0))
+              return json({ ok: true, dir, items: items.slice(0, 100), total: items.length })
+
+            } catch (error) {
+
+              return json({ ok: false, error: { code: 'export-list-failed', message: String(error?.message ?? error) } }, 500)
 
             }
 
@@ -1001,16 +1145,21 @@ export function registerOpsRoute(ctx, config) {
                 : body?.kind === 'media' ? 'media'
                   : 'image'
               const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
-              const groupKey = String(body?.groupKey ?? '')
+              // groupKey 优先用调用方给的；没给就用 sessionId 兜底 ——
+              // 漏传就回空数组、前端再拿空数组覆盖整组，是「组只剩几张」那类事故的源头。
+              const groupKey = String(body?.groupKey ?? '') || sessionId
               const offset = Math.max(0, Math.trunc(Number(body?.offset)) || 0)
-              const limit = Math.max(1, Math.min(GROUP_PAGE, Math.trunc(Number(body?.limit)) || GROUP_PAGE))
+              const limit = Math.max(1, Math.min(GROUP_MORE_LIMIT_MAX, Math.trunc(Number(body?.limit)) || GROUP_PAGE))
               let settingsStamp = 0
               try { settingsStamp = (await fsp.stat(resolved.settingsFile)).mtimeMs } catch { /* 文件还不存在 */ }
               // 与 list 用同一把尺子：登记文件变了，缓存必须换一份，否则「再显示 N 张」会回旧快照
               const derived = await derivedStamp(resolved)
               const gKey = groupsCacheKey(kind, 'global', sessionId, resolved, settingsStamp, derived)
               let entry = groupsFullCache.get(gKey)
-              if (entry === undefined || Date.now() - entry.at > GROUPS_FULL_CACHE_MS) {
+              // v1.6.5：force=true 来自「点开已归档 / 已隐藏的对话」。
+              // 这两类组平时不参与增量刷新，全靠点开这一次拿新数据，
+              // 所以必须绕开 10 分钟缓存真扫一次，否则点开还是旧快照。
+              if (body?.force === true || entry === undefined || Date.now() - entry.at > GROUPS_FULL_CACHE_MS) {
                 const fresh = await scanGallery(config, kind, 'global', sessionId, 1)
                 entry = { at: Date.now(), groups: Array.isArray(fresh.groups) ? fresh.groups : [] }
                 groupsFullCache.set(gKey, entry)
@@ -2206,6 +2355,33 @@ export function registerOpsRoute(ctx, config) {
 
           // ---------- 全部恢复（清空隐藏列表）----------
 
+          // ---------- v1.6.5：隐藏 / 恢复对话（全局资产的对话列表管理）----------
+          //
+          // 只写设置里的 hiddenSessions，不动文件、不动会话、不改扫描结果。
+          // 走增量（add / remove）而不是整表覆盖：两处界面同时点，谁也不会抹掉谁。
+          if (op === 'setHiddenSessions') {
+
+            const add = Array.isArray(body?.add) ? [...body.add] : []
+            const remove = Array.isArray(body?.remove) ? [...body.remove] : []
+            const single = typeof body?.sessionId === 'string' ? body.sessionId.trim() : ''
+            if (single !== '') {
+              if (body?.hidden === true) add.push(single)
+              else if (body?.hidden === false) remove.push(single)
+            }
+            if (add.length === 0 && remove.length === 0) {
+              return json({ ok: false, error: { code: 'nothing-to-do', message: '缺少 sessionId 或 add/remove 列表' } }, 400)
+            }
+
+            try {
+              const opts = resolveOptions(config)
+              const list = await writeHiddenSessions(opts.settingsFile, { add, remove })
+              return json({ ok: true, hiddenSessions: list })
+            } catch (error) {
+              return json({ ok: false, error: { code: 'hide-session-failed', message: String(error?.message ?? error) } }, 500)
+            }
+
+          }
+
           if (op === 'clearHidden') {
 
             try {
@@ -2269,12 +2445,12 @@ export function registerOpsRoute(ctx, config) {
             }
 
             const opts = resolveOptions(config)
-            const deletedAbs = []
-            const deletedRels = []
             const failed = []
             const notFound = []
+            const targets = []
 
-            // 逐个删：单个失败不影响其余，最后如实回报
+            // 先全部解析成绝对路径，再统一搬 —— 顺序不能反：
+            // 解析失败的不能挡住已解析的，搬的时候也得知道它原本属于哪个产出根。
             for (const p of reqPaths) {
               const relKey = p.replace(/\\/g, '/')
               try {
@@ -2283,13 +2459,37 @@ export function registerOpsRoute(ctx, config) {
                   notFound.push(relKey)
                   continue
                 }
-                await fsp.rm(found.absolute, { force: true })
-                deletedAbs.push(found.absolute)
-                deletedRels.push(relKey)
+                targets.push({
+                  relPath: relKey,
+                  absPath: found.absolute,
+                  root: rootOfAbs(resolved.roots, found.absolute),
+                })
               } catch (error) {
                 failed.push({ path: relKey, reason: String(error?.message ?? error) })
               }
             }
+
+            // 删除前先拍登记快照：撤销时要把 marks / labels / frames 一起补回来。
+            // 键大小写按「归一后」比，Windows 上同一文件两种写法都算命中。
+            const touched = new Set(targets.map((t) => t.relPath.toLowerCase()))
+            const pickByRel = (obj) => {
+              const out = {}
+              for (const [k, v] of Object.entries(obj ?? {})) {
+                if (touched.has(String(k).toLowerCase())) out[k] = v
+              }
+              return out
+            }
+            const snapshot = { marks: {}, labels: {}, frames: {} }
+            try { snapshot.marks = pickByRel((await readMarks(opts.settingsFile)).marks) } catch { /* 快照失败只影响撤销时补标记 */ }
+            try { snapshot.labels = pickByRel((await readLabels(opts.settingsFile)).labels) } catch { /* 同上 */ }
+            try { snapshot.frames = pickByRel((await readFrames(opts.settingsFile)).frames) } catch { /* 同上 */ }
+
+            // v1.6.0：搬进回收区，不再 fsp.rm —— 撤销靠它，没有回收区就没有撤销
+            const trashed = await moveToTrash(opts.settingsFile, targets, snapshot)
+            const absByRel = new Map(targets.map((t) => [t.relPath, t.absPath]))
+            const deletedRels = trashed.moved.map((m) => String(m.relPath))
+            const deletedAbs = deletedRels.map((rel) => absByRel.get(rel) ?? '')
+            for (const f of trashed.failed) failed.push({ path: String(f?.path ?? ''), reason: String(f?.reason ?? '') })
 
             if (deletedRels.length === 0) {
               return json({
@@ -2316,17 +2516,28 @@ export function registerOpsRoute(ctx, config) {
               }
             } catch { /* 忽略：隐藏列表清理失败不影响删除结果 */ }
 
-            // 标记 / 手动标签 / 截帧登记一并清掉，避免残留孤儿记录（失败不影响删除结果）
+            // 标记 / 手动标签 / 截帧登记一并清掉，避免残留孤儿记录（失败不影响删除结果）。
+            // 与快照同一口径：按键归一后匹配，别因为大小写不同留下一堆孤儿。
             let marksLeft = {}
             try {
               const cur = await readMarks(opts.settingsFile)
               const next = { ...cur.marks }
-              for (const rel of deletedRels) delete next[rel]
+              for (const k of Object.keys(next)) {
+                if (touched.has(k.toLowerCase())) delete next[k]
+              }
               await writeMarks(opts.settingsFile, next)
               marksLeft = next
             } catch { /* 忽略 */ }
-            try { await deleteLabels(opts.settingsFile, deletedRels) } catch { /* 忽略 */ }
-            try { await deleteFrames(opts.settingsFile, deletedRels) } catch { /* 忽略 */ }
+            try {
+              const cur = await readLabels(opts.settingsFile)
+              const hitKeys = Object.keys(cur.labels ?? {}).filter((k) => touched.has(k.toLowerCase()))
+              if (hitKeys.length > 0) await deleteLabels(opts.settingsFile, hitKeys)
+            } catch { /* 忽略 */ }
+            try {
+              const cur = await readFrames(opts.settingsFile)
+              const hitKeys = Object.keys(cur.frames ?? {}).filter((k) => touched.has(k.toLowerCase()))
+              if (hitKeys.length > 0) await deleteFrames(opts.settingsFile, hitKeys)
+            } catch { /* 忽略 */ }
 
             return json({
               ok: failed.length === 0 && notFound.length === 0,
@@ -2335,8 +2546,133 @@ export function registerOpsRoute(ctx, config) {
               failed,
               notFound,
               marks: marksLeft,
+              // 前端拿它做 Ctrl+Z（撤销 = 把这批从回收区搬回来）
+              undoToken: trashed.token,
+              trashed: deletedRels.length,
+              trashRetainHours: Number(opts.trashTtlHours) > 0 ? Number(opts.trashTtlHours) : 0,
             })
 
+          }
+
+          // ---------- 撤销删除（v1.6.0，前端 Ctrl+Z）----------
+          //
+          // 语义只有一条：**把这一批从回收区搬回原位**。
+          // 不新建文件、不猜内容 —— 撤销能成立的前提是删除时压根没真删。
+          //
+          // 三处克制的设计：
+          //   · 原位已有同名文件 → 记冲突，绝不覆盖（那份新的更可能是当前要用的）；
+          //   · 登记（marks/labels/frames）只补「当前没有」的，不盖掉删除后重新做的标注；
+          //   · 只有整批都还原成功才丢批次目录，有冲突/失败就留着，人能再试。
+          if (op === 'undoDelete') {
+            const token = String(body?.token ?? '')
+            if (!isSafeToken(token)) {
+              return json({ ok: false, error: { code: 'invalid-token', message: '撤销凭证无效' } }, 400)
+            }
+            try {
+              const opts = resolveOptions(config)
+              const result = await restoreBatch(opts.settingsFile, token)
+              if (result === null || result.ok === false && !Array.isArray(result.restored)) {
+                return json({
+                  ok: false,
+                  error: { code: 'batch-not-found', message: '这批已经不在回收区（可能已过保留期被清理）' },
+                }, 404)
+              }
+              const restored = Array.isArray(result.restored) ? result.restored : []
+              const failed = Array.isArray(result.failed) ? result.failed : []
+              const conflicts = Array.isArray(result.conflicts) ? result.conflicts : []
+              const state = result.state ?? { marks: {}, labels: {}, frames: {} }
+              let stateRestored = 0
+
+              try {
+                const cur = await readMarks(opts.settingsFile)
+                const have = new Set(Object.keys(cur.marks ?? {}).map((k) => k.toLowerCase()))
+                const add = Object.entries(state.marks ?? {})
+                  .filter(([k]) => !have.has(String(k).toLowerCase()))
+                  .map(([k, v]) => ({ path: k, mark: v }))
+                if (add.length > 0) {
+                  await setMarksBatch(opts.settingsFile, add)
+                  stateRestored += add.length
+                }
+              } catch { /* 登记补不回来不影响文件已还原 */ }
+
+              try {
+                const cur = await readLabels(opts.settingsFile)
+                const have = new Set(Object.keys(cur.labels ?? {}).map((k) => k.toLowerCase()))
+                const add = Object.entries(state.labels ?? {})
+                  .filter(([k]) => !have.has(String(k).toLowerCase()))
+                  .map(([k, v]) => ({ path: k, label: v }))
+                if (add.length > 0) {
+                  await setLabelsBatch(opts.settingsFile, add)
+                  stateRestored += add.length
+                }
+              } catch { /* 同上 */ }
+
+              // restoreFrames 自己会跳过已存在的键
+              try { await restoreFrames(opts.settingsFile, state.frames) } catch { /* 同上 */ }
+
+              let discarded = false
+              if (failed.length === 0 && conflicts.length === 0) {
+                discarded = await discardBatch(opts.settingsFile, token)
+              }
+
+              return json({
+                ok: restored.length > 0,
+                token,
+                restored: restored.length,
+                restoredPaths: restored.map((r) => String(r.relPath ?? '')),
+                failed,
+                conflicts,
+                stateRestored,
+                discarded,
+              })
+            } catch (error) {
+              return json({ ok: false, error: { code: 'undo-failed', message: String(error?.message ?? error) } }, 500)
+            }
+          }
+
+          // ---------- 回收区清单（排障用：还能撤销哪些批次）----------
+          if (op === 'trashList') {
+            try {
+              const opts = resolveOptions(config)
+              const batches = await listTrash(opts.settingsFile, 20)
+              return json({
+                ok: true,
+                dir: trashRootDir(opts.settingsFile),
+                batches,
+                retainHours: Number(opts.trashTtlHours) > 0 ? Number(opts.trashTtlHours) : 0,
+              })
+            } catch (error) {
+              return json({ ok: false, error: { code: 'trash-list-failed', message: String(error?.message ?? error) } }, 500)
+            }
+          }
+
+          // ---------- 打开导出目录（v1.6.0：清单落盘后的便捷入口）----------
+          //
+          // 只认「导出目录」这一个位置，不接受调用方传任意路径 ——
+          // 否则这就是一个「用系统程序打开任意文件」的口子，没必要开。
+          if (op === 'openExportDir') {
+            const dir = manifestExportDir()
+            try { await fsp.mkdir(dir, { recursive: true }) } catch { /* 打不开归下面统一报 */ }
+            try {
+              let command
+              let args
+              if (process.platform === 'win32') {
+                command = 'explorer.exe'
+                args = [dir]
+              } else if (process.platform === 'darwin') {
+                command = 'open'
+                args = [dir]
+              } else {
+                command = 'xdg-open'
+                args = [dir]
+              }
+              // 不手工加引号、不经 cmd 中转（v0.13.5 的教训：引号会变成字面字符）
+              const child = spawn(command, args, { detached: true, stdio: 'ignore' })
+              child.unref()
+              return json({ ok: true, dir, via: command })
+            } catch (error) {
+              return json({ ok: false, dir, error: { code: 'open-failed', message: String(error?.message ?? error) } }, 500)
+            }
           }
 
           // ---- v0.16.0 粘贴 / 裁剪：把外部素材或派生资产落进当前对话目录 ----

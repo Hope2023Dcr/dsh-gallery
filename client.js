@@ -1046,6 +1046,23 @@ async function encodeMaskPngBytes(imageData, width, height) {
       groupInput: '素材 {n}',
       groupIntermediate: '过程稿 {n}',
       groupUnknown: '未归类 {n}',
+      // v1.6.4：跨对话共用 —— 同一个文件被多个对话引用（不合并、不去重，只标归属）
+      groupShared: '共用 {n} 张',
+      groupSharedTip: '这 {n} 张是同一个文件，{who} 也在用。在任一对话里删除或隐藏，两边会一起生效；同名但不同路径的两份文件互不影响。',
+      sharedWithSome: '其他对话',
+      sharedWithMany: '{first} 等 {n} 个对话',
+      // ===== v1.6.5：卡片级共用标注 + 隐藏对话合集 =====
+      cardSharedWith: '共用 {n} 个对话',
+      cardSharedWithHint: '这张图是同一个文件（同一路径），同时被 {n} 个对话记录过。在任一处删除或隐藏，各对话里会一起生效；同名但不同路径的两份文件互不影响。',
+      hiddenGroupTitle: '已隐藏对话',
+      hiddenGroupHint: '这些是你收起来的对话，资产本身没动；默认沿用上次扫描结果，点开其中一个才刷新那一个。右键任意一行选「在全局列表显示」就能放回去。',
+      archivedGroupTitle: '已归档对话',
+      archivedGroupHint: '宿主已把这些对话归档；默认沿用上次扫描结果，点开其中一个才刷新那一个。资产与标注都没动，仍可「打开对话」尝试切回。',
+      ctxHideSession: '隐藏当前对话',
+      ctxShowSession: '在全局列表显示',
+      hideSessionDone: '已收进「已隐藏对话」：{title}',
+      showSessionDone: '已放回全局列表：{title}',
+      hideSessionFailed: '操作失败：{message}',
       groupTruncated: '仅显示最近 {shown} 个，共 {total} 个',
       groupShowMore: '再显示 {step} 张 · 已显示 {shown} / 共 {total}',
       groupHistoryTitle: '历史资产',
@@ -1124,9 +1141,9 @@ async function encodeMaskPngBytes(imageData, width, height) {
       ctxCopy: '写进输入框',
       ctxDelete: '删除文件',
       ctxDeleteSelected: '删除选中的 {n} 个文件',
-      ctxDeleteManyTitle: '确认删除 {n} 个文件？此操作不可恢复',
+      ctxDeleteManyTitle: '把 {n} 个文件移到回收区？可撤销',
       ctxDeleteManySummary: '共 {n} 个文件',
-      ctxDeletePartial: '已删除 {n} 个，{fail} 个失败',
+      ctxDeletePartial: '已移到回收区 {n} 个，{fail} 个失败',
       batchDeleteSelected: '删除所选',
       batchDeleteHint: '删除选中的全部文件（会二次确认，不可恢复）',
       // 2026-11-25 按标签圈选：把某一类下的文件一次选中，再交给批量动作
@@ -1140,8 +1157,8 @@ async function encodeMaskPngBytes(imageData, width, height) {
       batchInvertHint: '选中当前列表里还没选中的文件',
       ctxCopyFileSelected: '复制选中的 {n} 个文件',
       labelEditSelected: '改这 {n} 张的标签',
-      ctxDeleteConfirm: '确认删除？此操作不可恢复',
-      ctxDeleteYes: '确认删除',
+      ctxDeleteConfirm: '移到回收区？可撤销（Ctrl+Z）',
+      ctxDeleteYes: '移到回收区',
       ctxDeleteNo: '取消',
       // 批注删除按钮的 title 与卡片删除共用 t('delete')
       delete: '删除',
@@ -1290,6 +1307,9 @@ async function encodeMaskPngBytes(imageData, width, height) {
       thumbFailed: '无法加载',
       dims: '{w} × {h}',
       dimsUnknown: '尺寸未知',
+      // v1.6.3：同一视图里的同名文件（不是重复，是两份不同目录的真文件）
+      sameNameIn: '同名 {n} 份 · {dir}',
+      rootDir: '根目录',
       close: '关闭',
       prev: '上一张',
       next: '下一张',
@@ -1315,9 +1335,52 @@ async function encodeMaskPngBytes(imageData, width, height) {
       // v1.5.0 导出交付清单：CSV 进 Excel、JSON 给下一轮，落在 ~/.dsh/gallery-exports/
       batchExportManifest: '导出清单',
       batchExportHint: '把选中的这批导出成交付清单（CSV 给 Excel 看、JSON 给下一轮读），存到 ~/.dsh/gallery-exports/；同名不覆盖',
-      exportOk: '已导出 {n} 条清单：{path}',
+      exportOk: '已导出 {n} 条：{name}',
       exportEmpty: '这批没有可导出的文件（可能还没打分类）',
       exportFailed: '导出清单失败：{message}',
+      // v1.6.0：清单落盘后给三个便捷出口（打开文件夹 / 复制路径 / 写进输入框）
+      exportOpenDir: '打开文件夹',
+      exportCopyPath: '复制路径',
+      exportToComposer: '写进输入框',
+      // v1.6.2：导出记录（常驻，事后照样能再引用一次）
+      exportHistoryEntry: '导出记录',
+      exportHistoryOpen: '导出记录',
+      exportHistoryTitle: '导出记录',
+      exportHistoryHint: '以前导出的交付清单都在这；点「写进输入框」就能把这批清单再递给助手',
+      exportHistoryEmpty: '还没有导出过清单',
+      exportHistoryLoading: '读取中…',
+      exportHistoryFailed: '读不到导出记录：{message}',
+      exportHistorySource: '来源',
+      exportHistoryCount: '{n} 条',
+      exportHistoryMissing: '文件已不在（可能被移走或删了）',
+      exportHistoryRefresh: '刷新',
+      exportHistoryLegacy: '早期导出',
+      exportHistoryGlobal: '全局资产',
+      exportHistoryUnknownSource: '未记录来源',
+      exportPathCopied: '清单路径已复制到剪贴板',
+      exportPathCopyFailed: '复制路径失败，请手动选中提示里的路径',
+      exportOpenFailed: '打不开导出文件夹：{message}',
+      exportDraftReady: '清单路径已写进输入框（只写不发）',
+      exportDraftInClipboard: '写不进输入框，路径已放剪贴板',
+      // v1.6.0 撤销（Ctrl+Z）：删除移到回收区、隐藏取消隐藏，两类都能撤
+      undoAction: '撤销 (Ctrl+Z)',
+      undoNothing: '没有可撤销的操作',
+      whereGlobal: '全局资产',
+      whereSession: '当前对话',
+      // v1.6.2：撤销提示要能看出「是哪个对话、哪一类」——
+      // 老板切了几个对话后，只写「当前对话」等于没说。
+      whereSessionNamed: '对话「{name}」',
+      kindImage: '图片',
+      kindFile: '文件',
+      kindMedia: '音视频',
+      undoOtherScope: '这里没有可撤销的操作；最近一批在「{where}」的{kind}里，切过去再按 Ctrl+Z',
+      undoDeleteOk: '已移到回收区：{n} 个文件（按 Ctrl+Z 可撤回）',
+      undoHideOk: '已隐藏 {n} 个文件（按 Ctrl+Z 可撤回）',
+      undoDeleteDone: '已撤销：{n} 个文件回到原位（{where} · {kind}）',
+      undoDeletePartial: '撤销完成 {n} 个；{fail} 个失败、{conflict} 个原位已有同名文件（未覆盖）',
+      undoDeleteNone: '没能撤回来：这批可能已过保留期被清理',
+      undoHideDone: '已撤销隐藏：{n} 个文件回到列表（{where} · {kind}）',
+      undoFailed: '撤销失败：{message}',
       copyOk: '已复制 {n} 个文件到剪贴板；切到目标对话后右键「粘贴」或按 Ctrl+V',
       copyOkInternal: '已复制 {n} 个文件（系统剪贴板不可用，仅插件内粘贴有效）',
       copyFailed: '复制失败：{message}',
@@ -1516,6 +1579,22 @@ async function encodeMaskPngBytes(imageData, width, height) {
       groupInput: 'Source {n}',
       groupIntermediate: 'WIP {n}',
       groupUnknown: 'Unclassified {n}',
+      // v1.6.4: assets referenced by more than one chat (kept in both, labelled)
+      groupShared: 'Shared {n} files',
+      groupSharedTip: '{n} of these are the same file(s) {who} also uses. Deleting or hiding in one place affects both; same-name files in different folders stay independent.',
+      sharedWithSome: 'other chats',
+      sharedWithMany: '{first} and {n} chats',
+      cardSharedWith: 'shared by {n} chats',
+      cardSharedWithHint: 'This is one file (same path) recorded by {n} chats. Deleting or hiding it anywhere affects them all; same-name files in different folders stay independent.',
+      hiddenGroupTitle: 'Hidden chats',
+      hiddenGroupHint: 'Chats you put away. They keep the last scan result until you expand one — only that chat refreshes. Right-click any row and pick "Show in global list" to bring it back; nothing on disk was moved.',
+      archivedGroupTitle: 'Archived chats',
+      archivedGroupHint: 'The host archived these chats. They keep the last scan result until you expand one — only that chat refreshes. Assets and labels are untouched; "Open chat" still works.',
+      ctxHideSession: 'Hide this chat',
+      ctxShowSession: 'Show in global list',
+      hideSessionDone: 'Moved to "Hidden chats": {title}',
+      showSessionDone: 'Back in the global list: {title}',
+      hideSessionFailed: 'Failed: {message}',
       groupTruncated: 'Showing latest {shown} of {total}',
       groupShowMore: 'Show {step} more · {shown} of {total}',
       groupHistoryTitle: 'Older assets',
@@ -1593,9 +1672,9 @@ async function encodeMaskPngBytes(imageData, width, height) {
       ctxCopy: 'Write into chat input',
       ctxDelete: 'Delete file',
       ctxDeleteSelected: 'Delete {n} selected files',
-      ctxDeleteManyTitle: 'Delete {n} files permanently? This cannot be undone',
+      ctxDeleteManyTitle: 'Move {n} files to Trash? This can be undone',
       ctxDeleteManySummary: '{n} files',
-      ctxDeletePartial: 'Deleted {n}, {fail} failed',
+      ctxDeletePartial: 'Moved {n} to Trash, {fail} failed',
       batchDeleteSelected: 'Delete selected',
       batchDeleteHint: 'Delete every selected file (asks for confirmation, cannot be undone)',
       legendPick: 'Pick',
@@ -1608,8 +1687,8 @@ async function encodeMaskPngBytes(imageData, width, height) {
       batchInvertHint: 'Select the files in the current list that are not selected yet',
       ctxCopyFileSelected: 'Copy {n} selected files',
       labelEditSelected: 'Re-label these {n} files',
-      ctxDeleteConfirm: 'Delete permanently? This cannot be undone',
-      ctxDeleteYes: 'Delete',
+      ctxDeleteConfirm: 'Move to Trash? You can undo with Ctrl+Z',
+      ctxDeleteYes: 'Move to Trash',
       ctxDeleteNo: 'Cancel',
       delete: 'Delete',
       ctxHiddenDone: 'Hidden. Restore it in settings later.',
@@ -1753,6 +1832,8 @@ async function encodeMaskPngBytes(imageData, width, height) {
       thumbFailed: 'Cannot load',
       dims: '{w} × {h}',
       dimsUnknown: 'Size unknown',
+      sameNameIn: '{n} with the same name · {dir}',
+      rootDir: 'root folder',
       close: 'Close',
       prev: 'Previous',
       next: 'Next',
@@ -1777,9 +1858,47 @@ async function encodeMaskPngBytes(imageData, width, height) {
       batchCopyHint: 'Write the selected files to the system clipboard; paste them in another chat or Explorer',
       batchExportManifest: 'Export list',
       batchExportHint: 'Export the selection as a delivery list (CSV for Excel, JSON for the next round) into ~/.dsh/gallery-exports/; existing files are never overwritten',
-      exportOk: 'Exported {n} items: {path}',
+      exportOk: 'Exported {n} items: {name}',
       exportEmpty: 'Nothing exportable in this batch (maybe no category yet)',
       exportFailed: 'Export failed: {message}',
+      exportOpenDir: 'Open folder',
+      exportCopyPath: 'Copy path',
+      exportToComposer: 'Write to input',
+      exportHistoryEntry: 'Export history',
+      exportHistoryOpen: 'Export history',
+      exportHistoryTitle: 'Export history',
+      exportHistoryHint: 'Every delivery list you exported is listed here; "Write to input" hands the path to the assistant again',
+      exportHistoryEmpty: 'No lists exported yet',
+      exportHistoryLoading: 'Loading…',
+      exportHistoryFailed: 'Could not read the export history: {message}',
+      exportHistorySource: 'Source',
+      exportHistoryCount: '{n} items',
+      exportHistoryMissing: 'File is gone (moved or deleted)',
+      exportHistoryRefresh: 'Refresh',
+      exportHistoryLegacy: 'Earlier export',
+      exportHistoryGlobal: 'All assets',
+      exportHistoryUnknownSource: 'Source not recorded',
+      exportPathCopied: 'List path copied to clipboard',
+      exportPathCopyFailed: 'Copy failed — select the path in the notice manually',
+      exportOpenFailed: 'Could not open the export folder: {message}',
+      exportDraftReady: 'List path written to the input box (written, not sent)',
+      exportDraftInClipboard: 'Could not write to the input box; path is on the clipboard',
+      undoAction: 'Undo (Ctrl+Z)',
+      undoNothing: 'Nothing to undo',
+      whereGlobal: 'All assets',
+      whereSession: 'This chat',
+      whereSessionNamed: 'chat "{name}"',
+      kindImage: 'images',
+      kindFile: 'files',
+      kindMedia: 'media',
+      undoOtherScope: 'Nothing to undo here; the latest batch was in {kind} of "{where}" — switch there and press Ctrl+Z',
+      undoDeleteOk: 'Moved {n} file(s) to Trash (press Ctrl+Z to undo)',
+      undoHideOk: 'Hidden {n} file(s) (press Ctrl+Z to undo)',
+      undoDeleteDone: 'Undone: {n} file(s) restored ({where} · {kind})',
+      undoDeletePartial: 'Restored {n}; {fail} failed, {conflict} already exist at the original path (not overwritten)',
+      undoDeleteNone: 'Nothing could be restored — this batch may have passed its retention window',
+      undoHideDone: 'Undone: {n} file(s) shown again ({where} · {kind})',
+      undoFailed: 'Undo failed: {message}',
       copyOk: 'Copied {n} file(s) to the clipboard; right-click "Paste" or press Ctrl+V in the target chat',
       copyOkInternal: 'Copied {n} file(s) (system clipboard unavailable; in-plugin paste only)',
       copyFailed: 'Copy failed: {message}',
@@ -2703,6 +2822,58 @@ async function encodeMaskPngBytes(imageData, width, height) {
   white-space: nowrap;
 }
 .dg-groupChips { display: inline-flex; gap: 5px; flex: 0 0 auto; }
+/**
+ * v1.6.5：组头共用标记默认折叠。
+ * 1.6.4 常驻的「共用 136」在组多、数字大时很刺眼；现在只留一个琥珀小圆点，
+ * 明细放到组头下方的正常流详情行里，悬停组头（或键盘聚焦）才展开。
+ * 🔴 不能用向下浮出的绝对定位气泡：.dg-group 有 clip-path: inset(0 round 8px)，
+ *    超出组边界的内容会被直接裁掉；正常流撑高组则不受影响。
+ */
+.dg-groupShared {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 2px;
+  border-radius: 50%;
+  border: 1px dashed rgba(208, 139, 22, 0.55);
+  background: transparent;
+  color: #D08B16;
+  cursor: help;
+  outline: none;
+}
+.dg-sharedDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #D08B16;
+  flex: 0 0 auto;
+}
+.dg-sharedDetail {
+  display: none;
+  padding: 6px 12px 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  border-bottom: 1px dashed var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-secondary);
+  text-align: left;
+}
+.dg-groupHead:hover + .dg-sharedDetail,
+.dg-groupHead:focus-visible + .dg-sharedDetail,
+.dg-sharedDetail:hover { display: block; }
+.dg-sharedDetailTitle {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #D08B16;
+  margin-bottom: 2px;
+}
+.dg-sharedDetailBody {
+  display: block;
+  font-size: 11px;
+  line-height: 1.5;
+}
 .dg-chip {
   padding: 1px 7px;
   border-radius: 9px;
@@ -2760,6 +2931,15 @@ async function encodeMaskPngBytes(imageData, width, height) {
 .dg-meta { padding: 6px 8px 8px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .dg-name { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dg-dim { font-size: 11px; color: var(--dsw-alias-label-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* v1.6.3：同一视图里出现同名文件时的「同名 N 份 · 所在目录」提示。
+   老板 11-25 截图：一组里并排两张「老人手部_GPT25_0.png」，看着像重复，
+   实际一个是「漫剧手册分析/」、一个是他自己拷的「GPT25备用/」。
+   只在重名时出现，其余卡片视觉零变化；颜色用琥珀色以示「这不是重复」。 */
+.dg-dir {
+  font-size: 10px; line-height: 1.2;
+  color: #d08b16;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .dg-more {
   margin: 12px 0 4px;
   padding: 8px 10px;
@@ -2774,6 +2954,31 @@ async function encodeMaskPngBytes(imageData, width, height) {
 /* 2026-11-24：分叉「继承」与主线「共享」是同一批文件的两侧视角——同款虚线框，只标来源、不降交互 */
 .dg-cardWrap.dg-inheritedCard,
 .dg-cardWrap.dg-sharedCard { outline: 1px dashed #9b8cf0; outline-offset: 1px; }
+
+/* v1.6.5：卡片级「共用 N 个对话」。用紫色的字，和同名提示的琥珀色错开 ——
+   两者讲的是完全不同的两件事：同名是「两份真文件」，共用是「同一个文件」。 */
+.dg-sharedWith {
+  font-size: 10px; line-height: 1.2;
+  color: #7b6bd6;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* v1.6.5：已隐藏对话合集 —— 列表底部一条折叠栏，展开后里面照常渲染分组 */
+.dg-hiddenWrap { margin-top: 12px; border-top: 1px dashed var(--dsw-alias-border-l1); padding-top: 10px; }
+.dg-hiddenHead {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px; cursor: pointer; text-align: left;
+}
+.dg-hiddenHead:hover { border-color: var(--dsw-alias-border-l2); }
+.dg-hiddenArrow { display: inline-block; font-size: 10px; transition: transform .15s; }
+.dg-hiddenArrowOpen { transform: rotate(90deg); }
+.dg-hiddenCount { margin-left: auto; font-size: 11px; color: var(--dsw-alias-label-secondary); }
+.dg-hiddenHint { padding: 6px 2px; font-size: 11px; color: var(--dsw-alias-label-secondary); }
 .dg-inheritedBadge,
 .dg-sharedBadge {
   position: absolute;
@@ -3821,6 +4026,59 @@ async function encodeMaskPngBytes(imageData, width, height) {
 }
 .dg-pasteOk { border-color: rgba(94,214,150,0.6); }
 .dg-pasteFail { border-color: rgba(255,107,107,0.6); color: #ffd2d2; }
+/* v1.6.0 带按钮的提示（导出清单 / 撤销）：有按钮就必须能点，所以这一档放开 pointer-events。 */
+/* v1.6.2 修「一字一行」：原来这条是 flex 横排，长路径 + word-break:break-all 被压到 1 字符宽，
+   整条提示竖成一根柱子（老板截图）。改成上下两段：文字占一行（超长省略），按钮在下面一行。 */
+.dg-pasteNoticeAction {
+  pointer-events: auto; display: flex; flex-direction: column; align-items: stretch; gap: 8px;
+  max-width: 92%; word-break: normal;
+}
+.dg-pasteText { flex: 0 0 auto; min-width: 0; word-break: break-word; }
+.dg-pasteBtns { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; flex-wrap: wrap; justify-content: center; }
+.dg-pasteBtn {
+  font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
+  padding: 3px 9px; border-radius: 5px; color: #e8eaed;
+  background: rgba(255,255,255,0.10); border: 1px solid rgba(255,255,255,0.22);
+}
+.dg-pasteBtn:hover { background: rgba(255,255,255,0.18); }
+.dg-pasteBtn:active { background: rgba(255,255,255,0.26); }
+
+/* ===== 导出记录面板（v1.6.2） =====
+   复用设置面板的遮罩与卡片骨架（.dg-settingsLayer / .dg-settings），
+   这里只把它加宽一点，并把「文件名 / 来源时间条数 / 两个按钮」压成一行。 */
+.dg-exportPanel { max-width: 560px; }
+.dg-exportHint {
+  padding: 8px 12px 0; font-size: 11px; line-height: 1.5; opacity: .78;
+}
+.dg-exportList {
+  padding: 8px 12px; display: flex; flex-direction: column; gap: 6px;
+  overflow: auto; flex: 1 1 auto; min-height: 0;
+}
+.dg-exportRow {
+  display: flex; align-items: center; gap: 8px; padding: 7px 8px;
+  border: 1px solid var(--dsw-alias-border-l1); border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+.dg-exportMain { flex: 1 1 auto; min-width: 0; }
+.dg-exportName {
+  font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dg-exportMeta {
+  font-size: 11px; opacity: .72; margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dg-exportMetaGone { color: #ff9b9b; opacity: 1; }
+.dg-exportActs { display: flex; gap: 6px; flex: 0 0 auto; }
+.dg-exportEmpty { padding: 20px 4px; text-align: center; font-size: 12px; opacity: .7; }
+.dg-exportFail { color: #ff9b9b; opacity: 1; }
+.dg-exportFoot {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  border-top: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-2);
+}
+.dg-exportDir {
+  flex: 1 1 auto; min-width: 0; font-size: 11px; opacity: .7;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 
 /* v1.0.2 图片裁剪层：绿框 + 八向手柄 + 像素级取色放大镜（照老板给的参考图对齐）
    坐标系说明：裁剪框/放大镜都用 getBoundingClientRect 的**视口坐标**定位，
@@ -5438,6 +5696,96 @@ function serializeFeedback(feedback) {
      *   ③ 可选「同时加入反馈篮」——默认勾上，可取消
      * 弹窗绝不发送任何消息；反馈只进篮子，等人审核合并后再发。
      */
+    /**
+     * v1.6.5：对话组行的右键菜单。
+     *
+     * 两个入口并列：①「打开对话」—— 与展开组后的按钮同一套调用，不必先展开组；
+     * ②「隐藏当前对话 / 在全局列表显示」—— 把对话收进合集或放回。
+     * 刻意**不提供**删除/重命名对话 —— 画廊只管列表怎么摆，
+     * 不碰会话本体，也不碰文件（隐藏≠删除，助手照旧能搜到这些资产）。
+     */
+    function GroupMenu({ t, x, y, title, hidden, canOpen, onOpen, onToggle, onClose }) {
+      const menuRef = React.useRef(null)
+      const [pos, setPos] = React.useState({ left: x, top: y })
+
+      // 贴边内收，避免右键在屏幕右下角时菜单被切掉
+      React.useLayoutEffect(() => {
+        const node = menuRef.current
+        if (node === null) return
+        const rect = node.getBoundingClientRect()
+        const pad = 8
+        let left = x
+        let top = y
+        if (left + rect.width > window.innerWidth - pad) left = window.innerWidth - rect.width - pad
+        if (top + rect.height > window.innerHeight - pad) top = window.innerHeight - rect.height - pad
+        setPos({ left: Math.max(pad, left), top: Math.max(pad, top) })
+      }, [x, y])
+
+      React.useEffect(() => {
+        const onDown = (event) => {
+          if (menuRef.current !== null && menuRef.current.contains(event.target)) return
+          onClose()
+        }
+        const onKey = (event) => { if (event.key === 'Escape') onClose() }
+        document.addEventListener('pointerdown', onDown, true)
+        window.addEventListener('keydown', onKey)
+        return () => {
+          document.removeEventListener('pointerdown', onDown, true)
+          window.removeEventListener('keydown', onKey)
+        }
+      }, [onClose])
+
+      return h('div', {
+        className: 'dg-ctxLayer',
+        key: 'groupMenuLayer',
+        onPointerDown: (event) => event.stopPropagation(),
+        onContextMenu: (event) => event.preventDefault(),
+      }, h('div', {
+        className: 'dg-ctxMenu',
+        key: 'menu',
+        ref: menuRef,
+        role: 'menu',
+        'data-gallery-groupmenu': '1',
+        style: { left: `${pos.left}px`, top: `${pos.top}px` },
+      }, [
+        h('div', { className: 'dg-ctxHead', key: 'head' }, String(title ?? '')),
+        // v1.6.5：不必先展开组就能「打开对话」。当前对话本来就在，不给这一项。
+        canOpen
+          ? h('button', {
+              type: 'button',
+              key: 'open',
+              className: 'dg-ctxItem',
+              'data-gallery-ctx': 'open-session',
+              title: format(t('groupOpenTip'), { title: String(title ?? '') }),
+              onClick: (event) => {
+                event.stopPropagation()
+                event.preventDefault()
+                onClose()
+                onOpen?.()
+              },
+            }, [
+              h('span', { className: 'dg-ctxIco', key: 'i' }, '↗'),
+              h('span', { key: 'l' }, t('groupOpenSession')),
+            ])
+          : null,
+        h('button', {
+          type: 'button',
+          key: 'toggle',
+          className: 'dg-ctxItem',
+          'data-gallery-ctx': hidden ? 'show-session' : 'hide-session',
+          onClick: (event) => {
+            event.stopPropagation()
+            event.preventDefault()
+            onClose()
+            onToggle()
+          },
+        }, [
+          h('span', { className: 'dg-ctxIco', key: 'i' }, hidden ? '👁' : '🚫'),
+          h('span', { key: 'l' }, hidden ? t('ctxShowSession') : t('ctxHideSession')),
+        ]),
+      ]))
+    }
+
     function LabelDialog({ t, item, batchCount, currentCategory, isManual,
                            onCancel, onApply, onReset }) {
       const [next, setNext] = React.useState(
@@ -6420,8 +6768,128 @@ ${absPath}
       ])
     }
 
+    /**
+     * 同名文件判定（v1.6.3）。
+     *
+     * 老板 11-25 截图：一个对话组里并排两张 `老人手部_GPT25_0.png`，看着就像重复展示。
+     * 实测是两份**真文件**：`漫剧手册分析/` 一份、`退订漫剧/图卡/GPT25备用/` 一份
+     * （后者是他自己拷的备用件），尺寸相同、时间不同。
+     * 卡片原先只显示文件名，两份并排自然分不出 → 这里给「同名 N 份」标出所在目录。
+     *
+     * 只统计**同一视图**内（同组 / 扁平列表）的同名，跨组不参与（跨组共用另有角标语义）。
+     */
+    function countNamesOf(list) {
+      const counts = new Map()
+      for (const it of Array.isArray(list) ? list : []) {
+        const n = it?.name ?? String(it?.relPath ?? '').split('/').pop()
+        if (n === undefined || n === null || n === '') continue
+        counts.set(n, (counts.get(n) ?? 0) + 1)
+      }
+      return counts
+    }
+
+    /**
+     * 跨对话共用索引（v1.6.4）。
+     *
+     * 老板 11-25 定的口径：两个对话引用同一张图是**事实**（两边的日志都精确引用过），
+     * 既不合并、也不去重 —— 但要把「归属」标出来，让人一眼看出这不是重复数据，
+     * 而是同一个文件同时属于两个对话。
+     *
+     * 顺带把删除/隐藏的边界讲清（这是老板拍板的前提）：
+     *   · 同名但不同路径的两份真文件 → 各自独立，删一份不动另一份；
+     *   · 同一路径的共用件 → 本来就是同一个文件，删/隐必然两处一起生效。
+     *
+     * 按 `data` 引用缓存：面板每帧都会问一次，全库几千条重算会拖慢滚轮与拖动。
+     */
+    const SHARE_INDEX_CACHE = new WeakMap()
+
+    function shareIndexOf(data) {
+      const none = { byRel: new Map(), countByGroup: new WeakMap() }
+      if (data === null || typeof data !== 'object') return none
+      const cached = SHARE_INDEX_CACHE.get(data)
+      if (cached !== undefined) return cached
+
+      const groups = Array.isArray(data.groups) ? data.groups : []
+      const byRel = new Map()
+      for (const g of groups) {
+        // 「历史资产」池不是真的对话归属，算进来会把一大堆图误标成共用
+        if (g?.isHistory === true) continue
+        const title = String(g?.title ?? '')
+        for (const f of Array.isArray(g?.files) ? g.files : []) {
+          const rel = String(f?.relPath ?? '')
+          if (rel === '') continue
+          const owners = byRel.get(rel)
+          if (owners === undefined) byRel.set(rel, [title])
+          else if (!owners.includes(title)) owners.push(title)
+        }
+      }
+
+      const countByGroup = new WeakMap()
+      for (const g of groups) {
+        if (g?.isHistory === true) continue
+        let n = 0
+        for (const f of Array.isArray(g?.files) ? g.files : []) {
+          const owners = byRel.get(String(f?.relPath ?? ''))
+          if (Array.isArray(owners) && owners.length > 1) n += 1
+        }
+        if (n > 0) countByGroup.set(g, n)
+      }
+
+      const built = { byRel, countByGroup }
+      SHARE_INDEX_CACHE.set(data, built)
+      return built
+    }
+
+    /** 兜底：后端没给 `sharedPeers` 时，按已加载的组内条目现算共用对象。 */
+    function sharedPeersOf(group, shareInfo) {
+      const selfTitle = String(group?.title ?? '')
+      const out = []
+      for (const f of Array.isArray(group?.files) ? group.files : []) {
+        const owners = shareInfo.byRel.get(String(f?.relPath ?? ''))
+        if (!Array.isArray(owners)) continue
+        for (const title of owners) {
+          if (title !== selfTitle && !out.includes(title)) out.push(title)
+        }
+      }
+      return out
+    }
+
+    /**
+     * 组头「共用 N」的悬停说明。
+     *
+     * 共用对象可能一大串（实测有 85 张图牵扯 27 个对话），全塞进组头会撑爆，
+     * 所以明细放悬停里，最多点 3 个名字，其余折成「等 N 个对话」。
+     * 末尾必须把删除/隐藏的边界讲明 —— 这是老板拍板时问的那一句。
+     */
+    function sharedTipOf(t, n, peers) {
+      const names = (Array.isArray(peers) ? peers : [])
+        .map((s) => String(s ?? '').trim())
+        .filter((s) => s !== '')
+      let who
+      if (names.length === 0) {
+        who = t('sharedWithSome')
+      } else if (names.length <= 3) {
+        who = names.map((s) => `「${s}」`).join('、')
+      } else {
+        who = format(t('sharedWithMany'), {
+          n: names.length,
+          first: names.slice(0, 3).map((s) => `「${s}」`).join('、'),
+        })
+      }
+      return format(t('groupSharedTip'), { n, who })
+    }
+
+    /** 相对路径的所在目录（取尾两段，足够区分同名文件；根目录返回空串）。 */
+    function dirLabelOf(relPath) {
+      const rel = String(relPath ?? '').replace(/\\/g, '/')
+      const cut = rel.lastIndexOf('/')
+      if (cut < 0) return ''
+      const segs = rel.slice(0, cut).split('/').filter((s) => s !== '')
+      return segs.slice(-2).join('/')
+    }
+
     /** 单张缩略图卡片：独立加载、独立失败，互不影响。 */
-    function Card({ item, t, onOpen, limiter, onContextMenu, onDoubleClick }) {
+    function Card({ item, t, onOpen, limiter, onContextMenu, onDoubleClick, nameCounts }) {
       const [state, setState] = React.useState({ status: 'pending' })
       const [node, setNode] = React.useState(null)
       // v0.17.0：单击延迟计时器（双击时取消，避免「闪一下大图」）
@@ -6507,6 +6975,15 @@ ${absPath}
         ? format(t('dims'), { w: item.width, h: item.height })
         : t('dimsUnknown')
 
+      // v1.6.3：同名文件 → 显示「同名 N 份 · 所在目录」，让两份真文件一眼可分
+      const sameCount = nameCounts instanceof Map
+        ? (nameCounts.get(item.name) ?? 0)
+        : 0
+      const dirLabel = sameCount > 1 ? dirLabelOf(item.relPath) : ''
+      // v1.6.5：这张图同时被几个对话记录着。后端在分组时就按全量打好（≥2 才有），
+      // 前端只负责显示 —— 绝不能自己按已加载的 60 条数，那样大组会全部显示成 60。
+      const sharedWith = Number(item.sharedWith) >= 2 ? Math.trunc(Number(item.sharedWith)) : 0
+
       return h('button', {
         type: 'button',
         ref: setNode,
@@ -6567,6 +7044,24 @@ ${absPath}
                   : t('loading')),
         ),
         h('div', { className: 'dg-meta', key: 'meta' }, [
+          // v1.6.3：同名提醒放在文件名上方，只在重名时出现；目录用琥珀色，
+          // 与「分类角标」的绿/橙/灰错开，避免被误读成又一个分类。
+          sameCount > 1
+            ? h('span', {
+                className: 'dg-dir',
+                key: 'dir',
+                title: `${item.relPath}`,
+                'data-gallery-same-name': String(sameCount),
+              }, format(t('sameNameIn'), { n: sameCount, dir: dirLabel === '' ? t('rootDir') : dirLabel }))
+            : null,
+          sharedWith > 0
+            ? h('span', {
+                className: 'dg-sharedWith',
+                key: 'sharedWith',
+                title: format(t('cardSharedWithHint'), { n: sharedWith }),
+                'data-gallery-card-shared': String(sharedWith),
+              }, format(t('cardSharedWith'), { n: sharedWith }))
+            : null,
           h('span', { className: 'dg-name', key: 'name' }, item.name),
           h('span', { className: 'dg-dim', key: 'dim' }, dims),
           h('span', { className: 'dg-dim', key: 'time' }, formatTime(item.mtime)),
@@ -9634,6 +10129,12 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       const [page, setPage] = React.useState(1)
       // 设置面板开关（改产出根目录）
       const [settingsOpen, setSettingsOpen] = React.useState(false)
+      /**
+       * 导出记录面板（v1.6.2）。
+       * 老板的原话：导出完只有一条几秒就消失的提示，事后想再用这批清单，
+       * 只能自己去 `~\.dsh\gallery-exports\` 里翻，而且多次导出的文件混在一起认不出。
+       * 这里常驻一个入口，列历史清单（来源 / 时间 / 条数），点一下就「写进输入框」。 */
+      const [exportHistoryOpen, setExportHistoryOpen] = React.useState(false)
       // 全局分组：哪些组是展开的（键是 sessionId 或 '__history__'）
       const [openGroups, setOpenGroups] = React.useState(new Set())
       // 每组额外取回来的明细（首次只有 60 张，点「再显示」再追加 60 张）。
@@ -9806,16 +10307,67 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       const selectMode = batchMode || selected.size > 0
       /** 清废稿确认对话框：null=关闭；{ phase:'list'|'deleting', files, digest, count } */
       const [discardDialog, setDiscardDialog] = React.useState(null)
+      // v1.6.5：已归档 / 已隐藏 / 历史资产 三类组「默认继承上次扫描结果」。
+      // 轮询不会为它们重取明细；只有点开其中一个时，才对那一个强制刷新一次。
+      // 历史池（3000+ 张，比任何单个对话都多）也照此办理 —— 它没有 sessionId，
+      // 统一用 '__history__' 这个键，后端 groupMore 的 keyOf 也是这么算的。
+      // 🔴 ref 镜像（渲染体每帧回写），绝不在 setState 的 updater 里发副作用：
+      //    React 严格模式会把 updater 跑两遍，刷新就会发两次。
+      const openGroupsRef = React.useRef(openGroups)
+      openGroupsRef.current = openGroups
+      const tuckedRef = React.useRef(new Set())
+      const tuckedRefreshedRef = React.useRef(new Set())
+      const forceRefreshTuckedGroup = React.useCallback((key) => {
+        if (typeof key !== 'string' || key === '') return
+        const isHistory = key === '__history__'
+        // 历史池要用主列表同一把尺子扫（props.sessionId），别拿 '__history__' 当会话 id。
+        const scanSid = isHistory ? sessionId : key
+        void callHost('groupMore', {
+          kind, scope: 'global', sessionId: scanSid, groupKey: key,
+          offset: 0, limit: 5000, force: true,
+        }).then((p) => {
+          if (p?.ok !== true || !Array.isArray(p.files) || p.files.length === 0) return
+          setView((prev) => {
+            if (prev.status !== 'ready' || !Array.isArray(prev.data?.groups)) return prev
+            const idx = prev.data.groups.findIndex(
+              (g) => String(g?.sessionId ?? '__history__') === key)
+            if (idx < 0) return prev
+            const nextGroups = prev.data.groups.slice()
+            nextGroups[idx] = {
+              ...nextGroups[idx],
+              files: p.files,
+              fileCount: typeof p.fileCount === 'number'
+                ? p.fileCount
+                : (Number(p.total) || p.files.length),
+              returnedCount: p.files.length,
+            }
+            return { ...prev, data: { ...prev.data, groups: nextGroups } }
+          })
+        }).catch(() => { /* 刷不到就继续用上次那一份，不抹掉已有卡片 */ })
+      }, [callHost, kind, sessionId])
       const toggleGroup = React.useCallback((key) => {
+        const willOpen = !openGroupsRef.current.has(key)
+        // 一次会话内同一个收起组只自动刷一次；想再刷新用顶部的「刷新」按钮（全量）。
+        if (willOpen && tuckedRef.current.has(key) && !tuckedRefreshedRef.current.has(key)) {
+          tuckedRefreshedRef.current.add(key)
+          forceRefreshTuckedGroup(key)
+        }
         setOpenGroups((prev) => {
           const next = new Set(prev)
           if (next.has(key)) next.delete(key)
           else next.add(key)
           return next
         })
-      }, [])
+      }, [forceRefreshTuckedGroup])
       // 组内中间产物开关已并入顶部分类筛选（v0.14.3）。
       // 右键菜单：{ item, absPath, x, y }
+      // v1.6.5：全局资产的「已隐藏对话」/「已归档对话」合集。只记显示位置，不动文件、不动会话。
+      const [hiddenSessionIds, setHiddenSessionIds] = React.useState(() => new Set())
+      // 合集是否展开（默认收起：藏起来的东西不该继续占地方）
+      const [hiddenOpen, setHiddenOpen] = React.useState(false)
+      const [archivedOpen, setArchivedOpen] = React.useState(false)
+      // 组行右键菜单：{ sessionId, title, hidden, x, y } | null
+      const [groupMenu, setGroupMenu] = React.useState(null)
       const [ctxMenu, setCtxMenu] = React.useState(null)
       // v0.16.0：右键空白处（非卡片）弹出的「粘贴」菜单
       const [pasteMenu, setPasteMenu] = React.useState(null)
@@ -10452,8 +11004,81 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       }, [])
 
       /**
+       * 粘贴/操作提示（成功/失败）。
+       *
+       * v1.6.0：支持带按钮 —— 导出清单后要能「打开文件夹 / 复制路径 / 写进输入框」，
+       * 删除或隐藏后要能点「撤销」。带按钮时停留 6 秒（默认 3 秒），且允许鼠标点。
+       *
+       * 声明位置刻意早于 doHide / doDelete：useCallback 的依赖数组在**渲染时立即求值**，
+       * 引用后面声明的 const 会直接 TDZ 白屏（v0.16.0 踩过）。
+       */
+      const [pasteNotice, setPasteNotice] = React.useState(null)
+      const showPasteNotice = React.useCallback((kindOf, text, actions) => {
+        setPasteNotice({
+          kind: kindOf,
+          text,
+          actions: Array.isArray(actions) && actions.length > 0 ? actions : null,
+        })
+      }, [])
+
+      /**
+       * 撤销栈（Ctrl+Z）：只记「还能撤的动作」，最多 10 步，先进后出。
+       *
+       * 用 ref 而不是 state：撤销是「按下快捷键那一刻取最新值」，
+       * 不需要触发重渲染，也不该因为加一条记录就整面板重画。
+       */
+      const undoStackRef = React.useRef([])
+      // 提示条上的「撤销」按钮点下去要走同一个执行器；执行器在下面才声明，
+      // 所以这里留一个 ref 由 effect 回填（别在提示按钮里直接引用后面声明的 const）。
+      const undoRef = React.useRef(null)
+      /**
+       * 撤销「作用域」键：全局资产 / 某个对话 / 各类画廊（图片、文件、音视频）各算一个。
+       *
+       * 2026-11-25（老板报）：原来撤销就是一个先进后出的栈，按删除倒序撤，
+       * 跟「现在在看哪个对话」完全无关 —— 在 A 对话里点 Ctrl+Z，可能把 B 对话
+       * 刚删的东西搬回来，看着莫名其妙。现在每批操作记下它发生在哪个视图，
+       * Ctrl+Z 只撤**当前视图**里的那一批；当前视图没有就直说「最近一批在 XX 里」。
+       */
+      const viewKeyOf = React.useCallback(
+        () => `${kind}|${scope}|${scope === 'session' ? String(sessionId ?? '') : ''}`,
+        [kind, scope, sessionId],
+      )
+      /**
+       * 当前对话标题（v1.6.2）。
+       * 老板的原话：撤销提示只写「当前对话」，看不出是哪一段 —— 切了几个对话之后
+       * 根本不知道自己刚撤的是哪一批。这里从 scan 结果的 groups 里取 isCurrent 那组的
+       * title（会话视图只有一个组，取不到 isCurrent 就退到第一个）。
+       */
+      const currentSessionTitleOf = React.useCallback(() => {
+        const groups = Array.isArray(view?.data?.groups) ? view.data.groups : []
+        const hit = groups.find((g) => g?.isCurrent === true) ?? (scope === 'session' ? groups[0] : undefined)
+        return String(hit?.title ?? '').trim()
+      }, [view, scope])
+      const whereOf = React.useCallback(() => {
+        if (scope !== 'session') return t('whereGlobal')
+        const title = currentSessionTitleOf()
+        return title === '' ? t('whereSession') : format(t('whereSessionNamed'), { name: title })
+      }, [scope, t, currentSessionTitleOf])
+      const kindLabelOf = React.useCallback(
+        () => (kind === 'file' ? t('kindFile') : kind === 'media' ? t('kindMedia') : t('kindImage')),
+        [kind, t],
+      )
+      const pushUndo = React.useCallback((entry) => {
+        const stack = undoStackRef.current
+        stack.push({
+          ...entry,
+          at: Date.now(),
+          view: viewKeyOf(),
+          where: whereOf(),
+          kindLabel: kindLabelOf(),
+        })
+        while (stack.length > 20) stack.shift()
+      }, [viewKeyOf, whereOf, kindLabelOf])
+
+      /**
        * 隐藏条目（只从列表移除，不动文件）。
        * 2026-11-25：接受单个条目或 relPath 数组；批量隐藏一次写完。
+       * v1.6.0：隐藏可撤销（写进撤销栈 + 提示条带「撤销」按钮）。
        */
       const doHide = React.useCallback(async (target) => {
         const rels = (Array.isArray(target) ? target : [target?.relPath ?? ''])
@@ -10465,11 +11090,16 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           if (payload?.ok === false) throw new Error(payload?.error?.message ?? t('errorTitle'))
           setSelected(new Set())
           setBatchMode(false)
+          pushUndo({ kind: 'hide', rels })
+          showPasteNotice('ok', format(t('undoHideOk'), { n: rels.length }), [
+            { label: t('undoAction'), onClick: () => { void undoRef.current?.() } },
+          ])
           await load(undefined, kind, scope, page).then((data) => setView({ status: 'ready', data })).catch(() => {})
         } catch (error) {
           console.error('dsh-gallery: 隐藏失败', error)
+          showPasteNotice('fail', t('ctxHideFailed'))
         }
-      }, [load, kind, scope, page, t])
+      }, [load, kind, scope, page, t, showPasteNotice, pushUndo])
 
       /** 在资源管理器里定位。 */
       const doReveal = React.useCallback(async (item) => {
@@ -10481,11 +11111,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         }
       }, [t])
 
-      /** 粘贴/操作提示（成功/失败），3 秒自动消失。 */
-      const [pasteNotice, setPasteNotice] = React.useState(null)
-      const showPasteNotice = React.useCallback((kindOf, text) => {
-        setPasteNotice({ kind: kindOf, text })
-      }, [])
+      /** 粘贴/操作提示（成功/失败）的声明已提前到 doHide 之前（带按钮 + 撤销栈）。 */
 
       /**
        * 执行删除（需二次确认）。
@@ -10502,10 +11128,20 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         try {
           const payload = await callHost('delete', { paths: rels, confirm: true })
           if (payload?.ok === false) throw new Error(payload?.error?.message ?? t('errorTitle'))
+          const deletedCount = Array.isArray(payload?.deletedPaths) ? payload.deletedPaths.length : 0
+          const undoToken = String(payload?.undoToken ?? '')
           const failed = (Array.isArray(payload?.failed) ? payload.failed.length : 0)
             + (Array.isArray(payload?.notFound) ? payload.notFound.length : 0)
+          const undoActions = undoToken === ''
+            ? null
+            : [{ label: t('undoAction'), onClick: () => { void undoRef.current?.() } }]
+          if (deletedCount > 0 && undoToken !== '') {
+            pushUndo({ kind: 'delete', token: undoToken, count: deletedCount })
+          }
           if (failed > 0) {
-            showPasteNotice('fail', format(t('ctxDeletePartial'), { n: rels.length - failed, fail: failed }))
+            showPasteNotice('fail', format(t('ctxDeletePartial'), { n: deletedCount, fail: failed }), undoActions)
+          } else if (deletedCount > 0) {
+            showPasteNotice('ok', format(t('undoDeleteOk'), { n: deletedCount }), undoActions)
           }
           setDeleteTarget(null)
           setSelected(new Set())
@@ -10517,7 +11153,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           setDeleteTarget(null)
           showPasteNotice('fail', t('ctxDeleteFailed'))
         }
-      }, [deleteTarget, load, kind, scope, page, t, showPasteNotice])
+      }, [deleteTarget, load, kind, scope, page, t, showPasteNotice, pushUndo])
 
       const refresh = React.useCallback(async () => {
         setRefreshing(true)
@@ -10534,7 +11170,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       // ---- v0.16.0 粘贴：剪贴板图片/文件作为「素材」落当前对话 ----
       React.useEffect(() => {
         if (pasteNotice === null) return undefined
-        const timer = setTimeout(() => setPasteNotice(null), 3000)
+        // 带按钮的提示多留一会儿，够手点；纯文字提示 3 秒就够。
+        const timer = setTimeout(() => setPasteNotice(null), pasteNotice.actions === null ? 3000 : 6000)
         return () => clearTimeout(timer)
       }, [pasteNotice])
 
@@ -10808,6 +11445,33 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       }, [callHost, t, showPasteNotice])
 
       /**
+       * 导出记录（v1.6.2）。
+       *
+       * 老板要的是「事后还能用」：一次导出只弹几秒提示，等于只有当场能引用；
+       * 多次导出后文件名又认不出谁是谁。这里把 host 侧的登记读回来，
+       * 列成一张常驻的表 —— 每条都能重新「写进输入框」，新开对话也能直接接上。
+       */
+      const [exportHistory, setExportHistory] = React.useState({ status: 'idle', items: [], dir: '' })
+      const loadExportHistory = React.useCallback(async () => {
+        setExportHistory((prev) => ({ ...prev, status: 'loading' }))
+        try {
+          const payload = await callHost('exportList', {})
+          if (payload?.ok !== true) throw new Error(payload?.error?.message ?? 'exportList failed')
+          setExportHistory({
+            status: 'ready',
+            dir: String(payload?.dir ?? ''),
+            items: Array.isArray(payload?.items) ? payload.items : [],
+          })
+        } catch (error) {
+          setExportHistory({ status: 'failed', dir: '', items: [], message: String(error?.message ?? error) })
+        }
+      }, [callHost])
+      const openExportHistory = React.useCallback(() => {
+        setExportHistoryOpen(true)
+        void loadExportHistory()
+      }, [loadExportHistory])
+
+      /**
        * 导出交付清单（v1.5.0）。
        *
        * 与 Agent 的第 5 个工具 `gallery_manifest` 走 Host 侧同一个 buildManifest：
@@ -10820,21 +11484,78 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           .map((p) => String(p ?? '')).filter((p) => p !== ''))]
         if (paths.length === 0) return false
         try {
+          // v1.6.2：把「这批是哪儿导的」一起交给 host ——
+          // 文件名因此变成 `交付清单_<来源>_<时间>_<分类>_<N>张.csv`，导出记录里也有来源。
+          const sourceLabel = scope === 'session'
+            ? (currentSessionTitleOf() || t('whereSession'))
+            : t('whereGlobal')
           const payload = await callHost('exportManifest', {
             relPaths: paths,
             format: 'both',
             includeNotes: true,
+            sourceLabel,
+            sessionTitle: scope === 'session' ? currentSessionTitleOf() : '',
           })
           if (payload?.ok !== true) throw new Error(payload?.error?.message ?? 'exportManifest failed')
           const files = Array.isArray(payload.files) ? payload.files : []
-          const head = files.length > 0 ? String(files[0].path ?? '') : String(payload.dir ?? '')
-          showPasteNotice('ok', format(t('exportOk'), { n: payload.count ?? paths.length, path: head }))
+          // 主路径给 CSV（Excel 直接能开）；JSON 落在同名 .json，路径只差扩展名。
+          const csvFile = files.find((f) => String(f?.path ?? '').toLowerCase().endsWith('.csv')) ?? files[0]
+          const head = String(csvFile?.path ?? '') || String(payload.dir ?? '')
+          const count = Number(payload.count) || paths.length
+          // v1.6.2：提示里只报文件名。以前整条绝对路径塞进去，窄面板下被压成一字一行。
+          const baseName = String(payload?.base ?? '')
+          const fileName = baseName !== ''
+            ? `${baseName}.csv`
+            : (String(csvFile?.path ?? '').split(/[\\/]/).pop() ?? '')
+          /**
+           * v1.6.0：落盘地址不再只躺着给人看，三个按钮各管一件事 ——
+           *   · 打开文件夹：系统文件管理器打开导出目录（Host 只认这一个目录，不收任意路径）；
+           *   · 复制路径：粘到别处 / 发给别人；
+           *   · 写进输入框：把路径递给助手，下一轮直接读这份清单。
+           * v1.6.2：再加「导出记录」—— 提示几秒就消失，得留个能翻旧账的入口。
+           */
+          showPasteNotice('ok', format(t('exportOk'), { n: count, name: fileName }), [
+            {
+              label: t('exportHistoryOpen'),
+              onClick: () => { openExportHistory() },
+            },
+            {
+              label: t('exportOpenDir'),
+              onClick: () => {
+                void callHost('openExportDir', {}).then((r) => {
+                  if (r?.ok === false) throw new Error(r?.error?.message ?? t('exportOpenFailed'))
+                }).catch((error) => {
+                  showPasteNotice('fail', format(t('exportOpenFailed'), { message: String(error?.message ?? error) }))
+                })
+              },
+            },
+            {
+              label: t('exportCopyPath'),
+              onClick: () => {
+                void copyText(head).then((ok) => {
+                  showPasteNotice(ok ? 'ok' : 'fail', ok ? t('exportPathCopied') : t('exportPathCopyFailed'))
+                })
+              },
+            },
+            {
+              label: t('exportToComposer'),
+              onClick: () => {
+                void writeDraftToComposer(`交付清单（${count} 条）：${head}`, sessionId).then((result) => {
+                  if (result?.ok === true) showPasteNotice('ok', t('exportDraftReady'))
+                  else { void copyText(head); showPasteNotice('fail', t('exportDraftInClipboard')) }
+                }).catch(() => {
+                  void copyText(head)
+                  showPasteNotice('fail', t('exportDraftInClipboard'))
+                })
+              },
+            },
+          ])
           return true
         } catch (error) {
           showPasteNotice('fail', format(t('exportFailed'), { message: String(error?.message ?? error) }))
           return false
         }
-      }, [callHost, t, showPasteNotice])
+      }, [callHost, t, showPasteNotice, sessionId, scope, currentSessionTitleOf, openExportHistory])
 
       React.useEffect(() => {
         let alive = true
@@ -10882,8 +11603,23 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
             changesVersionRef.current = v
             const changed = Array.isArray(r.changed) ? r.changed : []
 
+            // v1.6.5：已归档 / 已隐藏 / 历史资产 三类组「默认继承上次扫描结果」。
+            // 这些组的变动不触发 groupMore（缓存过期会引发一次全库扫描，是卡顿大头），
+            // 也不触发整表 refresh；只把版本号 ack 掉，等用户点开对应组再刷那一个。
+            // 无归属（sessionId 为空）的变动归到历史池 '__history__'，一样被过滤。
+            const tucked = tuckedRef.current
+            const keyOfChange = (c) => {
+              const sid = String(c?.sessionId ?? '')
+              return sid === '' ? '__history__' : sid
+            }
+            const activeChanged = changed.filter((c) => !tucked.has(keyOfChange(c)))
+            if (activeChanged.length === 0) {
+              void callHost('changesAck', { since: v }).catch(() => {})
+              return
+            }
+
             // v1.3.0：记下这批新增的时间，供卡片高亮「刚产出的终稿」
-            const addTimes = changed
+            const addTimes = activeChanged
               .filter((c) => Number(c?.added) > 0)
               .map((c) => Number(c?.at) || 0)
               .filter((t) => t > 0)
@@ -10896,20 +11632,36 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
               ? cur.data.groups : null
             const canPartial = groups !== null
               && scope !== 'session'
-              && changed.length > 0
-              && changed.every((c) => String(c?.sessionId ?? '') !== '')
+              && activeChanged.length > 0
+              && activeChanged.every((c) => String(c?.sessionId ?? '') !== '')
 
             if (!canPartial) { void refresh(); return }
 
             // 逐个组重取明细
+            //
+            // 🔴 2026-11-25 修（老板实测「全局里其他对话资产显示不全」）：
+            //   旧调用只传了 { kind, scope, sessionId, page }，**没传 groupKey**，
+            //   服务端按 groupKey 找不到组，直接回 { ok:true, files:[] }；
+            //   前端拿到空数组后把整组 files 覆盖成空 —— 那一组就只剩几条纹丝不动的旧卡。
+            //   同时 limit 被 clamp 到 60，大组重取也会被截断。
+            //   现在：带 groupKey、要全量；空返回但声称有内容时不信它，整表重来。
             const fresh = new Map()
             let needFull = false
-            for (const c of changed) {
+            for (const c of activeChanged) {
               const sid = String(c?.sessionId ?? '')
               if (sid === '') { needFull = true; break }
               try {
-                const p = await callHost('groupMore', { kind, scope, sessionId: sid, page: 1 })
+                const p = await callHost('groupMore', {
+                  kind,
+                  scope: 'global',
+                  sessionId: sid,
+                  groupKey: sid,
+                  offset: 0,
+                  limit: 5000,
+                })
                 if (p?.ok === false) { needFull = true; break }
+                const got = Array.isArray(p?.files) ? p.files : []
+                if (got.length === 0 && Number(p?.total) > 0) { needFull = true; break }
                 fresh.set(sid, p)
               } catch { needFull = true; break }
             }
@@ -10928,10 +11680,20 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
                 const files = Array.isArray(p?.files) ? p.files
                   : (Array.isArray(p?.items) ? p.items : null)
                 if (files === null) { sawUnknownGroup = true; continue }
+                // 原本有内容却回空：不信它，整表重来。少画几张顶多刷新一下，
+                // 把整组抹掉才是真事故（老板报过「其他对话资产显示不全」）。
+                if (files.length === 0 && Number(nextGroups[idx].fileCount) > 0) {
+                  sawUnknownGroup = true
+                  continue
+                }
                 nextGroups[idx] = {
                   ...nextGroups[idx],
                   files,
-                  fileCount: typeof p.fileCount === 'number' ? p.fileCount : nextGroups[idx].fileCount,
+                  // groupMore 回的是 total 而不是 fileCount，这里两个都认：
+                  // 只认 fileCount 会一直沿用旧值，「再显示」按钮的判据就飘了。
+                  fileCount: typeof p.fileCount === 'number'
+                    ? p.fileCount
+                    : (Number(p.total) || files.length),
                   returnedCount: files.length,
                   counts: p.counts ?? nextGroups[idx].counts,
                   latestMtime: p.latestMtime ?? nextGroups[idx].latestMtime,
@@ -10965,6 +11727,92 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         if (typeof fn === 'function') fn()
       }, [])
 
+      /**
+       * 撤销最近一步（Ctrl+Z 与提示条上的「撤销」按钮共用这一条路）。
+       *
+       * 只认两类动作：删除（把这一批从回收区搬回原位）、隐藏（取消隐藏）。
+       * 每撤一步就弹掉栈里一条；栈空时明确说一句「没有可撤销的操作」，
+       * 不静默无反应 —— 否则人会以为快捷键没生效。
+       */
+      const runUndo = React.useCallback(async () => {
+        const stack = undoStackRef.current
+        const key = viewKeyOf()
+        // 只撤「当前视图」里的那一批；跨视图不撤，避免把人别处删的东西搬回来
+        let idx = -1
+        for (let i = stack.length - 1; i >= 0; i -= 1) {
+          if (stack[i].view === key) { idx = i; break }
+        }
+        if (idx < 0) {
+          const last = stack[stack.length - 1]
+          if (last === undefined) {
+            showPasteNotice('fail', t('undoNothing'))
+          } else {
+            showPasteNotice('fail', format(t('undoOtherScope'), {
+              where: String(last.where ?? ''), kind: String(last.kindLabel ?? ''),
+            }))
+          }
+          return
+        }
+        const [entry] = stack.splice(idx, 1)
+        try {
+          if (entry.kind === 'delete') {
+            const payload = await callHost('undoDelete', { token: entry.token })
+            if (payload?.ok === false && (payload?.restored ?? 0) === 0
+              && !Array.isArray(payload?.conflicts) && !Array.isArray(payload?.failed)) {
+              throw new Error(payload?.error?.message ?? t('undoDeleteNone'))
+            }
+            const restored = Number(payload?.restored) || 0
+            const conflicts = Array.isArray(payload?.conflicts) ? payload.conflicts.length : 0
+            const failedCount = Array.isArray(payload?.failed) ? payload.failed.length : 0
+            if (restored === 0) {
+              showPasteNotice('fail', t('undoDeleteNone'))
+            } else if (conflicts > 0 || failedCount > 0) {
+              showPasteNotice('fail', format(t('undoDeletePartial'), {
+                n: restored, fail: failedCount, conflict: conflicts,
+              }))
+            } else {
+              showPasteNotice('ok', format(t('undoDeleteDone'), {
+                n: restored, where: String(entry.where ?? ''), kind: String(entry.kindLabel ?? ''),
+              }))
+            }
+          } else if (entry.kind === 'hide') {
+            const rels = Array.isArray(entry.rels) ? entry.rels : []
+            const payload = await callHost('unhide', { paths: rels })
+            if (payload?.ok === false) throw new Error(payload?.error?.message ?? t('ctxHideFailed'))
+            showPasteNotice('ok', format(t('undoHideDone'), {
+              n: rels.length, where: String(entry.where ?? ''), kind: String(entry.kindLabel ?? ''),
+            }))
+          }
+          kickChanges()
+          await load(undefined, kind, scope, page)
+            .then((data) => setView({ status: 'ready', data }))
+            .catch(() => { /* 刷新失败保持当前列表，撤销本身已生效 */ })
+        } catch (error) {
+          showPasteNotice('fail', format(t('undoFailed'), { message: String(error?.message ?? error) }))
+        }
+      }, [callHost, load, kind, scope, page, t, showPasteNotice, kickChanges, viewKeyOf])
+
+      React.useEffect(() => { undoRef.current = runUndo }, [runUndo])
+
+      /**
+       * Ctrl+Z / Cmd+Z：撤销最近一次删除或隐藏。
+       *
+       * 光标在输入框里一律放行 —— 那里要撤的是人自己打的字。
+       * Ctrl+Shift+Z 也不拦（留给「重做」，本版没做，别占着坑还不干活）。
+       */
+      React.useEffect(() => {
+        const onKey = (event) => {
+          if (!(event.ctrlKey || event.metaKey)) return
+          if (event.shiftKey || event.altKey) return
+          if (String(event.key).toLowerCase() !== 'z') return
+          if (isTypingTarget(event.target)) return
+          event.preventDefault()
+          void runUndo()
+        }
+        window.addEventListener('keydown', onKey)
+        return () => window.removeEventListener('keydown', onKey)
+      }, [runUndo])
+
       // 兜底自动刷新：轮询已覆盖绝大部分，这里放长周期防漏（外部程序写入 fs.watch 漏报时）
       React.useEffect(() => {
         if (viewer !== null) return undefined
@@ -10996,6 +11844,50 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       }, [viewer])
 
       const data = view.status === 'ready' ? view.data : null
+
+      // v1.6.5：隐藏对话清单只在「第一次拿到数据」时灌进本地状态，之后以本地为准。
+      // 为什么不做成每次 data 变都覆盖：写盘是异步的，5 秒一次的自动刷新可能先到，
+      // 一覆盖就会把刚藏起来的对话又弹回列表（看起来像点了没反应）。
+      const hiddenSyncedRef = React.useRef(false)
+      React.useEffect(() => {
+        if (data === null || hiddenSyncedRef.current) return
+        if (!Array.isArray(data.hiddenSessions)) return
+        hiddenSyncedRef.current = true
+        setHiddenSessionIds(new Set(data.hiddenSessions.map((s) => String(s))))
+      }, [data])
+
+      /**
+       * 隐藏 / 放回一个对话。
+       *
+       * 先改界面再写盘：点完立刻看到那一行移走，不用等一个来回。
+       * 写盘失败就把界面退回去 —— 否则人以为存住了，刷新一下又全回来。
+       */
+      const toggleSessionHidden = React.useCallback((sessionId, title, shouldHide) => {
+        if (typeof sessionId !== 'string' || sessionId === '') return
+        setHiddenSessionIds((prev) => {
+          const next = new Set(prev)
+          if (shouldHide) next.add(sessionId)
+          else next.delete(sessionId)
+          return next
+        })
+        void callHost('setHiddenSessions', shouldHide ? { add: [sessionId] } : { remove: [sessionId] })
+          .then((payload) => {
+            if (payload?.ok === false) throw new Error(payload?.error?.message ?? 'unknown')
+            showPasteNotice('ok', format(
+              shouldHide ? t('hideSessionDone') : t('showSessionDone'),
+              { title: String(title ?? '') },
+            ))
+          })
+          .catch((error) => {
+            setHiddenSessionIds((prev) => {
+              const next = new Set(prev)
+              if (shouldHide) next.delete(sessionId)
+              else next.add(sessionId)
+              return next
+            })
+            showPasteNotice('fail', format(t('hideSessionFailed'), { message: String(error?.message ?? error) }))
+          })
+      }, [callHost, showPasteNotice, t])
       // 拖图元信息索引：卡片容器只有 relPath，绝对路径与遮罩关联从这里查。
       // 分组视图的条目在 groups[].files 里，扁平视图在 items 里，两边都收。
       React.useEffect(() => {
@@ -11124,6 +12016,17 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         onClick: () => setSettingsOpen(true),
       }, '⚙')
 
+      // 导出记录入口（v1.6.2）：常驻在标题栏，不依赖「有没有选中」——
+      // 老板要的就是隔天/换个对话还能把上次导的清单拎出来用。
+      const exportHistoryBtn = h('button', {
+        type: 'button',
+        key: 'exportHistory',
+        className: 'dg-btn dg-btnIcon',
+        'data-gallery-export-history': true,
+        title: t('exportHistoryHint'),
+        onClick: () => { openExportHistory() },
+      }, '\u{1F4C1}')
+
       const header = h('div', { className: 'dg-header', key: 'header' }, [
         h('div', { className: 'dg-headerInfo', key: 'info' }, [
           h('span', { className: 'dg-title', key: 'title' },
@@ -11172,6 +12075,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
             return !v
           }),
         }, batchMode ? t('batchModeExit') : t('batchModeEnter')),
+        exportHistoryBtn,
         settingsBtn,
         h('button', {
           type: 'button',
@@ -11840,13 +12744,16 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
 
         if (useGroups) {
 
-          const cardFor = (item, groupKey, listForViewer, groupMeta) => {
+          const cardFor = (item, groupKey, listForViewer, groupMeta, nameCounts) => {
             // 分组里的文件也走同一套卡片组件
             const enriched = {
               ...item,
               name: item.name ?? item.relPath.split('/').pop(),
               extension: item.extension ?? ('.' + (item.relPath.split('.').pop() || '')),
             }
+            // v1.6.3：同名统计由调用方算一次传进来（这里不再逐卡重算 O(n)，
+            // 「再显示」把一组堆到上千张时逐卡重算会明显卡顿）。
+            const sameNames = nameCounts instanceof Map ? nameCounts : countNamesOf(listForViewer)
             // 音视频分组视图：必须走 MediaCard，否则会被当成图片卡片渲染（v0.10.1）
             if (kind === 'media') {
               return wrapCard(h(MediaCard, {
@@ -11900,6 +12807,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
               item: enriched,
               t,
               limiter: limiter.current,
+              nameCounts: sameNames,
               onContextMenu: openContextMenu,
               // v0.17.0：双击写进输入框
               onDoubleClick: (target, event) => { handleCardDoubleClick(target, event) },
@@ -11922,7 +12830,33 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           // 左侧会话列表快照只取一次：宿主渐进渲染，折叠行不在 DOM，
           // 因此按「ID + 归一化标题」双重判定，而不是逐组查行是否存在。
           const sidebarSnapshot = readSidebarSessions()
-          const groupNodes = data.groups.map((group, gi) => {
+          // v1.6.4：共用归属索引（整块只建一次；后端给了 sharedCount 时只作兜底）
+          const shareInfo = shareIndexOf(data)
+          // v1.6.5：三个区 —— 主列表 / 已归档对话合集 / 已隐藏对话合集。
+          // 归档认宿主官方字段（sessionState='archived'），隐藏认用户右键收起来的记录。
+          // 既归档又被隐藏的按「隐藏优先」只进隐藏合集，避免同一组出现两次。
+          // 🔴 同时把「收起组」回写进 ref 供每秒增量轮询过滤：ref 每帧回写，
+          //    轮询闭包读到的永远是最新的收起集合（不进依赖数组、不重建轮询器）。
+          const visibleGroups = []
+          const archivedGroups = []
+          const hiddenGroups = []
+          const tuckedNow = new Set()
+          for (const g of data.groups) {
+            const sid = g?.sessionId
+            const realGroup = g?.isHistory !== true && typeof sid === 'string' && sid !== ''
+            const isHiddenGroup = realGroup && hiddenSessionIds.has(sid)
+            const isArchivedGroup = realGroup && g?.sessionState === 'archived'
+            const isHistoryGroup = g?.isHistory === true
+            if (isHiddenGroup) hiddenGroups.push(g)
+            else if (isArchivedGroup) archivedGroups.push(g)
+            else visibleGroups.push(g)
+            // 历史池没有 sessionId，统一用 '__history__'；它张数最多，更不该为它反复扫全库。
+            if (isHiddenGroup || isArchivedGroup || isHistoryGroup) {
+              tuckedNow.add(isHistoryGroup ? '__history__' : sid)
+            }
+          }
+          tuckedRef.current = tuckedNow
+          const renderGroupNode = (group, gi) => {
             const groupKey = group.sessionId ?? '__history__'
             const isOpen = openGroups.has(groupKey)
             // v0.14.3：过程稿显隐只认顶部「过程稿」开关，组内不再第二套开关。
@@ -11933,6 +12867,16 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
             const allFiles = [...(Array.isArray(group.files) ? group.files : []), ...extra]
             const visibleFiles = allFiles.filter(
               (f) => categoryFilter[bucketOf(f)] !== false)
+            // v1.6.3：本组同名表（每组算一次）
+            const groupNameCounts = countNamesOf(visibleFiles)
+            // v1.6.4：跨对话共用。后端按**全量**算好（前端每组只拿 60 条，自己数会偏小）；
+            // 旧版后端没有这个字段时，退回前端按已加载条目录算。
+            const sharedCount = typeof group.sharedCount === 'number'
+              ? group.sharedCount
+              : (shareInfo.countByGroup.get(group) ?? 0)
+            const sharedPeers = Array.isArray(group.sharedPeers)
+              ? group.sharedPeers
+              : sharedPeersOf(group, shareInfo)
 
             const chips = []
             if (group.counts.final > 0) {
@@ -11961,6 +12905,22 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
               'data-gallery-group': headKey,
               'data-gallery-group-current': group.isCurrent === true ? '1' : '0',
               'data-gallery-group-title': group.title ?? '',
+              // v1.6.5：组行右键 —— 隐藏这个对话 / 在全局列表显示。
+              // 历史资产池没有真实对话，不给这个入口（藏了也不知道藏的是谁）。
+              onContextMenu: group.isHistory === true || !group.sessionId
+                ? undefined
+                : (event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    setGroupMenu({
+                      sessionId: String(group.sessionId),
+                      title: String(group.title ?? ''),
+                      hidden: hiddenSessionIds.has(String(group.sessionId)),
+                      isCurrent: group.isCurrent === true,
+                      x: event.clientX,
+                      y: event.clientY,
+                    })
+                  },
               /**
                * v0.16.2：鼠标停在哪一组，粘贴/裁剪就落到那一组。
                * 「未归类」池没有对应会话，置 null 退回当前对话（不能凭空造目录）。
@@ -11996,7 +12956,33 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
                 h('span', { className: 'dg-groupDate', key: 'd' },
                   group.isHistory ? format(t('groupFiles'), { n: group.fileCount }) : formatTime(group.createdAt)),
                 h('span', { className: 'dg-groupChips', key: 'c' }, chips),
+                // v1.6.5：共用归属默认折叠成一个小圆点，详情在组头下方悬停展开。
+                // 只在真有共用件时出现，「历史资产」池不标。
+                sharedCount > 0 && group.isHistory !== true
+                  ? h('span', {
+                      className: 'dg-groupShared',
+                      key: 'sh',
+                      role: 'img',
+                      'data-gallery-group-shared': String(sharedCount),
+                      'aria-label': sharedTipOf(t, sharedCount, sharedPeers),
+                      // 小圆点在 button 里，点它不该顺手把整组折叠
+                      onClick: (e) => e.stopPropagation(),
+                    }, [
+                      h('span', { className: 'dg-sharedDot', key: 'dot' }),
+                    ])
+                  : null,
               ]),
+              // v1.6.5：悬停组头才展开的共用明细。正常流，避开 .dg-group 的 clip-path 裁剪。
+              sharedCount > 0 && group.isHistory !== true
+                ? h('div', {
+                    className: 'dg-sharedDetail',
+                    key: 'sharedDetail',
+                    'data-gallery-shared-detail': String(sharedCount),
+                  }, [
+                    h('span', { className: 'dg-sharedDetailTitle', key: 't' }, format(t('groupShared'), { n: sharedCount })),
+                    h('span', { className: 'dg-sharedDetailBody', key: 'b' }, sharedTipOf(t, sharedCount, sharedPeers)),
+                  ])
+                : null,
               isOpen
                 ? [
                     group.isHistory
@@ -12016,7 +13002,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
                     h('div', { className: 'dg-groupBody', key: 'body' }, [
                       visibleFiles.length > 0
                         ? h('div', { className: `dg-grid${kind === 'file' ? ' dg-fileGrid' : ''}`, key: 'grid' },
-                            visibleFiles.map((f) => cardFor(f, headKey, visibleFiles, group)))
+                            visibleFiles.map((f) => cardFor(f, headKey, visibleFiles, group, groupNameCounts)))
                         : h('div', { className: 'dg-groupEmpty', key: 'empty' }, t('groupEmpty')),
                       allFiles.length < Number(group.fileCount ?? 0)
                         ? h('button', {
@@ -12062,7 +13048,11 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
                   ]
                 : null,
             ])
-          })
+          }
+          const visibleGroupNodes = visibleGroups.map((g, i) => renderGroupNode(g, i))
+          const archivedGroupNodes = archivedGroups.map((g, i) => renderGroupNode(g, visibleGroups.length + i))
+          const hiddenGroupNodes = hiddenGroups.map((g, i) =>
+            renderGroupNode(g, visibleGroups.length + archivedGroups.length + i))
 
           body = h('div', {
             className: 'dg-bodyWrap',
@@ -12080,7 +13070,53 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
               onPaste: onBodyPaste,
               onContextMenu: onBodyContextMenu,
             }, [
-              h('div', { className: 'dg-groups', key: 'groups' }, groupNodes),
+              h('div', { className: 'dg-groups', key: 'groups' }, [
+                ...visibleGroupNodes,
+                archivedGroupNodes.length > 0
+                  ? h('div', { className: 'dg-hiddenWrap', key: 'archivedWrap' }, [
+                      h('button', {
+                        type: 'button',
+                        className: 'dg-hiddenHead',
+                        key: 'archivedHead',
+                        'data-gallery-archived-toggle': '1',
+                        onClick: () => setArchivedOpen((v) => !v),
+                        title: t('archivedGroupHint'),
+                      }, [
+                        h('span', { className: `dg-hiddenArrow${archivedOpen ? ' dg-hiddenArrowOpen' : ''}`, key: 'a' }, '▶'),
+                        h('span', { key: 't' }, t('archivedGroupTitle')),
+                        h('span', { className: 'dg-hiddenCount', key: 'c' }, format(t('groupCount'), { count: archivedGroupNodes.length })),
+                      ]),
+                      archivedOpen
+                        ? h('div', { key: 'archivedBody' }, [
+                            h('div', { className: 'dg-hiddenHint', key: 'hi' }, t('archivedGroupHint')),
+                            ...archivedGroupNodes,
+                          ])
+                        : null,
+                    ])
+                  : null,
+                hiddenGroupNodes.length > 0
+                  ? h('div', { className: 'dg-hiddenWrap', key: 'hiddenWrap' }, [
+                      h('button', {
+                        type: 'button',
+                        className: 'dg-hiddenHead',
+                        key: 'hiddenHead',
+                        'data-gallery-hidden-toggle': '1',
+                        onClick: () => setHiddenOpen((v) => !v),
+                        title: t('hiddenGroupHint'),
+                      }, [
+                        h('span', { className: `dg-hiddenArrow${hiddenOpen ? ' dg-hiddenArrowOpen' : ''}`, key: 'a' }, '▶'),
+                        h('span', { key: 't' }, t('hiddenGroupTitle')),
+                        h('span', { className: 'dg-hiddenCount', key: 'c' }, format(t('groupCount'), { count: hiddenGroupNodes.length })),
+                      ]),
+                      hiddenOpen
+                        ? h('div', { key: 'hiddenBody' }, [
+                            h('div', { className: 'dg-hiddenHint', key: 'hi' }, t('hiddenGroupHint')),
+                            ...hiddenGroupNodes,
+                          ])
+                        : null,
+                    ])
+                  : null,
+              ]),
               data.scan.capped
                 ? h('div', { className: 'dg-more', key: 'capped' }, t('capped'))
                 : null,
@@ -12108,6 +13144,9 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         onContextMenu: openContextMenu,
       }), item, item.relPath))
 
+      // v1.6.3：扁平视图（当前对话）也按同一份同名表标注目录，
+      // 否则「图片」视图会与分组视图两套口径（分组有提示、扁平没有）。
+      const flatNameCounts = countNamesOf(visibleItems)
       const gridChildren = visibleItems.map((item) => wrapCard(kind === 'file'
           ? h(FileCard, {
               key: item.relPath,
@@ -12138,6 +13177,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
               item,
               t,
               limiter: limiter.current,
+              nameCounts: flatNameCounts,
               onContextMenu: openContextMenu,
               // v0.17.0：双击写进输入框（扁平视图）
               onDoubleClick: (target, event) => { handleCardDoubleClick(target, event) },
@@ -12316,6 +13356,103 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
             onClose: () => setSettingsOpen(false),
             onSaved: () => { void refresh() },
           })
+        : null
+
+      /**
+       * 导出记录面板（v1.6.2）。
+       * 列表只做三件事：说清「这批是哪来的、什么时候、多少条」，并允许再引用一次。
+       * 每条的「写进输入框」把 CSV 绝对路径递给助手 —— 这是老板要的「以后还能用」。
+       */
+      const exportRowAction = (label, onClick, disabled) => h('button', {
+        type: 'button',
+        className: 'dg-btn dg-btnSmall',
+        key: `act-${label}`,
+        disabled: disabled === true,
+        onClick,
+      }, label)
+      const exportRows = exportHistory.status === 'failed'
+        ? [h('div', { className: 'dg-exportEmpty dg-exportFail', key: 'failed' },
+            format(t('exportHistoryFailed'), { message: String(exportHistory.message ?? '') }))]
+        : exportHistory.items.length === 0
+          ? [h('div', { className: 'dg-exportEmpty', key: 'empty' },
+              exportHistory.status === 'loading' ? t('exportHistoryLoading') : t('exportHistoryEmpty'))]
+          : exportHistory.items.map((row, index) => {
+              const file = String(row?.file ?? '')
+              if (file === '') return null
+              const full = exportHistory.dir === '' ? file : `${exportHistory.dir}\\${file}`
+              const exists = row?.exists !== false
+              const at = Number(row?.at) || 0
+              const total = Number(row?.total)
+              const src = String(row?.sessionTitle ?? '') !== ''
+                ? String(row.sessionTitle)
+                : (row?.scope === 'global'
+                  ? t('exportHistoryGlobal')
+                  : (row?.legacy === true ? t('exportHistoryLegacy') : t('exportHistoryUnknownSource')))
+              const meta = [
+                src,
+                at > 0 ? formatTime(at) : '',
+                Number.isFinite(total) && total > 0 ? format(t('exportHistoryCount'), { n: total }) : '',
+                exists ? '' : t('exportHistoryMissing'),
+              ].filter((x) => x !== '').join(' · ')
+              return h('div', { className: 'dg-exportRow', key: `export${index}`, 'data-gallery-export-row': index }, [
+                h('div', { className: 'dg-exportMain', key: 'main' }, [
+                  h('div', { className: 'dg-exportName', key: 'name', title: file }, file),
+                  h('div', { className: `dg-exportMeta${exists ? '' : ' dg-exportMetaGone'}`, key: 'meta' }, meta),
+                ]),
+                h('div', { className: 'dg-exportActs', key: 'acts' }, [
+                  exportRowAction(t('exportToComposer'), () => {
+                    void writeDraftToComposer(`交付清单${Number.isFinite(total) && total > 0 ? `（${total} 条）` : ''}：${full}`, sessionId)
+                      .then((result) => {
+                        if (result?.ok === true) showPasteNotice('ok', t('exportDraftReady'))
+                        else { void copyText(full); showPasteNotice('fail', t('exportDraftInClipboard')) }
+                      })
+                      .catch(() => {
+                        void copyText(full)
+                        showPasteNotice('fail', t('exportDraftInClipboard'))
+                      })
+                  }, !exists),
+                  exportRowAction(t('exportCopyPath'), () => {
+                    void copyText(full).then((ok) => {
+                      showPasteNotice(ok ? 'ok' : 'fail', ok ? t('exportPathCopied') : t('exportPathCopyFailed'))
+                    })
+                  }, !exists),
+                ]),
+              ])
+            }).filter((node) => node !== null)
+
+      const exportHistoryLayer = exportHistoryOpen
+        ? h('div', { className: 'dg-settingsLayer', key: 'exportHistoryLayer' }, [
+            h('div', { className: 'dg-settings dg-exportPanel', 'data-gallery-export-panel': true }, [
+              h('div', { className: 'dg-settingsHead', key: 'head' }, [
+                h('span', { className: 'dg-settingsTitle', key: 'title' }, t('exportHistoryTitle')),
+                h('button', {
+                  type: 'button', className: 'dg-btn dg-btnSmall', key: 'refresh',
+                  'data-gallery-export-refresh': true,
+                  onClick: () => { void loadExportHistory() },
+                }, t('exportHistoryRefresh')),
+                h('button', {
+                  type: 'button', className: 'dg-btn dg-btnSmall', key: 'close',
+                  'data-gallery-export-close': true,
+                  onClick: () => setExportHistoryOpen(false),
+                }, '✕'),
+              ]),
+              h('div', { className: 'dg-exportHint', key: 'hint' }, t('exportHistoryHint')),
+              h('div', { className: 'dg-exportList', key: 'list' }, exportRows),
+              h('div', { className: 'dg-exportFoot', key: 'foot' }, [
+                h('span', { className: 'dg-exportDir', key: 'dir', title: exportHistory.dir }, exportHistory.dir),
+                h('button', {
+                  type: 'button', className: 'dg-btn dg-btnSmall', key: 'open',
+                  onClick: () => {
+                    void callHost('openExportDir', {}).then((r) => {
+                      if (r?.ok === false) throw new Error(r?.error?.message ?? t('exportOpenFailed'))
+                    }).catch((error) => {
+                      showPasteNotice('fail', format(t('exportOpenFailed'), { message: String(error?.message ?? error) }))
+                    })
+                  },
+                }, t('exportOpenDir')),
+              ]),
+            ]),
+          ])
         : null
 
       // 反馈篮（S3-a）：列出已标记条目 + 带批注的卡片（v0.14.3 批注并入反馈）
@@ -12507,6 +13644,37 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           })
         : null
 
+      // v1.6.5：对话组行右键 —— 打开对话 / 收起 / 放回这个对话
+      const groupMenuLayer = groupMenu !== null
+        ? h(GroupMenu, {
+            key: 'groupMenu',
+            t,
+            x: groupMenu.x,
+            y: groupMenu.y,
+            title: groupMenu.title,
+            hidden: groupMenu.hidden === true,
+            canOpen: groupMenu.isCurrent !== true,
+            onOpen: () => {
+              // 先取出 id：onClose 会把 groupMenu 清空，别在异步里回头读它。
+              const sid = groupMenu.sessionId
+              void (async () => {
+                const r = await openSessionById(sid)
+                reportOpenResult(sid, r)
+                if (r.ok) showToast('ok', t('groupOpenDone'))
+                else if (r.reason === 'archived') showToast('failed', t('groupOpenArchived'))
+                else {
+                  await copyText(sid)
+                  showToast('failed', t('groupOpenMissed'))
+                }
+              })()
+            },
+            onToggle: () => {
+              toggleSessionHidden(groupMenu.sessionId, groupMenu.title, groupMenu.hidden !== true)
+            },
+            onClose: () => setGroupMenu(null),
+          })
+        : null
+
       // v0.16.0：右键空白处（非卡片）的「粘贴」菜单；只给粘贴一项
       const pasteLayer = pasteMenu !== null
         ? h(ContextMenu, {
@@ -12568,7 +13736,9 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         viewerLayer,
         mediaLayer,
         settingsLayer,
+        exportHistoryLayer,
         ctxLayer,
+        groupMenuLayer,
         pasteLayer,
         confirmLayer,
         feedbackLayer,
@@ -12578,10 +13748,29 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           ? null
           : h('div', {
             className: 'dg-pasteNotice'
-              + (pasteNotice.kind === 'ok' ? ' dg-pasteOk' : ' dg-pasteFail'),
+              + (pasteNotice.kind === 'ok' ? ' dg-pasteOk' : ' dg-pasteFail')
+              + (pasteNotice.actions === null ? '' : ' dg-pasteNoticeAction'),
             key: 'pasteNotice',
             'data-gallery-paste-notice': pasteNotice.kind,
-          }, pasteNotice.text),
+          }, [
+            h('span', { className: 'dg-pasteText', key: 'text' }, pasteNotice.text),
+            pasteNotice.actions === null
+              ? null
+              : h('span', { className: 'dg-pasteBtns', key: 'btns' },
+                pasteNotice.actions.map((action, index) => h('button', {
+                  type: 'button',
+                  className: 'dg-pasteBtn',
+                  key: `a${index}`,
+                  'data-gallery-paste-action': index,
+                  // 按下就 preventDefault：别让按钮抢走焦点，也别触发网格的键盘处理
+                  onMouseDown: (event) => event.preventDefault(),
+                  onClick: () => {
+                    // 先收掉提示，再执行；执行完自己会给新提示（或不需要）
+                    setPasteNotice(null)
+                    try { action.onClick?.() } catch (error) { console.warn('dsh-gallery: 提示按钮失败', error) }
+                  },
+                }, action.label))),
+          ]),
       ])
     }
 

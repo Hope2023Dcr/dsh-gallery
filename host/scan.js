@@ -9,12 +9,12 @@ import path from 'node:path'
 import { ASSET_CATEGORY, classifyAsset } from './classify.js'
 import { BASH_TOOLS, DEFAULT_SESSIONS_DIR, DSH_HOME, OUTPUT_TOOLS, VIDEO_EXTS, VIEW_IMAGE_EXTS, VIEW_TOOLS } from './constants.js'
 import { isInside, measureImage, readHead } from './fsutil.js'
-import { buildGroups } from './groups.js'
+import { buildGroups, buildRootSessionResolver } from './groups.js'
 import { collectAbsolutePaths, findSubSessionLogs, locateSessionDir, readSessionLogText } from './session.js'
-import { readHiddenList, resolveOptions } from './settings.js'
+import { readHiddenList, readHiddenSessions, resolveOptions } from './settings.js'
 import { readLabels, LABEL_CATEGORIES } from './labels.js'
 import { readFrames } from './frames.js'
-import { buildSessionIndex, readSessionStates } from './session-index.js'
+import { buildSessionIndex, readSessionStates, sessionIndexCacheFileFor } from './session-index.js'
 
 /**
  * v0.14.7：相对路径的父目录（统一小写；空串表示文件直接躺在 root 下）。
@@ -24,6 +24,12 @@ export function parentDirOf(relPath) {
   const p = String(relPath ?? '').replace(/\\/g, '/').toLowerCase()
   return p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : ''
 }
+
+/**
+ * 分类的「确定性」排序。同一对话多次引用同一张图（父会话 + 子智能体会话）时，
+ * 取更确定的那个 —— 不能因为子会话只看了一眼就把定稿降级成素材。
+ */
+const CATEGORY_RANK = { final: 3, intermediate: 2, input: 1, unknown: 0 }
 
 /** v0.14.7：当前对话分类。日志/登记里没有的、同目录外部图片自动标「素材」(input)。 */
 /**
@@ -697,26 +703,120 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
     sessionIndex = await buildSessionIndex(sessionsDir, opts, {
       readSessionLogText,
       extractAssetInfo,
+      // v1.6.5：重启后复用上次的日志解析结果，避免每次开面板都全量解压 zstd。
+      cacheFile: sessionIndexCacheFileFor(opts.settingsFile),
     })
   }
 
-  // 文件绝对路径 → { sessionId, title, category }
+  // 文件绝对路径 → [{ sessionId, title, createdAt, category }]（**多值**）
+  //
+  // 2026-11-25：子智能体会话（parentSession 指向父会话）的产出并进**根父会话**。
+  // 「当前对话」视图本来就把子会话资产合并（见 resolveSessionScope 的「修法 C」），
+  // 但全局按对话分组时子会话是按 owner 单独成组的 —— 两套尺子不一致，实测就是
+  // 「全局里这个对话只有 5 张，点进对话却有 35 张」，看着像资产丢了。
+  //
+  // 同日再改：改成**多值**。原先「一个文件只归一个对话，谁最近引用算谁的」，
+  // 结果只要另一个对话贴过这张图，原对话的组里就少一张（老板实测：打开有 21 张、
+  // 全局只剩 5 张）。现在凡是在日志里引用过它的对话都记下来，分组时各入各的组，
+  // 两个视图才对得上账。实测全库 3527 个被引用的文件里 1523 个被多个对话引用。
+  const rootSessionOf = buildRootSessionResolver(sessionIndex)
   const ownerByAbs = new Map()
   if (sessionIndex !== null) {
     for (const [sid, entry] of sessionIndex) {
+      const rootId = rootSessionOf(sid)
+      const rootEntry = rootId === sid ? entry : sessionIndex.get(rootId)
+      const groupTitle = String(rootEntry?.title ?? entry.title ?? '')
+      const groupCreatedAt = Number(rootEntry?.createdAt) || Number(entry.createdAt) || 0
       for (const [abs, cat] of entry.files) {
-        // 同一个文件被多个对话产出时，取最近的那个对话
-        const prev = ownerByAbs.get(abs)
-        if (prev === undefined || entry.createdAt > prev.createdAt) {
-          ownerByAbs.set(abs, {
-            sessionId: sid,
-            title: entry.title || '',
-            createdAt: entry.createdAt,
+        let list = ownerByAbs.get(abs)
+        if (list === undefined) {
+          list = []
+          ownerByAbs.set(abs, list)
+        }
+        const exist = list.find((x) => x.sessionId === rootId)
+        if (exist === undefined) {
+          list.push({
+            sessionId: rootId,
+            title: groupTitle,
+            createdAt: groupCreatedAt,
             category: cat,
+            // 原始产出会话：子会话时与 sessionId 不同，供诊断用
+            ...(rootId === sid ? {} : { ownerSessionId: sid }),
           })
+        } else if (CATEGORY_RANK[cat] > CATEGORY_RANK[exist.category]) {
+          // 同一对话多次引用（父 + 子会话）时取更确定的那一档：final > intermediate > input
+          exist.category = cat
         }
       }
     }
+  }
+
+  // 2026-11-25：全局分组的「产出者」索引 —— 靠「用过的目录 + 时间窗口」判定谁产出的。
+  //
+  // 起因（老板两次报）：全局里「DSH辅助漫剧制作流程」只剩 2 张，切进该对话却有 13 张。
+  // 那 11 张在 11-24 13:25 产出，却被 11-24 20:21 才开张的同名对话 (1)「引用」走了 ——
+  // 文件比它开张还早一个多小时。原规则「谁最近引用算谁的」把**看过**当成了**产出**。
+  //
+  // 三条约束，缺一不可：
+  //   ① 目录必须是有子目录的层（根直属层在 session-index 里已排除，太宽）；
+  //   ② 文件必须晚于该会话开始（isFreshSince 同一把关），老图不会被新对话吸走；
+  //   ③ 同目录被多个会话用过时取「开始得最晚」的那个。
+  // 优先级见下面 item 归属链：当前对话 > 截帧登记 > 本索引 > 日志精确引用。
+  const dirOwnerIndex = new Map()
+  if (sessionIndex !== null) {
+    for (const [sid, entry] of sessionIndex) {
+      const dirs = entry.dirs
+      if (!(dirs instanceof Set) || dirs.size === 0) continue
+      const rootId = rootSessionOf(sid)
+      const rootEntry = rootId === sid ? entry : sessionIndex.get(rootId)
+      const startMs = Number(entry.startMs) || Number(entry.createdAt) || 0
+      if (startMs <= 0) continue
+      const cand = {
+        sessionId: rootId,
+        title: String(rootEntry?.title ?? entry.title ?? ''),
+        createdAt: Number(rootEntry?.createdAt) || Number(entry.createdAt) || 0,
+        startMs,
+      }
+      for (const dir of dirs) {
+        const item = dir === '' ? { ...cand, rootLevel: true } : cand
+        const list = dirOwnerIndex.get(dir)
+        if (list === undefined) dirOwnerIndex.set(dir, [item])
+        else list.push(item)
+      }
+    }
+  }
+  /**
+   * 目录 + 时间判定：返回**所有**命中的候选会话（开始时间从新到旧）。
+   *
+   * 为什么返回数组而不是只挑一个：老板对账的标准是「打开这个对话看到几张，
+   * 全局这个组就该有几张」。实测 a912 与 94d7 两个对话的活跃期重叠，
+   * 同一批图两边都说得通 —— 单选必然让一边少几张，看着就像资产丢了。
+   * 允许「一张图同时属于用它产出过的每个对话」，两个视图就永远对得上账。
+   * 实测代价：全库 6944 条里仅 266 条（3.8%）会进多个组，可接受。
+   */
+  const matchDirOwners = (item) => {
+    if (dirOwnerIndex.size === 0) return []
+    const list = dirOwnerIndex.get(parentDirOf(item.relPath))
+    if (list === undefined) return []
+    // 🔴 只认 mtime（最后写出时间），**不看 birthtime**。
+    // 实测踩过：图卡 mtime 是产出时间，但 birthtime 因跨盘复制变成了更晚的时刻，
+    // 于是被判定「更晚开张的对话也算新鲜」，归属被抢走。
+    const mtime = Number(item.mtime) || 0
+    if (mtime <= 0) return []
+    const hits = []
+    const seen = new Set()
+    for (const cand of list) {
+      if (mtime < cand.startMs) continue
+      if (seen.has(cand.sessionId)) continue
+      seen.add(cand.sessionId)
+      hits.push(cand)
+    }
+    hits.sort((a, b) => {
+      // 根直属层的最低优先：有具体子目录的判定永远排在前面
+      if ((a.rootLevel === true) !== (b.rootLevel === true)) return a.rootLevel === true ? 1 : -1
+      return b.startMs - a.startMs
+    })
+    return hits
   }
 
   // 2026-11-15：全局资产下置顶的「当前对话」组，必须和「当前对话」视图用同一把尺子。
@@ -798,6 +898,16 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
       globalCurrentMeta = { title, createdAt }
     }
   }
+
+  // 2026-11-25：当前对话本身若是子智能体会话，「当前对话组」也按根父会话算 ——
+  // 否则同一个子会话的文件会在两个组里分家（目录兜底进父组、精确命中的自成一组）。
+  const currentRootSid = sessionId === '' ? sessionId : rootSessionOf(sessionId)
+  const currentRootMeta = currentRootSid === sessionId
+    ? globalCurrentMeta
+    : {
+        title: String(sessionIndex?.get(currentRootSid)?.title ?? globalCurrentMeta?.title ?? ''),
+        createdAt: Number(sessionIndex?.get(currentRootSid)?.createdAt) || globalCurrentMeta?.createdAt || 0,
+      }
 
   // 已隐藏的路径：扫描时直接跳过（不移动文件，只从列表里拿掉）
   const hiddenSet = new Set(await readHiddenList(opts.settingsFile))
@@ -1021,16 +1131,71 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
     // 登记不在会话日志里：ownerByAbs 查不到时，用登记里的会话信息补一个虚拟归属。
     // 日志里已有归属的文件（例如视频本身）一律沿用原归属，不受影响。
     const frameSid = String(frame?.sessionId ?? '')
+    // 子会话截的帧同样并进根父会话（与 ownerByAbs 归一同一口径）
+    const frameRootSid = frameSid === '' ? '' : rootSessionOf(frameSid)
     const virtualOwner = frame !== undefined && frameSid !== ''
       ? {
-          sessionId: frameSid,
-          title: String(frame.sessionTitle ?? '') || sessionIndex?.get(frameSid)?.title || '',
-          createdAt: Number(frame.sessionCreatedAt) || sessionIndex?.get(frameSid)?.createdAt || 0,
+          sessionId: frameRootSid,
+          title: String(frame.sessionTitle ?? '') || sessionIndex?.get(frameRootSid)?.title || '',
+          createdAt: Number(frame.sessionCreatedAt) || sessionIndex?.get(frameRootSid)?.createdAt || 0,
           // 截帧 = 过程稿；粘贴 / 裁剪 = 素材（登记里带着 category，缺省回落过程稿）
           category: frameCategoryOf(frame),
         }
       : undefined
-    const owner = ownerByAbs.get(abs) ?? virtualOwner
+    const indexedList = ownerByAbs.get(abs) ?? []
+    // 主归属：日志里「最近引用」它的那个对话（沿用原排序，保证历史行为不变）
+    const indexedOwner = indexedList.length === 0
+      ? undefined
+      : indexedList.reduce((a, b) => (b.createdAt > a.createdAt ? b : a))
+    // 2026-11-25：**产出者判定优先于「谁最近引用算谁的」**。
+    //
+    // 实测反例（老板 11-25 报）：a912「DSH辅助漫剧制作流程」（11-23 19:24）产出的
+    // 11 张图卡，被 11-24 20:21 才开张的同名对话 94d7「引用」走了 —— 于是 a912 在
+    // 全局只剩 2 张，而切进该对话能看见 13 张。两个视图用了两套尺子。
+    //
+    // 优先级：当前对话 > 截帧登记 > 目录 + 时间（产出者）> 日志精确引用。
+    // 但**归属不止一个**：凡是认得这张图的对话，分组时各入各的组（见下面 refs）。
+    const dirOwners = virtualOwner === undefined
+      ? matchDirOwners({
+        relPath: item.relPath,
+        mtime: item.mtime,
+      })
+      : []
+    const dirOwner = dirOwners.length > 0 ? dirOwners[0] : null
+    /**
+     * 这张图「属于」的对话清单（多值）。
+     *
+     * 老板的对账标准很朴素：**打开这个对话看到几张，全局这个组就该有几张**。
+     * 原先一个文件只归一个对话，只要别的对话贴过同一张图，原对话的组就少一张
+     * （实测「产线测试快速反馈」打开 21 张、全局只剩 5 张）。现在改成多归属。
+     */
+    const refs = []
+    const refSids = new Set()
+    const pushRef = (sessionId, title, createdAt, category) => {
+      const sid = String(sessionId ?? '')
+      if (sid === '' || refSids.has(sid)) return
+      refSids.add(sid)
+      refs.push({
+        sessionId: sid,
+        title: title ?? '',
+        createdAt: Number(createdAt) || 0,
+        category,
+      })
+    }
+    // ① 日志里精确引用过它的对话 —— 最硬的证据，排最前
+    for (const own of indexedList) pushRef(own.sessionId, own.title, own.createdAt, own.category)
+    // ② 目录 + 时间窗：判定为产出者（分类用该对话自己的判定，没有则素材）。
+    //    根直属层同样参与 —— 早年试过「有更具体归属就跳过根层」，结果 Chief 系列
+    //    对话的组里各少 12 张素材（打开对话有、全局没有），对账失败。
+    for (const cand of dirOwners) {
+      const own = sessionIndex?.get(cand.sessionId)?.files?.get(abs)
+      pushRef(cand.sessionId, cand.title, cand.createdAt,
+        typeof own === 'string' ? own : ASSET_CATEGORY.INPUT)
+    }
+    // ③ 截帧 / 粘贴登记
+    if (virtualOwner !== undefined) {
+      pushRef(virtualOwner.sessionId, virtualOwner.title, virtualOwner.createdAt, virtualOwner.category)
+    }
     item.absPath = abs
     if (isSession) {
       const autoCategory = scopeInfo.categoryByRel?.get(item.relPath.toLowerCase())
@@ -1051,9 +1216,9 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
       const exact = globalCurrentExactRels.has(relKey)
       item.category = categoryForSessionAsset(globalCurrentCategory?.get(relKey), !exact)
       if (!exact) item.externalAsset = true
-      item.sessionId = sessionId
-      item.sessionTitle = globalCurrentMeta?.title ?? ''
-      item.sessionCreatedAt = globalCurrentMeta?.createdAt ?? 0
+      item.sessionId = currentRootSid
+      item.sessionTitle = currentRootMeta?.title ?? ''
+      item.sessionCreatedAt = currentRootMeta?.createdAt ?? 0
       // 2026-11-24：全局「当前对话」组里的共享文件同样加共享标记
       if (globalCurrentSharedAbsSet !== null && globalCurrentSharedAbsSet.has(abs.toLowerCase())) {
         item.shared = true
@@ -1062,11 +1227,31 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
       if (globalCurrentInheritedAbsSet !== null && globalCurrentInheritedAbsSet.has(abs.toLowerCase())) {
         item.inherited = true
       }
-    } else if (owner !== undefined) {
-      item.category = owner.category
-      item.sessionId = owner.sessionId
-      item.sessionTitle = owner.title
-      item.sessionCreatedAt = owner.createdAt
+    } else if (virtualOwner !== undefined) {
+      // 截帧 / 粘贴登记：本会话当场产出的硬证据，优先级最高
+      item.category = virtualOwner.category
+      item.sessionId = virtualOwner.sessionId
+      item.sessionTitle = virtualOwner.title
+      item.sessionCreatedAt = virtualOwner.createdAt
+    } else if (dirOwner !== null) {
+      // 2026-11-25：目录 + 时间窗口命中 —— 文件落在本会话用过的目录里，且晚于会话开始。
+      // 分类：若该文件也被这个会话在日志里精确引用过，沿用日志分类（与「当前对话」
+      // 视图同源判据），否则按外部素材标 input。
+      const sameOwner = indexedList.find((x) => x.sessionId === dirOwner.sessionId)
+      item.category = categoryForSessionAsset(sameOwner?.category, sameOwner === undefined)
+      if (sameOwner === undefined) item.externalAsset = true
+      item.sessionId = dirOwner.sessionId
+      item.sessionTitle = dirOwner.title
+      item.sessionCreatedAt = dirOwner.createdAt
+      // 供诊断：这条是靠目录 + 时间判定的产出，不是日志精确记录
+      item.dirOwner = true
+    } else if (indexedOwner !== undefined) {
+      item.category = indexedOwner.category
+      item.sessionId = indexedOwner.sessionId
+      item.sessionTitle = indexedOwner.title
+      item.sessionCreatedAt = indexedOwner.createdAt
+      // 子智能体产出：分组并进父会话，但保留原始产出会话，诊断时能分清是谁做的
+      if (indexedOwner.ownerSessionId !== undefined) item.ownerSessionId = indexedOwner.ownerSessionId
     } else {
       // 不属于任何已知对话、也不在当前对话目录里的文件：归到「历史资产」，
       // 分类记为**未归类**。不能兜底成 input —— 那会把几千个历史文件全标成「输入」
@@ -1074,11 +1259,26 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
       item.sessionId = null
     }
 
+    // 2026-11-25：多归属表 —— 只有真的被多个对话认得才建（绝大多数条目只有一项）。
+    // 主归属那条用「本分支判出来的分类」覆盖，保证置顶的当前对话组与视图完全一致。
+    if (refs.length > 1) {
+      const self = item.sessionId === null || item.sessionId === undefined
+        ? undefined
+        : refs.find((r) => r.sessionId === item.sessionId)
+      if (self !== undefined) self.category = item.category
+      item.sessionRefs = refs
+    }
+
     // 手动改过的标签覆盖机器预判，且刷新 / 重扫 / 重启都不会回退。
     const manual = manualLabels[item.relPath]
     if (manual !== undefined && LABEL_CATEGORIES.includes(manual?.category)) {
       item.category = manual.category
       item.categoryManual = true
+      // 2026-11-25：多归属的副本同样要跟着手动标签走，否则同一张图
+      // 在「打开这个对话」里是定稿、在全局同组里却是素材（实测量过 1 张差异）。
+      if (Array.isArray(item.sessionRefs)) {
+        for (const ref of item.sessionRefs) ref.category = manual.category
+      }
     } else {
       item.categoryManual = false
     }
@@ -1114,6 +1314,11 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
   // 会话状态只读判定：只给分组加标注，不改排序、不改显示范围（0.14.1 原样）
   const sessionStates = isSession ? null : await readSessionStates(DSH_HOME)
 
+  // v1.6.5：已隐藏的对话（全局资产底部的「已隐藏对话」合集）。
+  // 只下发 id 列表，不在后端过滤 —— 前端拿去分区，右键一点就立即生效，
+  // 不必为了一次隐藏把整个扫描（全库约 6 秒）重跑一遍。
+  const hiddenSessions = isSession ? [] : await readHiddenSessions(opts.settingsFile)
+
   // 全量统计：供「全局按对话分组」使用（不受分页限制）
   const allItemsSummary = []
   if (!isSession) {
@@ -1142,6 +1347,9 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
         // 2026-11-25：来源标记必须透传给全局分组，否则资产台卡片看不到角标
         ...(item.inherited ? { inherited: true } : {}),
         ...(item.shared ? { shared: true } : {}),
+        // 2026-11-25：一张图可能同时属于用它产出过的多个对话 —— 这张副归属表
+        // 必须带到分组里，否则只有主归属那组有它（全局就比对话里少几张）。
+        ...(Array.isArray(item.sessionRefs) ? { sessionRefs: item.sessionRefs } : {}),
       })
     }
   }
@@ -1196,13 +1404,15 @@ export async function scanGallery(config, kind = 'image', scope = 'global', sess
     pageSize: opts.maxItems,
     // 「还有 N 张」= 当前页之外的总数（不再只是「被截掉的」）
     hidden: Math.max(0, total - visible.length),
+    // v1.6.5：全局视图下发「已隐藏对话」清单，前端据此把对应分组收进合集
+    hiddenSessions,
     rootMissing,
     scan: { directories, entries, capped },
     // 全局模式额外返回：按对话分组的数据（客户端做折叠展示用）。
     // 🔴 明细一次算全（全量留在服务端缓存），不再按 120 条截断：
     // 历史组有 5000+ 张，截断后旧图永远翻不到。
     // 响应由 host/http.js 瘦身成每组 60 张，前端点「再显示」再按需取下一批。
-    groups: isSession ? null : buildGroups(allItemsSummary, Number.MAX_SAFE_INTEGER, sessionId, sessionStates),
+    groups: isSession ? null : buildGroups(allItemsSummary, Number.MAX_SAFE_INTEGER, currentRootSid, sessionStates),
   }
 }
 

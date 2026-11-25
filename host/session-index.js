@@ -8,9 +8,12 @@
  *   而画廊每 5 秒刷新一次 → 不可能每次都全量解压。
  *   用「目录 mtime + 会话数」做键，没事就不重扫。
  *
- * 为什么用目录 mtime 而不是逐个文件：
- *   108 个文件各 stat 一次也有开销；会话目录增多或日志追加时，
- *   目录 mtime 会变，足够触发重扫。
+ * 为什么用「逐条日志 mtime|size」而不是整表时间戳：
+ *   只要当前对话还在写日志，整表键每次都变，会把 100 MB 日志全量重解压。
+ *   逐条缓存后，活跃会话只重解它自己那一个日志（几十毫秒）。
+ *
+ * v1.6.5：这份缓存还会落盘（见下方 DISK_CACHE_VERSION），重启后直接复用，
+ *   不再每次重开面板都付一遍 7 秒的解压费。
  */
 
 import { promises as fsp } from 'node:fs'
@@ -26,6 +29,134 @@ import path from 'node:path'
 const sessionEntryCache = new Map()
 /** 当前缓存对应的扫描目录指纹；用户改了根目录就整体失效。 */
 let indexRootsKey = ''
+
+/**
+ * v1.6.5 卡顿根治：会话日志「解析结果」的磁盘缓存。
+ *
+ * 实测（本机 115 份日志 / 6940 张资产）：冷启动全库扫描 7189 ms，
+ * 同进程热缓存只要 136 ms —— 差的 7 秒全在反复解压 zstd 日志并重跑
+ * extractAssetInfo / extractSessionTitle。进程内 sessionEntryCache 重启必丢，
+ * 所以每次重开面板都要再付一次。
+ *
+ * 这里把解析结果按 logPath + (mtime|size) 落到 <settings 同目录>，
+ * 重启后直接读回来：日志没变就绝不解压、绝不重解析；日志一变只重算那一份。
+ * 判据仍是 mtime（与全项目一致），没有「快照陈旧」问题。
+ *
+ * - 只在生产链路启用：scan.js 通过 deps.cacheFile 传入；测试直调不传，
+ *   行为与旧版逐字一致，不会往测试环境写文件。
+ * - 缓存文件绝不放扫描根内，否则下次刷新会把它自己扫成资产。
+ */
+const DISK_CACHE_VERSION = 1
+
+/** 缓存文件路径：设置文件同目录（DSH_HOME 下）。 */
+export function sessionIndexCacheFileFor(settingsFile) {
+  return path.join(path.dirname(String(settingsFile)), 'gallery-session-index.json')
+}
+
+let diskLoaded = false
+let diskRootsKey = ''
+let diskLoadPromise = null
+/** clearSessionIndexCache() 之后别把刚清掉的旧盘又灌回来，等这轮重算重写。 */
+let skipNextDiskLoad = false
+
+/** Map/Set 转成可 JSON 化结构。 */
+function packEntry(entry) {
+  if (entry === null || entry === undefined) return null
+  return {
+    sessionId: entry.sessionId,
+    title: entry.title,
+    createdAt: entry.createdAt,
+    startMs: entry.startMs,
+    cwd: entry.cwd,
+    parentSession: entry.parentSession,
+    files: entry.files instanceof Map ? [...entry.files] : [],
+    dirs: entry.dirs instanceof Set ? [...entry.dirs] : [],
+    maxMtime: entry.maxMtime,
+    logMtime: entry.logMtime,
+  }
+}
+
+/** 反解；结构坏了返回 undefined，让那一条重新解析（不整表作废）。 */
+function unpackEntry(raw) {
+  if (raw === null || raw === undefined) return null
+  if (typeof raw !== 'object') return undefined
+  if (!Array.isArray(raw.files) || !Array.isArray(raw.dirs)) return undefined
+  const files = new Map()
+  for (const pair of raw.files) {
+    if (Array.isArray(pair) && typeof pair[0] === 'string') {
+      files.set(pair[0], typeof pair[1] === 'string' ? pair[1] : 'unknown')
+    }
+  }
+  return {
+    sessionId: String(raw.sessionId ?? ''),
+    title: String(raw.title ?? ''),
+    createdAt: Number(raw.createdAt) || 0,
+    startMs: Number(raw.startMs) || 0,
+    cwd: String(raw.cwd ?? ''),
+    parentSession: String(raw.parentSession ?? ''),
+    files,
+    dirs: new Set(raw.dirs.filter((d) => typeof d === 'string')),
+    maxMtime: Number(raw.maxMtime) || 0,
+    logMtime: Number(raw.logMtime) || 0,
+  }
+}
+
+/** tmp + rename 原子写；失败只吞，缓存是加速器，绝不拖垮扫描。 */
+async function flushDiskCache(file, rootsKey) {
+  let tmp = ''
+  try {
+    const body = JSON.stringify({
+      v: DISK_CACHE_VERSION,
+      at: Date.now(),
+      rootsKey,
+      entries: [...sessionEntryCache.entries()].map(([p, c]) => [
+        p, { key: c.key, entry: packEntry(c.entry) },
+      ]),
+    })
+    await fsp.mkdir(path.dirname(file), { recursive: true })
+    tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`
+    await fsp.writeFile(tmp, body, 'utf8')
+    await fsp.rename(tmp, file)
+    tmp = ''
+  } catch {
+    if (tmp !== '') { try { await fsp.unlink(tmp) } catch { /* 忽略 */ } }
+  }
+}
+
+/** 重启后把上次解析结果读回内存；版本 / roots 不符一律整表作废。 */
+async function loadDiskCache(file, rootsKey) {
+  let raw
+  try { raw = JSON.parse(await fsp.readFile(file, 'utf8')) } catch { return }
+  if (raw === null || typeof raw !== 'object') return
+  if (raw.v !== DISK_CACHE_VERSION || raw.rootsKey !== rootsKey) return
+  if (!Array.isArray(raw.entries)) return
+  for (const pair of raw.entries) {
+    if (!Array.isArray(pair) || typeof pair[0] !== 'string') continue
+    const c = pair[1]
+    if (c === null || typeof c !== 'object' || typeof c.key !== 'string') continue
+    const entry = unpackEntry(c.entry)
+    if (entry === undefined) continue
+    sessionEntryCache.set(pair[0], { key: c.key, entry })
+  }
+}
+
+/** 懒加载一次；并发调用共用同一个 Promise，避免重复读盘。 */
+async function ensureDiskLoaded(file, rootsKey) {
+  if (diskLoaded && diskRootsKey === rootsKey) return
+  if (diskLoadPromise !== null) { await diskLoadPromise; return }
+  diskLoadPromise = (async () => {
+    if (diskLoaded && diskRootsKey !== rootsKey) {
+      // roots 变了：旧缓存的 files/dirs 按旧 root 算，必须全部重算
+      sessionEntryCache.clear()
+    } else if (!skipNextDiskLoad) {
+      await loadDiskCache(file, rootsKey)
+    }
+    diskLoaded = true
+    diskRootsKey = rootsKey
+    skipNextDiskLoad = false
+  })()
+  try { await diskLoadPromise } finally { diskLoadPromise = null }
+}
 
 /**
  * 扫出一个会话目录里的全部会话（含子会话）。
@@ -153,17 +284,24 @@ function extractSessionMeta(logText) {
  */
 export async function buildSessionIndex(sessionsDir, opts, deps) {
   const { readSessionLogText, extractAssetInfo } = deps
+  // 只有生产链路（scan.js）传 cacheFile；测试直调不传 → 行为与旧版完全一致。
+  const cacheFile = typeof deps?.cacheFile === 'string' && deps.cacheFile !== ''
+    ? deps.cacheFile : ''
   try {
     // 列目录 + stat 115 个日志文件很便宜（约 10 ms），每次都做；
     // 贵的「解压 + 逐行解析」只发生在 mtime/size 变了的那些日志上。
     const allDirs = await listSessionDirs(sessionsDir)
     // 扫描目录变了（面板里改 root）→ 旧缓存里的文件归属是按旧目录算的，必须全部重算
     const rootsKey = (opts.roots ?? []).map((r) => path.resolve(r).toLowerCase()).join('|')
-    if (rootsKey !== indexRootsKey) {
+    if (cacheFile !== '') {
+      await ensureDiskLoaded(cacheFile, rootsKey)
+    } else if (rootsKey !== indexRootsKey) {
       sessionEntryCache.clear()
       indexRootsKey = rootsKey
     }
     const index = new Map()
+    // 有新的解析结果 / 删掉过期条目时才回写盘，热扫描一次磁盘写入都不做
+    let dirty = false
     const livePaths = new Set()
 
     for (const d of allDirs) {
@@ -178,6 +316,7 @@ export async function buildSessionIndex(sessionsDir, opts, deps) {
       const logText = await readSessionLogText(d.logPath)
       if (logText === '') {
         sessionEntryCache.set(d.logPath, { key, entry: null })
+        dirty = true
         continue
       }
 
@@ -188,6 +327,16 @@ export async function buildSessionIndex(sessionsDir, opts, deps) {
 
       // 只看落在扫描目录内的路径
       const files = new Map()
+      // 2026-11-25：本对话「用过的目录」（相对扫描根、小写），供全局分组做目录兜底。
+      //
+      // 起因：老板在全局资产里看到「DSH辅助漫剧制作流程」只剩 2 张，切进该对话却是 12 张。
+      // 那 10 张日志里没有精确路径，只有「当前对话」视图靠「目录 + 时间窗口」兜得住；
+      // 全局分组只认精确路径，它们就掉进「历史资产」了。这里把目录也记进索引。
+      //
+      // 只收有子目录的层 + 根直属层（空串）—— 后者单列，由 scan 侧当作**最低优先**的
+      // 兜底：一个会话只要在根层产过文件，就会认得根层之后的所有新图，很容易过度归属，
+      // 所以它只在「没有任何更具体的归属」时才生效（实测「新项目调研」缺的 5 张就在根层）。
+      const dirs = new Set()
       let maxMtime = meta.createdAt
       for (const [abs, info] of assets) {
         let ownerRoot = null
@@ -196,6 +345,9 @@ export async function buildSessionIndex(sessionsDir, opts, deps) {
         }
         if (ownerRoot === null) continue
         files.set(abs, info.category)
+        const relDir = path.relative(ownerRoot, path.dirname(path.resolve(abs)))
+          .split(path.sep).join('/')
+        if (!relDir.startsWith('..')) dirs.add(relDir.toLowerCase())
         try {
           const st = await fsp.stat(abs)
           if (st.mtimeMs > maxMtime) maxMtime = st.mtimeMs
@@ -204,29 +356,36 @@ export async function buildSessionIndex(sessionsDir, opts, deps) {
         }
       }
 
-      if (files.size === 0) {
-        sessionEntryCache.set(d.logPath, { key, entry: null })
-        continue
-      }
+      // 2026-11-25：files 为空也**不再丢弃**这条记录。
+      // 原因：子会话可能只把产出落在扫描根外（日志里没路径），父会话条目却是
+      // 子会话归并的依据 —— 丢掉它，buildRootSessionResolver 就找不到父链，
+      // 子会话会单独成组，父组永远少几张（实测「尺间空间IP品牌重塑」少 59 张）。
+      // 空条目对 ownerByAbs / dirOwnerIndex 都是空循环，不产生副作用。
 
       const entry = {
         sessionId: d.sessionId,
         title,
         createdAt: meta.createdAt,
+        // 目录兜底的时间门槛：文件必须「晚于本对话开始」才算它的产出，
+        // 与 resolveSessionScope 的 isFreshSince 同一把关，避免把老图抢进新对话。
+        startMs: meta.createdAt,
         cwd: meta.cwd,
         parentSession: meta.parentSession,
         files,
+        dirs,
         maxMtime,
         logMtime: d.logMtime,
       }
       index.set(d.sessionId, entry)
       sessionEntryCache.set(d.logPath, { key, entry })
+      dirty = true
     }
 
     // 日志目录被删掉时把对应缓存也清掉，避免常驻进程里无限堆积
     for (const p of sessionEntryCache.keys()) {
-      if (!livePaths.has(p)) sessionEntryCache.delete(p)
+      if (!livePaths.has(p)) { sessionEntryCache.delete(p); dirty = true }
     }
+    if (cacheFile !== '' && dirty) await flushDiskCache(cacheFile, rootsKey)
     return index
   } catch {
     return new Map()
@@ -247,6 +406,8 @@ function isInsidePath(root, abs) {
 export function clearSessionIndexCache() {
   sessionEntryCache.clear()
   indexRootsKey = ''
+  diskLoaded = false
+  skipNextDiskLoad = true
 }
 
 /**

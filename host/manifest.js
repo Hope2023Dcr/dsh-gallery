@@ -363,6 +363,11 @@ export function manifestToJson(manifest) {
 /**
  * 生成落盘文件名（不含扩展名）：`交付清单_20261125-1043_定稿_8张`。
  * 只保留 Windows 允许的字符；分类用中文名，客户一眼能看懂。
+ *
+ * 2026-11-25（老板报）：导出好几次之后，一堆 `交付清单_时间_全部_4张` 混在同一个
+ * 文件夹里，光看名字认不出「这批是哪个对话、哪个视图导的」。所以加一段**来源**：
+ * `交付清单_<来源>_<时间戳>_<分类>_<N>张`，来源是「全局资产」或对话标题。
+ * 不传来源时退回旧格式，老脚本按 `交付清单_` 前缀找文件仍然有效。
  */
 export function manifestFileBase(manifest, options = {}) {
   const at = Number(manifest?.generatedAt) || Date.now()
@@ -374,6 +379,22 @@ export function manifestFileBase(manifest, options = {}) {
   if (cats.length === 1) catText = CATEGORY_TEXT[cats[0]] ?? '全部'
   else if (cats.length > 1 && cats.length < 4) catText = cats.map((c) => CATEGORY_TEXT[c] ?? c).join('+')
   const count = Array.isArray(manifest?.items) ? manifest.items.length : 0
-  const raw = `交付清单_${stamp}_${catText}_${count}张`
+  const source = sanitizeSource(options.source)
+  const raw = source === ''
+    ? `交付清单_${stamp}_${catText}_${count}张`
+    : `交付清单_${source}_${stamp}_${catText}_${count}张`
   return raw.replace(/[\\/:*?"<>|\r\n]/g, '_')
+}
+
+/**
+ * 来源标签清洗：对话标题里常有 `:` `?` `"` 和换行（「提示词:你是…」这种），
+ * 直接拼进文件名会被 Windows 拒收。再截到 16 字，太长会把时间戳挤到看不见。
+ */
+export function sanitizeSource(raw) {
+  const text = String(raw ?? '')
+    .replace(/[\\/:*?"<>|\r\n\t]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (text === '') return ''
+  return [...text].slice(0, 16).join('').trim()
 }

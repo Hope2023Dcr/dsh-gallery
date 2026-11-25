@@ -147,6 +147,10 @@ export function resolveOptions(config) {
     maxEntries: numberOr(merged.maxEntries, DEFAULTS.maxEntries, 1, 1000000),
     maxImageBytes: numberOr(merged.maxImageBytes, DEFAULTS.maxImageBytes, 1, 512 * 1024 * 1024),
     maxMediaBytes: numberOr(merged.maxMediaBytes, DEFAULTS.maxMediaBytes, 1, 1024 * 1024 * 1024),
+    // v1.5.0 / v1.6.0 的两个 TTL：一直没进返回体，导致设置里改了也不生效（永远走默认）。
+    // 0 是合法值（= 永不清理），所以下限必须是 0，不能套 numberOr 的「最小 1」习惯。
+    contextTtlHours: numberOr(merged.contextTtlHours, DEFAULTS.contextTtlHours, 0, 24 * 366),
+    trashTtlHours: numberOr(merged.trashTtlHours, DEFAULTS.trashTtlHours, 0, 24 * 366),
   }
 }
 
@@ -232,3 +236,48 @@ export async function readSettingsPayload(config) {
  * 自动刷新每 5 秒一次，而一个活跃会话的日志解压后有 9MB 以上；
  * 用「路径 + mtime + size」做键，日志没变就复用上次的解析结果。
  */
+
+// ===== v1.6.5：隐藏对话合集（只管列表，不动文件、不动会话）=====
+
+/**
+ * 读「已隐藏的对话」列表（sessionId 数组）。
+ *
+ * 老板 2026-11-25：全局资产的对话列表太长了，要能把不关心的一键收起来。
+ * 这里只记 sessionId：
+ *   · 不移动、不删除任何文件，也不改会话本身的状态；
+ *   · 与 `hidden`（隐藏单个文件）分开存，互不影响；
+ *   · 助手侧照旧能搜到这些对话的资产 —— 隐藏只是「不想在列表里看到」，不是隐私手段。
+ */
+export async function readHiddenSessions(settingsFile) {
+  const stored = readSettingsFile(settingsFile)
+  if (!Array.isArray(stored.hiddenSessions)) return []
+  const out = []
+  const seen = new Set()
+  for (const raw of stored.hiddenSessions) {
+    if (typeof raw !== 'string') continue
+    const id = raw.trim()
+    if (id === '' || seen.has(id)) continue
+    seen.add(id)
+    out.push(id)
+  }
+  return out
+}
+
+/**
+ * 写「已隐藏的对话」列表。
+ *
+ * 用 add / remove 增量而不是整表覆盖：两处界面同时操作时，
+ * 整表覆盖会把对方的改动顺手抹掉（隐藏列表不像文件路径那样能从界面全量重建）。
+ */
+export async function writeHiddenSessions(settingsFile, { add = [], remove = [] } = {}) {
+  const current = new Set(await readHiddenSessions(settingsFile))
+  for (const id of add) if (typeof id === 'string' && id.trim() !== '') current.add(id.trim())
+  for (const id of remove) if (typeof id === 'string' && id.trim() !== '') current.delete(id.trim())
+  const list = [...current]
+  await fsp.mkdir(path.dirname(settingsFile), { recursive: true })
+  const stored = readSettingsFile(settingsFile)
+  const tmp = settingsFile + '.tmp-' + String(process.pid)
+  await fsp.writeFile(tmp, JSON.stringify({ ...stored, hiddenSessions: list }, null, 2), 'utf8')
+  await fsp.rename(tmp, settingsFile)
+  return list
+}

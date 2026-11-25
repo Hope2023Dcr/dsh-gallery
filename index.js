@@ -30,6 +30,7 @@ import os from 'node:os'
 import { sweepStaleTmp } from './host/atomic.js'
 import { sweepExpiredFeedback } from './host/feedback.js'
 import { sweepContext } from './host/context.js'
+import { sweepTrash } from './host/trash.js'
 
 export const inject = ['connection', 'webServer', 'tools']
 
@@ -56,6 +57,15 @@ export function apply(ctx, config) {
         if (r.removed > 0) ctx?.logger?.info?.(`dsh-gallery: 清掉 ${r.removed} 条过期浏览记录`)
       }).catch(() => {})
     }
+  } catch { /* 忽略 */ }
+  // v1.6.0：回收区按 TTL 清（默认 7 天）。删除只是搬到回收区，这里是真正落地的删除点。
+  try {
+    const opts = resolveOptions(config)
+    void sweepTrash(opts.settingsFile, opts.trashTtlHours).then((r) => {
+      if (r.removed > 0) {
+        ctx?.logger?.info?.(`dsh-gallery: 回收区清掉 ${r.removed} 批过期删除（${Math.round(r.bytes / 1024)} KB）`)
+      }
+    }).catch(() => {})
   } catch { /* 忽略 */ }
   try {
     const opts = resolveOptions(config)

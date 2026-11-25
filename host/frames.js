@@ -109,6 +109,32 @@ export async function registerFrame(settingsFile, frame) {
   })
 }
 
+/**
+ * 撤销删除时把登记补回来（v1.6.0）。
+ *
+ * 只补「当前没有」的键：撤销前若同路径又重新截了一帧，新的那份才是要用的，
+ * 旧的不能盖回去。savedAt 一律沿用快照里的原值，不刷新成现在（否则遮罩
+ * 「最近登记优先」的排序会被撤销操作打乱）。
+ */
+export async function restoreFrames(settingsFile, frames) {
+  const entries = (frames !== null && typeof frames === 'object') ? Object.entries(frames) : []
+  if (entries.length === 0) return {}
+  return enqueue(async () => {
+    const current = await readFrames(settingsFile)
+    const next = { ...current.frames }
+    let changed = false
+    for (const [rel, frame] of entries) {
+      const key = String(rel ?? '')
+      if (key === '' || frame === null || typeof frame !== 'object') continue
+      if (next[key] !== undefined) continue
+      next[key] = { ...frame, savedAt: Number(frame?.savedAt) || Date.now() }
+      changed = true
+    }
+    if (changed) await writeFrames(settingsFile, next)
+    return next
+  })
+}
+
 /** 文件被删除后清掉登记，保持文件干净。 */
 export async function deleteFrames(settingsFile, relPaths) {
   if (!Array.isArray(relPaths) || relPaths.length === 0) return {}
