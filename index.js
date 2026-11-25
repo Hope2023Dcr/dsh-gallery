@@ -29,6 +29,7 @@ import { registerTools } from './host/tools.js'
 import os from 'node:os'
 import { sweepStaleTmp } from './host/atomic.js'
 import { sweepExpiredFeedback } from './host/feedback.js'
+import { sweepContext } from './host/context.js'
 
 export const inject = ['connection', 'webServer', 'tools']
 
@@ -46,6 +47,15 @@ export function apply(ctx, config) {
     void sweepStaleTmp(path.join(os.homedir(), '.dsh')).then((r) => {
       if (r.removed > 0) ctx?.logger?.info?.(`dsh-gallery: 清掉 ${r.removed} 个残留 tmp`)
     }).catch(() => {})
+  } catch { /* 忽略 */ }
+  // v1.5.0：浏览记录按 TTL 清扫（默认 0＝不自动清，用户开了才跑）
+  try {
+    const opts = resolveOptions(config)
+    if (Number(opts.contextTtlHours) > 0) {
+      void sweepContext(opts.settingsFile, opts.contextTtlHours).then((r) => {
+        if (r.removed > 0) ctx?.logger?.info?.(`dsh-gallery: 清掉 ${r.removed} 条过期浏览记录`)
+      }).catch(() => {})
+    }
   } catch { /* 忽略 */ }
   try {
     const opts = resolveOptions(config)

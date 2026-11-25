@@ -203,6 +203,39 @@ export async function writePanel(settingsFile, panel) {
 }
 
 /** 读完整状态（面板 + 最近看过的列表）。文件坏了返回空状态，绝不抛错。 */
+
+/**
+ * 启动时按 TTL 清一次浏览记录（v1.5.0，隐私开关）。
+ *
+ * 三条规矩，少一条就会误删：
+ *   1. **只在这里删，读路径永远纯读**（与反馈 TTL 同一条铁律）；
+ *   2. 没有时间戳的条目**一律保留** —— 宁可少删，不可错删；
+ *   3. TTL <= 0 直接返回，不动文件。
+ */
+export async function sweepContext(settingsFile, ttlHours) {
+  const hours = Number(ttlHours)
+  if (!Number.isFinite(hours) || hours <= 0) return { removed: 0, kept: 0 }
+  const file = contextFilePath(settingsFile)
+  let doc
+  try {
+    doc = JSON.parse(await fsp.readFile(file, 'utf8'))
+  } catch {
+    return { removed: 0, kept: 0 }
+  }
+  const recent = Array.isArray(doc?.recent) ? doc.recent : []
+  if (recent.length === 0) return { removed: 0, kept: 0 }
+  const cutoff = Date.now() - hours * 3600 * 1000
+  const kept = recent.filter((it) => {
+    const t = Number(it?.updatedAt ?? it?.viewedAt ?? 0)
+    if (!(t > 0)) return true
+    return t >= cutoff
+  })
+  const removed = recent.length - kept.length
+  if (removed === 0) return { removed: 0, kept: kept.length }
+  await writeFileAtomic(file, JSON.stringify({ ...doc, recent: kept, updatedAt: Date.now() }, null, 2))
+  return { removed, kept: kept.length }
+}
+
 export async function readState(settingsFile) {
   return readStateFile(contextFilePath(settingsFile))
 }

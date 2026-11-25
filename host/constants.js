@@ -84,6 +84,12 @@ export const DEFAULTS = {
   windowHours: 24 * 365,
   maxItems: 60,
   maxDepth: 3,
+  /**
+   * v1.5.0 隐私：浏览记录（dsh-gallery-context.json）保留多少小时。
+   * **0 = 永不自动清理**（默认）：这是一份「你最近看了哪几张」的记录，
+   * 自动删掉会让助手答不上「我刚看的那张是什么」，所以默认不碰，由用户自己决定。
+   */
+  contextTtlHours: 0,
   extensions: ['.png', '.jpg', '.jpeg', '.webp'],
   /**
    * 音视频画廊（v0.10.1）：视频 + 音频，独立一个 kind。

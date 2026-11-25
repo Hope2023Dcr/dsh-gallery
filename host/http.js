@@ -23,10 +23,10 @@ import {
 import { scanGallery, resolveSessionScope, parentDirOf } from './scan.js'
 import { locateSessionDir, readSessionLogText } from './session.js'
 import { extractSessionTitleFast } from './session-index.js'
-import { DEFAULT_SESSIONS_DIR } from './constants.js'
+import { DEFAULT_SESSIONS_DIR, DSH_HOME } from './constants.js'
 import { makeDerivedName, bumpName, pngBufferFrom, imageBufferFrom, tmpPathFor } from './derive.js'
 import { readClipboardFilePaths, writeClipboardFilePaths, internalClipboardPaths, pasteFilesIntoDir } from './clipboard.js'
-import { buildLinkedMaskIndex, framesFilePath } from './frames.js'
+import { buildLinkedMaskIndex, framesFilePath, readFrames } from './frames.js'
 
 /**
  * 列表请求的短缓存 + 并发去重（加载提速，不改变返回内容与分组顺序）。
@@ -100,6 +100,69 @@ function groupsCacheKey(kind, scope, sessionId, resolved, settingsStamp, derived
 }
 
 /** 只裁每组明细，不动整组计数：counts / fileCount 仍是全量，顶部数字才对得上。 */
+/**
+ * 导出目录：放在 DSH_HOME 下，**绝不能**放进扫描根。
+ * 清单是 .csv / .json，而扫描扩展名里正好有这两个（host/constants.js 第 106–109 行）——
+ * 写进产出目录，下次刷新它就成了一个「文件资产」出现在资产台里，越导越多。
+ */
+function manifestExportDir() {
+  return path.join(DSH_HOME, 'gallery-exports')
+}
+
+/** 同名不覆盖：加 -2 / -3。连点两次导出，两份都留着。 */
+async function uniqueFilePath(dir, filename) {
+  const ext = path.extname(filename)
+  const stem = filename.slice(0, filename.length - ext.length)
+  let candidate = path.join(dir, filename)
+  for (let i = 2; i <= 99; i += 1) {
+    try {
+      await fsp.access(candidate)
+    } catch {
+      return candidate
+    }
+    candidate = path.join(dir, `${stem}-${i}${ext}`)
+  }
+  return path.join(dir, `${stem}-${Date.now()}${ext}`)
+}
+
+/**
+ * 收集「某个视图下的全部条目」。
+ * categoryPaths（按分类圈选）与 exportManifest（导出清单）都走这里 ——
+ * 两处各写一份，迟早出现「圈中 300 张、导出只有 60 张」这种对不上的事。
+ */
+async function collectAllEntries(config, kind, scope, sessionId, optsResolved, settingsStamp, derived) {
+  const entries = []
+  let truncated = false
+  if (scope === 'global') {
+    const gKey = groupsCacheKey(kind, scope, sessionId, optsResolved, settingsStamp, derived)
+    const hit = groupsFullCache.get(gKey)
+    if (hit !== undefined && Date.now() - hit.at < GROUPS_FULL_CACHE_MS) {
+      for (const g of hit.groups) {
+        for (const f of (Array.isArray(g?.files) ? g.files : [])) entries.push(f)
+      }
+    } else {
+      const fresh = await scanGallery(config, kind, scope, sessionId, 1)
+      const groups = Array.isArray(fresh?.groups) ? fresh.groups : []
+      groupsFullCache.set(gKey, { at: Date.now(), groups })
+      pruneGroupsFullCache(Date.now())
+      for (const g of groups) {
+        for (const f of (Array.isArray(g?.files) ? g.files : [])) entries.push(f)
+      }
+      for (const f of (Array.isArray(fresh?.items) ? fresh.items : [])) entries.push(f)
+    }
+  } else {
+    // 5000 是这一路的上限：单个对话的产出远到不了这个量
+    const full = await scanGallery(config, kind, scope, sessionId, 1, { maxItems: 5000 })
+    const got = Array.isArray(full?.items) ? full.items : []
+    for (const f of got) entries.push(f)
+    for (const g of (Array.isArray(full?.groups) ? full.groups : [])) {
+      for (const f of (Array.isArray(g?.files) ? g.files : [])) entries.push(f)
+    }
+    if (got.length >= 5000) truncated = true
+  }
+  return { entries, truncated }
+}
+
 function slimGroups(value, pageSize) {
   if (!Array.isArray(value?.groups)) return value
   return {
@@ -127,15 +190,19 @@ let changeTracker = null
 export function setChangeTracker(t) { changeTracker = t }
 
 import { MARK_ACTIONS, readMarks, writeMarks, setMark, setMarksBatch, marksFilePath } from './marks.js'
-import { readFeedback, setFeedback, setFeedbackBatch, ackFeedback, clearFeedback } from './feedback.js'
+import { readFeedback, setFeedback, setFeedbackBatch, ackFeedback, clearFeedback, feedbackFilePath } from './feedback.js'
 // 阶段 3 / C1：记下「人正在看哪张图」，单独一份临时状态文件
-import { writeContext, writePanel } from './context.js'
+import { writeContext, writePanel, readState, contextFilePath } from './context.js'
 // v0.16.4 A 档：把待处理反馈渲染成成稿文本（纯函数，不碰落盘数据）
 import { makeFeedback, renderFeedbackText } from './feedback-text.js'
 import { LABEL_CATEGORIES, readLabels, setLabel, setLabelsBatch, deleteLabels, labelsFilePath } from './labels.js'
 import {
   registerFrame, deleteFrames, frameTimecode, makeFrameName, makeMaskName, maskPolygonMeta,
 } from './frames.js'
+// v1.5.0：交付清单。一个内核两个出口 —— 导出（这里）与 gallery_manifest 工具（tools.js）
+// 共用 manifest.js，保证「您看到的清单」和「我读到的清单」永远是同一份数字。
+import { writeFileAtomic } from './atomic.js'
+import { buildManifest, manifestToCsv, manifestToJson, manifestFileBase } from './manifest.js'
 
 /** reveal 相关的排查日志（失败/异常时便于定位，不影响功能）。 */
 /**
@@ -711,36 +778,10 @@ export function registerOpsRoute(ctx, config) {
               try { settingsStamp = (await fsp.stat(optsResolved.settingsFile)).mtimeMs } catch { /* 文件还不存在 */ }
               const derived = await derivedStamp(optsResolved)
 
-              const entries = []
-              let truncated = false
-
-              if (scope === 'global') {
-                const gKey = groupsCacheKey(kind, scope, sessionId, optsResolved, settingsStamp, derived)
-                const hit = groupsFullCache.get(gKey)
-                if (hit !== undefined && Date.now() - hit.at < GROUPS_FULL_CACHE_MS) {
-                  for (const g of hit.groups) {
-                    for (const f of (Array.isArray(g?.files) ? g.files : [])) entries.push(f)
-                  }
-                } else {
-                  const fresh = await scanGallery(config, kind, scope, sessionId, 1)
-                  const groups = Array.isArray(fresh?.groups) ? fresh.groups : []
-                  groupsFullCache.set(gKey, { at: Date.now(), groups })
-                  pruneGroupsFullCache(Date.now())
-                  for (const g of groups) {
-                    for (const f of (Array.isArray(g?.files) ? g.files : [])) entries.push(f)
-                  }
-                  for (const f of (Array.isArray(fresh?.items) ? fresh.items : [])) entries.push(f)
-                }
-              } else {
-                // 5000 是这一路的上限：单个对话的产出远到不了这个量
-                const full = await scanGallery(config, kind, scope, sessionId, 1, { maxItems: 5000 })
-                const got = Array.isArray(full?.items) ? full.items : []
-                for (const f of got) entries.push(f)
-                for (const g of (Array.isArray(full?.groups) ? full.groups : [])) {
-                  for (const f of (Array.isArray(g?.files) ? g.files : [])) entries.push(f)
-                }
-                if (got.length >= 5000) truncated = true
-              }
+              // 与 exportManifest 共用同一个收集函数：圈中多少张，导出的就得是多少张
+              const collected = await collectAllEntries(config, kind, scope, sessionId, optsResolved, settingsStamp, derived)
+              const entries = collected.entries
+              const truncated = collected.truncated
 
               const paths = []
               const seen = new Set()
@@ -758,6 +799,197 @@ export function registerOpsRoute(ctx, config) {
             } catch (error) {
 
               return json({ ok: false, error: { code: 'scan-failed', message: String(error?.message ?? error) } }, 500)
+
+            }
+
+          }
+
+          // v1.5.0：导出交付清单。落 CSV / JSON，给人看、进 Excel 做物料表。
+          // 与 gallery_manifest 工具共用 buildManifest —— 两边数字永远一致。
+          if (op === 'exportManifest') {
+
+            try {
+
+              const kind = body?.kind === 'file' ? 'file'
+                : body?.kind === 'media' ? 'media'
+                  : 'image'
+              const scope = body?.scope === 'session' ? 'session' : 'global'
+              const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
+              const format = body?.format === 'json' ? 'json'
+                : body?.format === 'both' ? 'both' : 'csv'
+              const allowed = ['final', 'input', 'intermediate', 'unknown']
+              const categories = Array.isArray(body?.categories)
+                ? body.categories.map((c) => String(c ?? '')).filter((c) => allowed.includes(c))
+                : []
+              const relPaths = Array.isArray(body?.relPaths)
+                ? body.relPaths.map((p) => String(p ?? '')).filter((p) => p !== '')
+                : []
+              const includeNotes = body?.includeNotes !== false
+
+              const optsResolved = resolveOptions(config)
+              let settingsStamp = 0
+              try { settingsStamp = (await fsp.stat(optsResolved.settingsFile)).mtimeMs } catch { /* 还没有设置文件 */ }
+              const derived = await derivedStamp(optsResolved)
+
+              const collected = await collectAllEntries(config, kind, scope, sessionId, optsResolved, settingsStamp, derived)
+
+              // 四个登记一次读齐：补「来源视频 / 时间码」「是否人工改过」「反馈备注」「配套遮罩」。
+              // 遮罩必须走 buildLinkedMaskIndex：扫描条目里没有 maskPath 字段，
+              // 只有这个索引知道哪张原图配哪张遮罩图。
+              const [labelsDoc, framesDoc, feedbackDoc, maskIndex] = await Promise.all([
+                readLabels(optsResolved.settingsFile),
+                readFrames(optsResolved.settingsFile),
+                readFeedback(optsResolved.settingsFile, optsResolved),
+                buildLinkedMaskIndex(optsResolved.settingsFile),
+              ])
+
+              const manifest = await buildManifest({
+                entries: collected.entries,
+                relPaths,
+                categories,
+                frames: framesDoc?.frames ?? {},
+                labels: labelsDoc?.labels ?? {},
+                feedback: feedbackDoc?.feedback ?? {},
+                masks: Object.fromEntries(maskIndex ?? []),
+                scope,
+                kind,
+                includeNotes,
+                // 显式指名的一批就必须全导（含带「继承 / 共享」角标的）；
+                // 只有按分类整批扫（未指名）时才排除，避免父子会话重复计数。
+                includeInherited: relPaths.length > 0,
+                maxItems: 20000,   // 全库实测 6930 条，5000 会把尾巴截掉
+              })
+
+              if (manifest.items.length === 0) {
+                return json({
+                  ok: false,
+                  error: {
+                    code: 'empty',
+                    message: '这批没有可导出的文件（可能还没打分类）',
+                  },
+                }, 400)
+              }
+
+              const dir = manifestExportDir()
+              const base = manifestFileBase(manifest, { categories })
+              const exts = format === 'both' ? ['csv', 'json'] : [format]
+              const files = []
+              for (const ext of exts) {
+                const target = await uniqueFilePath(dir, `${base}.${ext}`)
+                const content = ext === 'csv'
+                  ? manifestToCsv(manifest, { withNotes: includeNotes })
+                  : manifestToJson(manifest)
+                await writeFileAtomic(target, content)
+                files.push({ ext, path: target, bytes: Buffer.byteLength(content, 'utf8') })
+              }
+
+              return json({
+                ok: true,
+                dir,
+                base,
+                files,
+                count: manifest.items.length,
+                summary: manifest.summary,
+                truncated: manifest.truncated || collected.truncated,
+              })
+
+            } catch (error) {
+
+              return json({ ok: false, error: { code: 'export-failed', message: String(error?.message ?? error) } }, 500)
+
+            }
+
+          }
+
+          // v1.5.0 隐私：清空本地登记（浏览记录 / 手动标签 / 截帧登记 / 反馈 / 判定标记）。
+          // 两阶段：先 dryRun 报数并发一个 digest，确认时必须回传同一个 digest 才动手。
+          // 这批数据不可再生（手动标签是人的判断），误触不是「再点一次就好」。
+          // **只清登记文件，绝不碰任何资产文件。**
+          if (op === 'clearState') {
+
+            try {
+
+              const asked = String(body?.scope ?? '')
+              const single = ['context', 'labels', 'frames', 'feedback', 'marks']
+              const scope = asked === 'annotations' ? 'annotations'
+                : (single.includes(asked) ? asked : '')
+              if (scope === '') {
+                return json({
+                  ok: false,
+                  error: { code: 'invalid-scope', message: 'scope 只能是 context / labels / frames / feedback / marks / annotations' },
+                }, 400)
+              }
+
+              const optsResolved = resolveOptions(config)
+              const settingsFile = optsResolved.settingsFile
+              const targets = scope === 'annotations' ? ['labels', 'frames', 'feedback', 'marks'] : [scope]
+
+              const counts = {}
+              for (const name of targets) {
+                try {
+                  if (name === 'context') {
+                    const st = await readState(settingsFile)
+                    counts.context = (Array.isArray(st?.recent) ? st.recent.length : 0) + ((st?.item ?? null) === null ? 0 : 1)
+                  } else if (name === 'labels') {
+                    const doc = await readLabels(settingsFile)
+                    counts.labels = Object.keys(doc?.labels ?? {}).length
+                  } else if (name === 'frames') {
+                    const doc = await readFrames(settingsFile)
+                    counts.frames = Object.keys(doc?.frames ?? {}).length
+                  } else if (name === 'feedback') {
+                    const doc = await readFeedback(settingsFile, optsResolved)
+                    counts.feedback = Object.keys(doc?.feedback ?? {}).length
+                  } else if (name === 'marks') {
+                    const doc = await readMarks(settingsFile)
+                    counts.marks = Object.keys(doc?.marks ?? {}).length
+                  }
+                } catch {
+                  counts[name] = 0
+                }
+              }
+
+              const digest = createHash('sha1')
+                .update(JSON.stringify([scope, counts]))
+                .digest('hex')
+                .slice(0, 12)
+
+              if (body?.dryRun !== false) {
+                return json({ ok: true, dryRun: true, scope, counts, digest })
+              }
+              if (String(body?.digest ?? '') !== digest) {
+                return json({
+                  ok: false,
+                  error: { code: 'digest-mismatch', message: '这期间登记有变化，请重新确认后再清空' },
+                }, 409)
+              }
+
+              const cleared = {}
+              for (const name of targets) {
+                try {
+                  if (name === 'context') {
+                    // 浏览记录是临时状态文件，直接删；读路径对「文件不存在」本来就是容错的
+                    await fsp.rm(contextFilePath(settingsFile), { force: true })
+                    cleared.context = counts.context ?? 0
+                  } else {
+                    const file = name === 'labels' ? labelsFilePath(settingsFile)
+                      : name === 'frames' ? framesFilePath(settingsFile)
+                        : name === 'feedback' ? feedbackFilePath(settingsFile)
+                          : marksFilePath(settingsFile)
+                    // 写回空结构而不是删文件：保留 schema 与文件权限，读侧无需处理「缺失」
+                    await writeFileAtomic(file, JSON.stringify({ schema: 1, [name]: {} }, null, 2))
+                    cleared[name] = counts[name] ?? 0
+                  }
+                } catch (error) {
+                  cleared[name] = -1
+                  LOG_RESOLVE('clearState: 单项失败', { name, message: String(error?.message ?? error) })
+                }
+              }
+
+              return json({ ok: true, dryRun: false, scope, cleared, counts })
+
+            } catch (error) {
+
+              return json({ ok: false, error: { code: 'clear-failed', message: String(error?.message ?? error) } }, 500)
 
             }
 

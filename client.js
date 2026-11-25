@@ -1270,6 +1270,18 @@ async function encodeMaskPngBytes(imageData, width, height) {
       hiddenCount: '已隐藏 {count} 个',
       hiddenClear: '全部恢复',
       hiddenClearing: '恢复中…',
+      // v1.5.0 隐私：本地登记说明与清空入口
+      privacyLabel: '本地登记（隐私）',
+      privacyHint: '下面这些文件在 ~/.dsh/ 下，明文保存，从不外发',
+      privacyClearContext: '清空浏览记录',
+      privacyClearContextHint: '删掉「你看过哪几张图」的记录；不影响标签、遮罩、反馈',
+      privacyClearAnnotations: '清空全部标注',
+      privacyClearAnnotationsHint: '删掉手动标签、截帧登记、反馈与判定标记；需要点两次确认，不可恢复',
+      privacyClearAnnotationsConfirm: '确认清空？（再点一次）',
+      privacyArmHint: '再点一次才会真的删；点这一下什么都没动',
+      privacyClearing: '正在清空…',
+      privacyCleared: '已清空 {n} 条本地登记',
+      privacyClearFailed: '清空失败：{message}',
       hiddenClearHint: '让所有被隐藏的文件重新出现在列表里（不会删除文件）',
       hiddenCleared: '已全部恢复',
       hiddenMore: '还有 {count} 个未显示',
@@ -1300,6 +1312,12 @@ async function encodeMaskPngBytes(imageData, width, height) {
       ctxCopyFileHint: '把该文件写入系统剪贴板，可在别的对话或资源管理器里粘贴',
       batchCopyFiles: '复制所选文件',
       batchCopyHint: '把选中的文件写入系统剪贴板，可在别的对话或资源管理器里粘贴',
+      // v1.5.0 导出交付清单：CSV 进 Excel、JSON 给下一轮，落在 ~/.dsh/gallery-exports/
+      batchExportManifest: '导出清单',
+      batchExportHint: '把选中的这批导出成交付清单（CSV 给 Excel 看、JSON 给下一轮读），存到 ~/.dsh/gallery-exports/；同名不覆盖',
+      exportOk: '已导出 {n} 条清单：{path}',
+      exportEmpty: '这批没有可导出的文件（可能还没打分类）',
+      exportFailed: '导出清单失败：{message}',
       copyOk: '已复制 {n} 个文件到剪贴板；切到目标对话后右键「粘贴」或按 Ctrl+V',
       copyOkInternal: '已复制 {n} 个文件（系统剪贴板不可用，仅插件内粘贴有效）',
       copyFailed: '复制失败：{message}',
@@ -1716,6 +1734,17 @@ async function encodeMaskPngBytes(imageData, width, height) {
       hiddenCount: '{count} hidden',
       hiddenClear: 'Restore all',
       hiddenClearing: 'Restoring…',
+      privacyLabel: 'Local records (privacy)',
+      privacyHint: 'These files live under ~/.dsh/ in plain text and are never sent anywhere',
+      privacyClearContext: 'Clear view history',
+      privacyClearContextHint: 'Delete the "which images you opened" record; tags, masks and feedback stay',
+      privacyClearAnnotations: 'Clear all annotations',
+      privacyClearAnnotationsHint: 'Delete manual labels, frame records, feedback and marks; two clicks required, cannot be undone',
+      privacyClearAnnotationsConfirm: 'Confirm clear? (click again)',
+      privacyArmHint: 'Nothing has been deleted yet — click again to confirm',
+      privacyClearing: 'Clearing…',
+      privacyCleared: 'Cleared {n} local records',
+      privacyClearFailed: 'Clear failed: {message}',
       hiddenClearHint: 'Show all hidden files again (files are not deleted)',
       hiddenCleared: 'All restored',
       hiddenMore: '{count} more not shown',
@@ -1746,6 +1775,11 @@ async function encodeMaskPngBytes(imageData, width, height) {
       ctxCopyFileHint: 'Write this file to the system clipboard; paste it in another chat or Explorer',
       batchCopyFiles: 'Copy selected files',
       batchCopyHint: 'Write the selected files to the system clipboard; paste them in another chat or Explorer',
+      batchExportManifest: 'Export list',
+      batchExportHint: 'Export the selection as a delivery list (CSV for Excel, JSON for the next round) into ~/.dsh/gallery-exports/; existing files are never overwritten',
+      exportOk: 'Exported {n} items: {path}',
+      exportEmpty: 'Nothing exportable in this batch (maybe no category yet)',
+      exportFailed: 'Export failed: {message}',
       copyOk: 'Copied {n} file(s) to the clipboard; right-click "Paste" or press Ctrl+V in the target chat',
       copyOkInternal: 'Copied {n} file(s) (system clipboard unavailable; in-plugin paste only)',
       copyFailed: 'Copy failed: {message}',
@@ -9026,6 +9060,39 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       }, [info, t])
 
       /** 全部恢复：清空隐藏列表，让被隐藏的条目重新出现在列表里。 */
+      /**
+       * v1.5.0 隐私：清空本地登记。
+       *
+       * 两段式：先 dryRun 拿条数与 digest，再带着同一个 digest 真删 ——
+       * Host 侧会校验 digest，中途登记有变化就拒绝，避免「看着 3 条、删掉 30 条」。
+       * 「清空全部标注」额外要求点两次（clearArm），因为那批数据不可再生。
+       */
+      const [privacyBusy, setPrivacyBusy] = React.useState('')
+      const [privacyNote, setPrivacyNote] = React.useState('')
+      const [clearArm, setClearArm] = React.useState('')
+      const clearLocal = React.useCallback(async (scope) => {
+        if (privacyBusy !== '') return
+        setPrivacyBusy(scope)
+        setPrivacyNote('')
+        setError(null)
+        try {
+          const dry = await callHost('clearState', { scope, dryRun: true })
+          if (dry?.ok !== true) throw new Error(dry?.error?.message ?? t('errorTitle'))
+          const counts = dry.counts ?? {}
+          const total = Object.keys(counts).reduce((n, k) => n + (Number(counts[k]) || 0), 0)
+          const done = await callHost('clearState', { scope, dryRun: false, digest: dry.digest })
+          if (done?.ok !== true) throw new Error(done?.error?.message ?? t('errorTitle'))
+          setPrivacyNote(format(t('privacyCleared'), { n: total }))
+          setClearArm('')
+          setTimeout(() => setPrivacyNote(''), 6000)
+          if (typeof onSaved === 'function') onSaved()
+        } catch (e) {
+          setPrivacyNote(format(t('privacyClearFailed'), { message: String(e?.message ?? e) }))
+        } finally {
+          setPrivacyBusy('')
+        }
+      }, [privacyBusy, t, onSaved])
+
       const clearHidden = React.useCallback(async () => {
         if (info === null || info.hiddenCount === 0) return
         setClearing(true)
@@ -9163,6 +9230,47 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
 
                 error === null ? null : h('p', { className: 'dg-status dg-error', key: 'err' }, error),
                 saved ? h('p', { className: 'dg-status dg-ok', key: 'ok' }, t('savedImmediately')) : null,
+
+                // ---- v1.5.0 本地登记（隐私）：看清存了什么，也能自己清干净 ----
+                h('div', { className: 'dg-field', key: 'privacy' }, [
+                  h('div', { className: 'dg-fieldHead', key: 'head' }, [
+                    h('span', { className: 'dg-fieldLabel', key: 'l' }, t('privacyLabel')),
+                    h('span', { className: 'dg-fieldHint', key: 'h' }, t('privacyHint')),
+                  ]),
+                  h('div', { className: 'dg-settingsActions', key: 'ops' }, [
+                    h('button', {
+                      type: 'button', className: 'dg-btn dg-btnSmall', key: 'clearCtx',
+                      'data-gallery-clear-context': true,
+                      disabled: privacyBusy !== '',
+                      title: t('privacyClearContextHint'),
+                      onClick: () => { void clearLocal('context') },
+                    }, privacyBusy === 'context' ? t('privacyClearing') : t('privacyClearContext')),
+                    h('button', {
+                      type: 'button',
+                      className: `dg-btn dg-btnSmall${clearArm === 'annotations' ? ' dg-dangerBtn' : ''}`,
+                      key: 'clearAnn',
+                      'data-gallery-clear-annotations': true,
+                      'data-armed': clearArm === 'annotations' ? '1' : '0',
+                      disabled: privacyBusy !== '',
+                      title: t('privacyClearAnnotationsHint'),
+                      onClick: () => {
+                        if (clearArm !== 'annotations') {
+                          setClearArm('annotations')
+                          setPrivacyNote(t('privacyArmHint'))
+                          return
+                        }
+                        void clearLocal('annotations')
+                      },
+                    }, privacyBusy === 'annotations'
+                      ? t('privacyClearing')
+                      : (clearArm === 'annotations'
+                        ? t('privacyClearAnnotationsConfirm')
+                        : t('privacyClearAnnotations'))),
+                  ]),
+                  privacyNote === ''
+                    ? null
+                    : h('p', { className: 'dg-status', key: 'note' }, privacyNote),
+                ]),
 
                 h('div', { className: 'dg-settingsActions', key: 'actions' }, [
                   h('button', {
@@ -10699,6 +10807,35 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         }
       }, [callHost, t, showPasteNotice])
 
+      /**
+       * 导出交付清单（v1.5.0）。
+       *
+       * 与 Agent 的第 5 个工具 `gallery_manifest` 走 Host 侧同一个 buildManifest：
+       * 您导出的 CSV 和模型读到的清单，条数、分类计数、来源时间码必须完全一致。
+       * 落盘位置在 DSH_HOME/gallery-exports/，**不在扫描根内** ——
+       * 清单是 .csv/.json，而扫描会认这两类扩展名，写进产出目录就会变成一堆新「资产」。
+       */
+      const doExportManifest = React.useCallback(async (relPaths) => {
+        const paths = [...new Set((Array.isArray(relPaths) ? relPaths : [])
+          .map((p) => String(p ?? '')).filter((p) => p !== ''))]
+        if (paths.length === 0) return false
+        try {
+          const payload = await callHost('exportManifest', {
+            relPaths: paths,
+            format: 'both',
+            includeNotes: true,
+          })
+          if (payload?.ok !== true) throw new Error(payload?.error?.message ?? 'exportManifest failed')
+          const files = Array.isArray(payload.files) ? payload.files : []
+          const head = files.length > 0 ? String(files[0].path ?? '') : String(payload.dir ?? '')
+          showPasteNotice('ok', format(t('exportOk'), { n: payload.count ?? paths.length, path: head }))
+          return true
+        } catch (error) {
+          showPasteNotice('fail', format(t('exportFailed'), { message: String(error?.message ?? error) }))
+          return false
+        }
+      }, [callHost, t, showPasteNotice])
+
       React.useEffect(() => {
         let alive = true
         const controller = new AbortController()
@@ -11352,6 +11489,13 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
                 title: t('batchCopyHint'),
                 onClick: () => { void doCopyAssets([...selected]) },
               }, `⧉ ${t('batchCopyFiles')} (${selectedCount})`),
+              // v1.5.0 导出交付清单：CSV 进 Excel 做物料表、JSON 给下一轮/脚本读
+              h('button', {
+                type: 'button', className: 'dg-btn dg-btnSmall', key: 'exportManifest',
+                'data-gallery-batch-export': true,
+                title: t('batchExportHint'),
+                onClick: () => { void doExportManifest([...selected]) },
+              }, `\u{1F4CB} ${t('batchExportManifest')} (${selectedCount})`),
               // 2026-11-25 批量删除：一次删掉全部选中，二次确认后不可恢复
               h('button', {
                 type: 'button', className: 'dg-btn dg-btnSmall dg-dangerBtn', key: 'deleteSel',

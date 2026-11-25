@@ -37,12 +37,20 @@ import { buildLinkedMaskIndex } from './frames.js'
 // 起因是实测：用户框选后说「把框里的字母改掉」，模型拿不到框的位置，
 // 只能翻 frames.json / 临时目录满地找，光找就花了 97 秒。
 import { readFeedback, setFeedback } from './feedback.js'
+// v1.5.0：交付清单。与 op exportManifest 共用同一个内核，两边数字永远一致。
+import { readLabels } from './labels.js'
+import { readFrames } from './frames.js'
+import { buildManifest } from './manifest.js'
 import { annotationsFor, latestAnnotationAt, materializeRegions, materializeMaskRegion } from './regions.js'
 
 const TOOL_NAME = 'gallery_find'
 const CONTEXT_TOOL_NAME = 'gallery_context'
 const REGIONS_TOOL_NAME = 'gallery_regions'
 const REPLY_TOOL_NAME = 'gallery_reply'
+const MANIFEST_TOOL_NAME = 'gallery_manifest'
+// 清单一次最多回多少条：默认 200 够写交付说明，上限 500 防止把上下文撑爆
+const MANIFEST_LIMIT_DEFAULT = 200
+const MANIFEST_LIMIT_MAX = 500
 const MAX_LIMIT = 100
 const DEFAULT_LIMIT = 20
 // 第二档：gallery_context 一次列多少张「最近看过的」。
@@ -67,7 +75,8 @@ function scanCacheKey(config, kind, scope, sid, opts) {
       try { stamp += `${statSync(path.join(home, name)).mtimeMs}|` } catch { stamp += "0|" }
     }
   } catch { stamp = "" }
-  return [kind, scope, sid, JSON.stringify(config ?? {}), stamp].join("~")
+  // 键里必须带 maxItems：列表要 60 条、清单要 5000 条，共用一份缓存会互相投毒
+  return [kind, scope, sid, String(opts?.maxItems ?? ''), JSON.stringify(config ?? {}), stamp].join("~")
 }
 async function scanWithShortCache(config, kind, scope, sid, opts) {
   const key = scanCacheKey(config, kind, scope, sid, opts)
@@ -907,6 +916,200 @@ export function buildReplyToolDefinition(config) {
   }
 }
 
+
+/**
+ * 取一批资产的结构化清单（v1.5.0）。
+ *
+ * 与 op `exportManifest` 走**同一个** buildManifest：模型读到的条数、分类计数、
+ * 来源视频，跟用户导出的 CSV 必须完全对得上 —— 这是「一个内核两个出口」的意义。
+ *
+ * 扫描口径也与导出相同：一次取全，不按页翻。当前对话视图每翻一页都要重解一次
+ * 会话日志，翻十几页能把工具调用拖到几十秒。
+ */
+async function manifestOf(args, exec, config) {
+  const a = args ?? {}
+  try {
+    const opts = resolveOptions(config)
+    const kind = a.kind === 'file' || a.kind === 'media' ? a.kind : 'image'
+    const execSessionId = typeof exec?.agent?.session?.id === 'string' ? exec.agent.session.id : ''
+    const scope = a.scope === 'session' && execSessionId !== '' ? 'session' : 'global'
+    const limit = Math.max(1, Math.min(MANIFEST_LIMIT_MAX, Math.trunc(Number(a.limit)) || MANIFEST_LIMIT_DEFAULT))
+    const cats = Array.isArray(a.categories) && a.categories.length > 0
+      ? a.categories.map((c) => String(c ?? ''))
+      : (typeof a.category === 'string' && a.category !== '' ? [a.category] : [])
+    const selected = Array.isArray(a.selected) ? a.selected.map((v) => String(v ?? '')).filter((v) => v !== '') : []
+
+    // 走短缓存：全库扫描实测 8 秒，同一轮里连着问两次不该扫两遍
+    const full = await scanWithShortCache(config, kind, scope, execSessionId, { ...opts, maxItems: 5000 })
+    const entries = Array.isArray(full?.items) ? [...full.items] : []
+    for (const g of (Array.isArray(full?.groups) ? full.groups : [])) {
+      for (const f of (Array.isArray(g?.files) ? g.files : [])) entries.push(f)
+    }
+
+    const [labelsDoc, framesDoc, feedbackDoc, maskIndex] = await Promise.all([
+      readLabels(opts.settingsFile),
+      readFrames(opts.settingsFile),
+      readFeedback(opts.settingsFile, opts),
+      buildLinkedMaskIndex(opts.settingsFile),
+    ])
+
+    const manifest = await buildManifest({
+      entries,
+      relPaths: selected,
+      categories: cats,
+      frames: framesDoc?.frames ?? {},
+      labels: labelsDoc?.labels ?? {},
+      feedback: feedbackDoc?.feedback ?? {},
+      masks: Object.fromEntries(maskIndex ?? []),
+      scope,
+      kind,
+      includeNotes: a.includeNotes === true,
+      includeSize: a.includeSize !== false,
+      // 与 op exportManifest 同口径：显式选中就必须全给（含继承 / 共享），
+      // 仅按分类扫整批时排除，两个出口才不会各说各的。
+      includeInherited: selected.length > 0,
+      maxItems: limit,
+    })
+
+    return {
+      found: manifest.items.length > 0,
+      total: manifest.summary.total,
+      truncated: manifest.truncated,
+      summary: manifest.summary,
+      items: manifest.items,
+      error: '',
+    }
+  } catch (error) {
+    return {
+      found: false, total: 0, truncated: false, summary: null, items: [],
+      error: String(error?.message ?? error),
+    }
+  }
+}
+
+/** 把清单写成模型能直接照着干活的样子：先给总量分布，再每条一行。 */
+function renderManifest(args, value) {
+  if (value?.error) return [{ type: 'text', text: `取交付清单失败：${value.error}` }]
+  const items = Array.isArray(value?.items) ? value.items : []
+  if (items.length === 0) {
+    return [{ type: 'text', text: '这一批里没有符合条件的资产（可能还没打分类）。' }]
+  }
+  const s = value.summary ?? {}
+  const by = s.byCategory ?? {}
+  const lines = []
+  lines.push(`共 ${value.total} 条${value.truncated ? `（本次只列前 ${items.length} 条，完整清单让用户点面板「导出清单」）` : ''}：`
+    + `定稿 ${by.final ?? 0} ／ 素材 ${by.input ?? 0} ／ 过程稿 ${by.intermediate ?? 0} ／ 未归类 ${by.unknown ?? 0}；`
+    + `有遮罩 ${s.withMask ?? 0} 条，截帧 ${s.fromVideo ?? 0} 条，合计 ${s.totalBytesText || '—'}。`)
+  for (const it of items) {
+    const bits = [it.categoryText || it.category]
+    if (it.width > 0 && it.height > 0) bits.push(`${it.width}×${it.height}`)
+    if (it.bytesText) bits.push(it.bytesText)
+    if (it.sessionTitle) bits.push(`会话「${it.sessionTitle}」`)
+    if (it.videoName) bits.push(`取自 ${it.videoName}${it.timecode ? ` @ ${it.timecode}` : ''}`)
+    if (it.maskPath) bits.push('有遮罩')
+    lines.push(`· ${it.relPath} ｜ ${bits.join(' ｜ ')}`)
+    if (it.absPath) lines.push(`    图：${it.absPath}`)
+    if (it.note) lines.push(`    备注：${it.note}`)
+  }
+  lines.push('以上是这一批的完整清单，可直接据此作答或接着做下一轮改动；'
+    + '不要再用命令行 / 脚本重复扫描核对，也不要再调一次本工具确认。'
+    + '要给客户的 CSV / JSON 文件请让用户在面板上点「导出清单」—— 本工具只读，不生成文件。')
+  return [{ type: 'text', text: lines.join('\n') }]
+}
+
+/** v1.5.0：交付清单（只读）。给 Agent 读，导出文件那半在 op exportManifest。 */
+export function buildManifestToolDefinition(config) {
+  return {
+    name: MANIFEST_TOOL_NAME,
+    description: '按分类或选中范围取一份结构化清单：文件名、相对/绝对路径、分类、尺寸、体积、修改时间、'
+      + '来源对话、来源视频与时间码（截帧才有）、有无遮罩、反馈备注。'
+      + '当用户说「把这批的清单给我」「定稿都有哪些」「整理一份交付清单」「按这个清单接着改」'
+      + '「哪些是定稿哪些是过程稿」时用本工具 —— 不要让用户手抄文件名，也不要自己扫盘。'
+      + '只读：不落盘、不发送任何消息。要生成给客户的 CSV / JSON 文件，请用户在面板上点「导出清单」。',
+    parameters: {
+      type: 'object',
+      properties: {
+        category: {
+          type: 'string',
+          description: '只取一类：final=定稿 / input=素材 / intermediate=过程稿 / unknown=未归类；留空=全部',
+        },
+        categories: {
+          type: 'array',
+          description: '取多类（与 category 二选一，本项优先）',
+          items: { type: 'string' },
+        },
+        scope: { type: 'string', description: 'session=当前对话 / global=全部对话；默认 global' },
+        kind: { type: 'string', description: 'image / file / media；默认 image' },
+        selected: {
+          type: 'array',
+          description: '只要这些相对路径（用户在面板上批量选中的那批，直接从 gallery_context 或用户描述里取）',
+          items: { type: 'string' },
+        },
+        includeNotes: { type: 'boolean', description: '是否带反馈篮里的备注；默认 false' },
+        includeSize: { type: 'boolean', description: '是否补宽高与体积；默认 true（条目自带字段时不读盘）' },
+        limit: { type: 'number', description: `最多返回条数，默认 ${MANIFEST_LIMIT_DEFAULT}，最大 ${MANIFEST_LIMIT_MAX}` },
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        properties: {
+          found: { type: 'boolean', description: '有没有取到资产' },
+          total: { type: 'number', description: '清单条数' },
+          truncated: { type: 'boolean', description: '是否因为上限被截断' },
+          summary: {
+            type: 'object',
+            description: '总量与分布',
+            properties: {
+              total: { type: 'number' },
+              byCategory: {
+                type: 'object',
+                properties: {
+                  final: { type: 'number' }, input: { type: 'number' },
+                  intermediate: { type: 'number' }, unknown: { type: 'number' },
+                },
+              },
+              withMask: { type: 'number', description: '有配套遮罩的条数' },
+              fromVideo: { type: 'number', description: '从视频截出来的帧图条数' },
+              totalBytesText: { type: 'string', description: '总体积，如「4985.5 MB」' },
+            },
+          },
+          items: {
+            type: 'array',
+            description: '清单明细，按相对路径升序',
+            items: {
+              type: 'object',
+              properties: {
+                index: { type: 'number' },
+                name: { type: 'string' },
+                relPath: { type: 'string' },
+                absPath: { type: 'string' },
+                category: { type: 'string', description: 'final / input / intermediate / unknown' },
+                categoryText: { type: 'string', description: '中文分类名' },
+                categoryManual: { type: 'boolean', description: '分类是用户手动改过的' },
+                width: { type: 'number' }, height: { type: 'number' },
+                bytesText: { type: 'string' },
+                mtimeText: { type: 'string' },
+                sessionTitle: { type: 'string' },
+                videoName: { type: 'string', description: '截帧的来源视频文件名；非截帧为空' },
+                timecode: { type: 'string', description: '截帧时间码，如 00-02-17-892' },
+                maskPath: { type: 'string', description: '配套遮罩的相对路径；没有则为空' },
+                note: { type: 'string', description: '反馈篮里的备注；includeNotes 开启时才有' },
+              },
+              required: ['relPath'],
+            },
+          },
+          error: { type: 'string' },
+        },
+      },
+      render: renderManifest,
+    },
+    async execute(args, exec) {
+      return manifestOf(args, exec, config)
+    },
+  }
+}
+
 /**
  * 在插件 apply() 里调用。
  * 返回 disposer；任何失败都吞掉并记日志 —— 绝不能因为 tool 注册失败
@@ -918,6 +1121,7 @@ export function registerTools(ctx, config) {
     buildContextToolDefinition(config),
     buildRegionsToolDefinition(config),
     buildReplyToolDefinition(config),
+    buildManifestToolDefinition(config),
   ]
   if (!ctx?.tools || typeof ctx.tools.register !== 'function') {
     ctx?.logger?.warn?.('dsh-gallery: ctx.tools 不可用，Agent 工具未注册')
@@ -937,5 +1141,5 @@ export function registerTools(ctx, config) {
   return () => { for (const d of disposers) { try { d() } catch { /* 忽略 */ } } }
 }
 
-export { TOOL_NAME, CONTEXT_TOOL_NAME, REGIONS_TOOL_NAME, REPLY_TOOL_NAME,
+export { TOOL_NAME, CONTEXT_TOOL_NAME, REGIONS_TOOL_NAME, REPLY_TOOL_NAME, MANIFEST_TOOL_NAME,
   rootOf, toRow, renderRows, renderContext, renderRegions, renderReply }
