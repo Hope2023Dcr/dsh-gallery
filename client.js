@@ -964,8 +964,9 @@ async function encodeMaskPngBytes(imageData, width, height) {
       annotStartTag: '再点一下定终点',
       batchModeEnter: '批量选择',
       batchModeExit: '退出批量',
-      batchModeEnterHint: '批量模式：直接点卡片即可选中/取消（此时点卡片不会打开大图），选好后批量改标签',
+      batchModeEnterHint: '批量模式：点卡片即可选中/取消（此时不会打开大图）；也可以按住鼠标左键拖出一个选框，框碰到的卡片全部选中；选好后批量改标签',
       batchModeExitHint: '退出批量模式并清空已选',
+      batchEscHint: '退出批量模式并清空已选（也可以直接按 Esc）',
       // ---- 前后对比（2026-11-17）----
       cmpEnter: '对比',
       cmpExit: '结束对比',
@@ -1497,8 +1498,9 @@ async function encodeMaskPngBytes(imageData, width, height) {
       annotStartTag: 'Click again to set the end',
       batchModeEnter: 'Batch select',
       batchModeExit: 'Exit batch',
-      batchModeEnterHint: 'Batch mode: click any card to select/deselect (clicking no longer opens the viewer), then edit labels in batch',
+      batchModeEnterHint: 'Batch mode: click a card to select/deselect (no viewer opens); or hold the left mouse button and drag a selection box — every card it touches gets selected; then edit labels in batch',
       batchModeExitHint: 'Leave batch mode and clear the selection',
+      batchEscHint: 'Leave batch mode and clear the selection (or just press Esc)',
       // ---- before / after compare (2026-11-17) ----
       cmpEnter: 'Compare',
       cmpExit: 'Exit compare',
@@ -2033,6 +2035,31 @@ async function encodeMaskPngBytes(imageData, width, height) {
     }
 
     /**
+     * v1.6.6：宿主偶发忙时，list 可能撞上 12 秒前端硬超时（gallery-timeout）。
+     * 旧行为一次超时就把整屏列表清空成「扫描失败」红字，切换视图时尤其刺眼；
+     * 实测单次扫描只要 0.1~1.8s，多数只是宿主单线程排队，数据其实没丢。
+     * 这里只对「超时」静默退避重试（1.2s、2.4s），重试期间调用方不碰 view，
+     * 旧列表照常显示、平滑替换；三次都超时（真卡死）才把错误交回上层。
+     * AbortError（切视图/卸载取消）与其它真实错误立即抛出，绝不重试。
+     */
+    async function callHostListWithRetry(doLoad, signal) {
+      let lastErr
+      for (let attempt = 0; attempt <= 2; attempt += 1) {
+        if (signal?.aborted) throw lastErr ?? new Error('aborted')
+        try {
+          return await doLoad()
+        } catch (error) {
+          if (signal?.aborted || error?.name === 'AbortError') throw error
+          if (error?.code !== 'gallery-timeout') throw error
+          lastErr = error
+          if (attempt === 2) break
+          await new Promise((resolve) => setTimeout(resolve, 1200 * (attempt + 1)))
+        }
+      }
+      throw lastErr
+    }
+
+    /**
      * 拉取一张原图的 Blob；超时即放弃，让调用方显示占位符。
      * `onProgress(loaded, total)` 可选：有 Content-Length 时按字节回报进度（total=-1 表示不确定）。
      * 原图可能是几十 MB，前端需要进度反馈，否则用户以为卡死。
@@ -2518,7 +2545,21 @@ async function encodeMaskPngBytes(imageData, width, height) {
 }
 .dg-ok { color: var(--dsw-alias-brand-primary); }
 .dg-statusAction { padding-top: 0; }
-.dg-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 10px; }
+.dg-body { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; padding: 10px; }
+/* 批量框选（2026-11-27）：批量模式下按住左键拖 = 拉一个选框，框碰到的卡片都选中。
+   z-index 12 高于卡片角标(7) 与吸顶组头(10)，低于查看器层(30)。 */
+.dg-marquee {
+  position: absolute;
+  display: none;
+  pointer-events: none;
+  z-index: 12;
+  box-sizing: border-box;
+  border: 1px solid #4a7cff;
+  border-radius: 3px;
+  background: rgba(74,124,255,0.14);
+}
+/* 批量模式下不许选字，否则拖框会顺手把文案刷成蓝色 */
+.dg-body[data-gallery-batch="1"] { user-select: none; -webkit-user-select: none; }
 /* 网格区外层：定位容器，右侧挂滚动辅助列（无滚轮场景） */
 .dg-bodyWrap {
   flex: 1 1 auto;
@@ -10305,6 +10346,178 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
        */
       const [maskOverrides, setMaskOverrides] = React.useState({})
       const selectMode = batchMode || selected.size > 0
+      /**
+       * 框选的 document 监听是手动挂的，不会随重渲染自动摘掉；
+       * Esc 中途退出批量后，下一次鼠标移动要用它读最新值来「立即收摊」，
+       * 否则会留一个还在画、还在自动滚的选框。
+       */
+      const batchModeRef = React.useRef(false)
+      batchModeRef.current = batchMode
+      /**
+       * 批量框选（2026-11-27 老板要）：批量模式下按住左键拖 → 拉一个选框，
+       * 框碰到的卡片即选中。批量模式下卡片不再可拖（见 wrapCard 的 draggable），
+       * 所以「按住拖动」这个手势全部让给框选。
+       *
+       * 为什么不用 state 存选框几何：每帧 setState 会让整个网格重渲（分组视图
+       * 上千张卡片），拖起来会卡。这里直接写 DOM style，只有「命中集合变了」
+       * 才 setSelected 一次。
+       * 🔴 起点已选的卡片保持选中（加选语义），所以每次重算都从 base 快照重来：
+       *    拖回去能自动撤掉本次框到的那批，不会越拖越乱。
+       */
+      const selectedRef = React.useRef(selected)
+      selectedRef.current = selected
+      const marqueeBoxRef = React.useRef(null)
+      /** 框选刚结束那一下 click 要丢掉，否则会顺手把起点那张卡片点掉。0 = 不拦。 */
+      const marqueeClickGuardRef = React.useRef(0)
+      const beginMarquee = React.useCallback((event) => {
+        if (!batchMode) return
+        if (event.button !== 0) return
+        // 触屏 / 触控笔走原生滚动，不抢
+        if (String(event.pointerType ?? 'mouse') !== 'mouse') return
+        const body = bodyScrollRef.current
+        if (body === null || body === undefined) return
+        const target = event.target
+        if (target !== null && target !== undefined && typeof target.closest === 'function') {
+          /**
+           * 🔴 图片 / 文件卡片的根节点本身就是 <button class="dg-card">（为了键盘可达），
+           * 所以「命中 button 就不框选」会把整张卡片排除掉 —— 只剩卡片缝隙能起手，
+           * 这正是 2026-11-27 老板反馈的「起点落在空白处才生效」。
+           * 只有卡片根节点之外的小按钮（改标签 / 勾选 / 复制 / 抓帧）才该让开。
+           */
+          const hit = target.closest('button,a,input,textarea,select')
+          if (hit !== null && !hit.classList.contains('dg-card')) return
+          if (target.closest('[data-gallery-label-edit],[data-gallery-card-check],[data-gallery-card-copy-file],[data-gallery-grab-frame]') !== null) return
+        }
+        const rect = body.getBoundingClientRect()
+        // 落在滚动条上不算框选（clientWidth 不含滚动条宽度）
+        if (event.clientX >= rect.left + body.clientWidth) return
+        if (event.clientY >= rect.top + body.clientHeight) return
+        // 卡片矩形一次性缓存成「内容坐标」：框选期间滚动也不会算错
+        const boxes = []
+        const nodes = body.querySelectorAll('[data-gallery-card-wrap]')
+        for (let i = 0; i < nodes.length; i += 1) {
+          const node = nodes[i]
+          const rp = String(node.getAttribute('data-gallery-card-wrap') ?? '')
+          if (rp === '') continue
+          const r = node.getBoundingClientRect()
+          boxes.push({
+            rp,
+            l: r.left - rect.left + body.scrollLeft,
+            t: r.top - rect.top + body.scrollTop,
+            r: r.right - rect.left + body.scrollLeft,
+            b: r.bottom - rect.top + body.scrollTop,
+          })
+        }
+        if (boxes.length === 0) return
+        const base = new Set(selectedRef.current)
+        const box = marqueeBoxRef.current
+        // 起点在「内容坐标」里定死：自动滚动时选框顶边不能跟着一起漂
+        const startX = event.clientX - rect.left + body.scrollLeft
+        const startY = event.clientY - rect.top + body.scrollTop
+        let lastClientX = event.clientX
+        let lastClientY = event.clientY
+        let moved = false
+        let appliedKey = ''
+        let rafId = 0
+        const THRESHOLD = 4
+        const EDGE = 44
+        const MAX_STEP = 26
+        /** 按最后的鼠标位置重画选框 + 重算命中。滚动后也调它，坐标自然跟着走。 */
+        const paint = () => {
+          // Esc 已退出批量：不再画框，并把上一次的框收起来
+          if (!batchModeRef.current) {
+            if (box !== null && box !== undefined) box.style.display = 'none'
+            return
+          }
+          const x1 = lastClientX - rect.left + body.scrollLeft
+          const y1 = lastClientY - rect.top + body.scrollTop
+          const x = Math.min(startX, x1)
+          const y = Math.min(startY, y1)
+          const w = Math.abs(x1 - startX)
+          const h = Math.abs(y1 - startY)
+          if (box !== null && box !== undefined) {
+            box.style.display = 'block'
+            box.style.left = `${x}px`
+            box.style.top = `${y}px`
+            box.style.width = `${w}px`
+            box.style.height = `${h}px`
+          }
+          const hits = []
+          for (let i = 0; i < boxes.length; i += 1) {
+            const bx = boxes[i]
+            if (bx.l < x + w && bx.r > x && bx.t < y + h && bx.b > y) hits.push(bx.rp)
+          }
+          const key = hits.join('\u0001')
+          if (key === appliedKey) return
+          appliedKey = key
+          const next = new Set(base)
+          for (let i = 0; i < hits.length; i += 1) next.add(hits[i])
+          setSelected(next)
+        }
+        /**
+         * 拖到容器上下边缘自动滚动：鼠标停在边缘不动也继续滚，
+         * 每滚一帧用最后的鼠标位置重画一次，命中跟着长出来。
+         * 越靠边滚得越快（最多 MAX_STEP/帧）；到顶 / 到底 / 离开边缘就停。
+         */
+        const step = () => {
+          rafId = 0
+          if (!moved) return
+          // Esc 已退出批量：立刻停滚，不再申请下一帧
+          if (!batchModeRef.current) return
+          const topEdge = rect.top + EDGE
+          const bottomEdge = rect.bottom - EDGE
+          let dy = 0
+          if (lastClientY < topEdge) dy = -Math.ceil(Math.min(1, (topEdge - lastClientY) / EDGE) * MAX_STEP)
+          else if (lastClientY > bottomEdge) dy = Math.ceil(Math.min(1, (lastClientY - bottomEdge) / EDGE) * MAX_STEP)
+          if (dy === 0) return
+          const before = body.scrollTop
+          body.scrollTop = before + dy
+          if (body.scrollTop === before) return
+          paint()
+          rafId = requestAnimationFrame(step)
+        }
+        const onMove = (ev) => {
+          const dx = ev.clientX - event.clientX
+          const dy = ev.clientY - event.clientY
+          lastClientX = ev.clientX
+          lastClientY = ev.clientY
+          if (!moved && Math.abs(dx) < THRESHOLD && Math.abs(dy) < THRESHOLD) return
+          moved = true
+          paint()
+          if (rafId === 0) rafId = requestAnimationFrame(step)
+        }
+        const onUp = () => {
+          document.removeEventListener('pointermove', onMove, true)
+          document.removeEventListener('pointerup', onUp, true)
+          document.removeEventListener('pointercancel', onUp, true)
+          if (rafId !== 0) {
+            cancelAnimationFrame(rafId)
+            rafId = 0
+          }
+          if (box !== null && box !== undefined) box.style.display = 'none'
+          // 只有真的拖出过框，才吃掉随后那一次 click
+          if (moved) marqueeClickGuardRef.current = performance.now() + 600
+        }
+        document.addEventListener('pointermove', onMove, true)
+        document.addEventListener('pointerup', onUp, true)
+        document.addEventListener('pointercancel', onUp, true)
+      }, [batchMode])
+      /** dg-body 捕获层：框选刚结束的 click 一律丢掉，避免起点卡片被反选。 */
+      const onBodyClickCaptureForMarquee = React.useCallback((event) => {
+        const guard = marqueeClickGuardRef.current
+        if (guard === 0) return
+        marqueeClickGuardRef.current = 0
+        if (performance.now() > guard) return
+        event.preventDefault()
+        event.stopPropagation()
+      }, [])
+      // 选框本体：两套 body 分支互斥，同一个 ref 只会挂到实际渲染的那一个
+      const marqueeNode = h('div', {
+        className: 'dg-marquee',
+        key: 'marquee',
+        ref: marqueeBoxRef,
+        'data-gallery-marquee': '1',
+      })
       /** 清废稿确认对话框：null=关闭；{ phase:'list'|'deleting', files, digest, count } */
       const [discardDialog, setDiscardDialog] = React.useState(null)
       // v1.6.5：已归档 / 已隐藏 / 历史资产 三类组「默认继承上次扫描结果」。
@@ -11155,17 +11368,28 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         }
       }, [deleteTarget, load, kind, scope, page, t, showPasteNotice, pushUndo])
 
+      // v1.6.6：同一时刻只飞一个整表刷新。changes 轮询在「当前对话」视图每次
+      // 变动都会 void refresh()，不去重会把多个 list 叠在宿主单线程上排队，
+      // 反过来把偶发超时放大成「切换视图经常弹红字」。
+      const refreshInflightRef = React.useRef(null)
       const refresh = React.useCallback(async () => {
+        if (refreshInflightRef.current !== null) return refreshInflightRef.current
         setRefreshing(true)
-        try {
-          setView({ status: 'ready', data: await load(undefined, kind, scope, page) })
-        } catch (error) {
-          if (error?.name === 'AbortError') return
-          setView({ status: 'failed', message: error?.code === 'gallery-timeout' ? t('listTimeout') : String(error?.message ?? error) })
-        } finally {
-          setRefreshing(false)
-        }
-      }, [load, kind, scope, page])
+        const task = (async () => {
+          try {
+            const data = await callHostListWithRetry(() => load(undefined, kind, scope, page))
+            setView({ status: 'ready', data })
+          } catch (error) {
+            if (error?.name === 'AbortError') return
+            setView({ status: 'failed', message: error?.code === 'gallery-timeout' ? t('listTimeout') : String(error?.message ?? error) })
+          } finally {
+            setRefreshing(false)
+            refreshInflightRef.current = null
+          }
+        })()
+        refreshInflightRef.current = task
+        return task
+      }, [load, kind, scope, page, t])
 
       // ---- v0.16.0 粘贴：剪贴板图片/文件作为「素材」落当前对话 ----
       React.useEffect(() => {
@@ -11560,7 +11784,9 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
       React.useEffect(() => {
         let alive = true
         const controller = new AbortController()
-        load(controller.signal, kind, scope, page)
+        // v1.6.6：偶发超时先静默重试，期间不碰 view（旧列表照常显示）；
+        // 只有三次都超时才显示整屏失败页。切视图卸载会 abort，重试立即停。
+        callHostListWithRetry(() => load(controller.signal, kind, scope, page), controller.signal)
           .then((data) => {
             if (alive) setView({ status: 'ready', data })
           })
@@ -11606,11 +11832,16 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
             // v1.6.5：已归档 / 已隐藏 / 历史资产 三类组「默认继承上次扫描结果」。
             // 这些组的变动不触发 groupMore（缓存过期会引发一次全库扫描，是卡顿大头），
             // 也不触发整表 refresh；只把版本号 ack 掉，等用户点开对应组再刷那一个。
-            // 无归属（sessionId 为空）的变动归到历史池 '__history__'，一样被过滤。
+            // 🔴 2026-11-26 修（1.6.5 回归）：无归属（sessionId 为空）的变动是
+            //    「Agent 刚写的文件、还没查到属于哪个组」，index.js 原本设计由前端
+            //    退化成整表 refresh 兜底。1.6.5 把它映射成 '__history__' 一起被
+            //    收起组过滤，等于把兜底吞掉 —— 脚本生成的配音 mp3 因此永远不
+            //    自动出现在产出台。改用一个永不进 tuckedRef 的键保留它，
+            //    下面 canPartial=false 会走 refresh 整表刷新。
             const tucked = tuckedRef.current
             const keyOfChange = (c) => {
               const sid = String(c?.sessionId ?? '')
-              return sid === '' ? '__history__' : sid
+              return sid === '' ? '__unknown__' : sid
             }
             const activeChanged = changed.filter((c) => !tucked.has(keyOfChange(c)))
             if (activeChanged.length === 0) {
@@ -11842,6 +12073,29 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
         window.addEventListener('keydown', onKey)
         return () => window.removeEventListener('keydown', onKey)
       }, [viewer])
+
+      /**
+       * Esc 退出批量并清空已选（2026-11-27 老板要）。
+       *
+       * 优先级排在最后：大图 / 弹窗 / 右键菜单开着时，Esc 必须先关它们 ——
+       * 那些层各自也挂了 window 上的 Esc，且都只 preventDefault、不 stopPropagation，
+       * 所以这里得自己看一眼弹层在不在，否则「关弹窗」会顺带把选择一起清掉。
+       * 条件用 selectMode 而不是 batchMode：退出批量但选择还在时，Esc 也该能清。
+       */
+      React.useEffect(() => {
+        if (!selectMode) return undefined
+        const onKey = (event) => {
+          if (event.key !== 'Escape') return
+          if (event.ctrlKey || event.metaKey || event.altKey) return
+          if (isTypingTarget(event.target)) return
+          if (document.querySelector('[role="dialog"],[role="alertdialog"],.dg-ctxMenu') !== null) return
+          event.preventDefault()
+          setSelected(new Set())
+          setBatchMode(false)
+        }
+        window.addEventListener('keydown', onKey)
+        return () => window.removeEventListener('keydown', onKey)
+      }, [selectMode])
 
       const data = view.status === 'ready' ? view.data : null
 
@@ -12455,6 +12709,7 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
               h('button', {
                 type: 'button', className: 'dg-btn dg-btnSmall', key: 'clearSel',
                 'data-gallery-batch-clearsel': true,
+                title: t('batchEscHint'),
                 onClick: () => { setSelected(new Set()); setBatchMode(false) },
               }, t('batchClearSelection')),
             ]),
@@ -12654,7 +12909,8 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
             'data-gallery-shared': item.shared ? '1' : '0',
             key: key + ':wrap',
             // 三类卡片统一可拖（图片/文件/音视频）：捕获阶段 dragstart 据此起原生拖出真文件。
-            draggable: true,
+            // 🔴 批量选择模式下必须关掉：这个手势要留给框选（beginMarquee），否则一拖就变成拖图。
+            draggable: !batchMode,
             'data-gallery-card-wrap': item.relPath,
             'data-gallery-bucket': bucket,
             'data-gallery-label-manual': isManual ? '1' : '0',
@@ -13069,7 +13325,11 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
               ref: bodyScrollRef,
               onPaste: onBodyPaste,
               onContextMenu: onBodyContextMenu,
+              'data-gallery-batch': batchMode ? '1' : '0',
+              onPointerDown: beginMarquee,
+              onClickCapture: onBodyClickCaptureForMarquee,
             }, [
+              marqueeNode,
               h('div', { className: 'dg-groups', key: 'groups' }, [
                 ...visibleGroupNodes,
                 archivedGroupNodes.length > 0
@@ -13197,7 +13457,11 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
             ref: bodyScrollRef,
             onPaste: onBodyPaste,
             onContextMenu: onBodyContextMenu,
+            'data-gallery-batch': batchMode ? '1' : '0',
+            onPointerDown: beginMarquee,
+            onClickCapture: onBodyClickCaptureForMarquee,
           }, [
+            marqueeNode,
             (visibleItems.length > 0
               ? h('div', { className: `dg-grid${kind === 'file' ? ' dg-fileGrid' : ''}${kind === 'media' ? ' dg-mediaGrid' : ''}`, key: 'grid' }, kind === 'media' ? mediaGridChildren : gridChildren)
               : h('div', { className: 'dg-groupEmpty', key: 'filterEmpty' }, t('filterEmptyHint'))),
@@ -14317,6 +14581,14 @@ function AnnotationLayer({ t, annotations, onAdd, onRemove, active, dragging, fr
           }
 
           const onDragStart = (event) => {
+            // 批量选择模式下卡片不参与拖拽：这个手势要留给框选（beginMarquee）。
+            // wrapCard 已经按 batchMode 把 draggable 关掉，这里再兜一层，
+            // 防止内部节点（图片 / 文字）自己发起的 dragstart 抢走手势。
+            if (event.target instanceof Element
+              && event.target.closest('[data-gallery-batch="1"]') !== null) {
+              event.preventDefault()
+              return
+            }
             const dt = event.dataTransfer
             const target = event.target
             if (dt === null || dt === undefined || !(target instanceof Element)) return

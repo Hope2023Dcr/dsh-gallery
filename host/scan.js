@@ -372,6 +372,102 @@ export function extractCommandMediaDirs(logText) {
   return dirs
 }
 
+/** 命令结果里的媒体文件，只认「命令刚跑完时产出」的：与命令时刻相差不超过 30 分钟。 */
+export const RESULT_MEDIA_WINDOW_MS = 30 * 60 * 1000
+
+/**
+ * 从「命令执行结果」里提取脚本刚产出的媒体文件（2026-11-26）。
+ *
+ * 11-24 的 extractCommandMediaDirs 只认命令里的 `cd 绝对目录 + *.mp3` 通配符。
+ * 但 pwsh 直接跑 Python 脚本时，命令里只有 `& $py "…\02_tts.py"`，既无 cd 也无
+ * 通配符；音频路径只写在脚本正文和命令输出里。实测这类输出长这样：
+ *     s1   开场    5.62s  s1.mp3                       ← 裸媒体文件名（产出清单）
+ *     manifest: G:\…\项目\audio\manifest.json          ← 输出目录的绝对路径
+ * 把「清单路径的父目录」与「裸媒体文件名」拼起来，就是本次真实产出的精确文件。
+ *
+ * 收紧条件（防止把长会话里历史调试输出中的老音频一起翻出来）：
+ *   ① 只处理 BASH_TOOLS 的 tool/call 所对应的 tool/result（靠 callId 精确关联）；
+ *   ② 同一条结果里必须同时出现「裸媒体文件名」和「绝对路径」；
+ *   ③ 只收 mtime 与命令时刻相差 RESULT_MEDIA_WINDOW_MS 内的真实媒体文件
+ *      （在 resolveSessionScope 里 stat 判定），命令刚产出的才要。
+ *
+ * 返回精确文件路径（绝对路径 → 命令时刻 ms），**不做目录级放宽**：
+ * 目录级放宽会连带上百张同目录老文件（11-15 真实事故），精确白名单从根上避开。
+ *
+ * @returns Map<abs, callTimeMs>
+ */
+export function extractResultMediaFiles(logText) {
+  const files = new Map()
+  if (typeof logText !== 'string' || logText === '') return files
+
+  const MEDIA_EXT = /\.(?:mp3|wav|m4a|aac|flac|ogg|oga|opus|wma|mp4|webm|mov|m4v|mkv|avi|ogv)$/i
+  const BARE_MEDIA = /(?:^|[\s"'=（(,，:：])([^\s"'\\/|&;<>]*\.(?:mp3|wav|m4a|aac|flac|ogg|oga|opus|wma|mp4|webm|mov|m4v|mkv|avi|ogv))\b/gi
+  const ABS_PATH = /[A-Za-z]:[\\/][^\s"'|&;<>()*?]+/g
+
+  // 第一遍：命令类调用的 callId → 命令时刻。把结果文本的范围钉死在「命令执行」上。
+  const calls = new Map()
+  for (const line of logText.split('\n')) {
+    if (line === '' || !line.includes('tool/call')) continue
+    let record
+    try { record = JSON.parse(line) } catch { continue }
+    if (record?.type !== 'tool/call' || !BASH_TOOLS.has(record?.data?.name)) continue
+    const id = String(record?.data?.callId ?? '')
+    if (id === '') continue
+    calls.set(id, typeof record.time === 'number' ? record.time : 0)
+  }
+  if (calls.size === 0) return files
+
+  const add = (abs, callTime) => {
+    let resolved
+    try { resolved = path.resolve(abs) } catch { return }
+    if (!files.has(resolved)) files.set(resolved, callTime)
+  }
+
+  // 第二遍：只处理能关联到命令调用的 tool/result。
+  for (const line of logText.split('\n')) {
+    if (line === '' || !line.includes('tool/result')) continue
+    let record
+    try { record = JSON.parse(line) } catch { continue }
+    if (record?.type !== 'tool/result') continue
+    const msg = record?.data?.message
+    const rid = String(msg?.source?.callId ?? msg?.toolCallId ?? record?.data?.toolCallId ?? '')
+    if (rid === '' || !calls.has(rid)) continue
+    const callTime = calls.get(rid)
+    const parts = Array.isArray(msg?.content) ? msg.content : []
+    let text = ''
+    for (const p of parts) {
+      if (p && typeof p.text === 'string') text += `${p.text}\n`
+    }
+    if (text === '') continue
+    const bare = new Set()
+    for (const m of text.matchAll(BARE_MEDIA)) bare.add(String(m[1] ?? ''))
+    if (bare.size === 0) continue
+    for (const m of text.matchAll(ABS_PATH)) {
+      let candidate = String(m[0]).replace(/[\\/]+$/, '').replace(/[.,;:，。；：、]+$/, '')
+      let dir
+      if (MEDIA_EXT.test(candidate)) {
+        // 路径本身就是媒体文件：要求结果文本里也列出了它的裸名，才算证据配对。
+        const base = path.basename(candidate)
+        let paired = bare.has(base)
+        if (!paired) {
+          const low = base.toLowerCase()
+          for (const name of bare) { if (name.toLowerCase() === low) { paired = true; break } }
+        }
+        if (!paired) continue
+        add(candidate, callTime)
+        dir = path.dirname(candidate)
+      } else {
+        dir = path.extname(candidate) === '' ? candidate : path.dirname(candidate)
+      }
+      for (const name of bare) {
+        if (name === '' || name.includes('*') || name.includes('?')) continue
+        add(path.join(dir, name), callTime)
+      }
+    }
+  }
+  return files
+}
+
 /**
  * 从会话日志首行解析会话开始时间（createdAt）。
  * @param logText - 解压后的日志文本。
@@ -460,11 +556,34 @@ export async function resolveSessionScope(config, sessionId, allRoots) {
     : await findForkedChildren(sessionsDir, sessionId, logText)
   const allAssets = extractAssetInfo(logText, sessionStartMs)
 
+  // 2026-11-26：pwsh 跑脚本时音频只出现在命令结果里（裸文件名 + manifest 绝对路径），
+  // 11-24 的 cd + 通配符补丁认不到。把「命令刚产出的精确媒体文件」并进资产表：
+  // 精确白名单，不做目录级放宽，避免连带吸进同目录的老文件。
+  const resultMediaExt = new Set((opts.mediaExtensions ?? []).map((e) => String(e).toLowerCase()))
+  const mergeResultMedia = (text) => {
+    for (const [abs, callTime] of extractResultMediaFiles(text)) {
+      if (allAssets.has(abs) || !(callTime > 0)) continue
+      if (!resultMediaExt.has(path.extname(abs).toLowerCase())) continue
+      let st
+      try { st = statSync(abs) } catch { continue }
+      if (!st.isFile()) continue
+      // 只收「命令刚跑完时产出」的媒体：长会话里历史调试输出提到的老音频
+      // 与命令时刻差着好几天，一律挡掉。
+      if (Math.abs(st.mtimeMs - callTime) > RESULT_MEDIA_WINDOW_MS) continue
+      allAssets.set(abs, {
+        presented: false, written: true, viewed: false, bashMentioned: true,
+        lastMs: callTime,
+      })
+    }
+  }
+  mergeResultMedia(logText)
+
   // 修法 C：合并所有子会话（子智能体）的产出路径
   const subLogs = await findSubSessionLogs(sessionsDir, sessionId)
   for (const subLog of subLogs) {
     const subText = await readSessionLogText(subLog)
     if (subText === '') continue
+    mergeResultMedia(subText)
     for (const [abs, info] of extractAssetInfo(subText, sessionStartMs)) {
       const existing = allAssets.get(abs)
       if (existing) {
